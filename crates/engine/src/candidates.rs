@@ -20,13 +20,11 @@
 //!   honest same-rank candidate (hash tiebreak) until the epoch passes.
 //!   Observing on canonical-commit instead is the post-v2 hardening.
 //! - Burn-less epochs converge by hash tiebreak (both producers' empty
-//!   blocks observed at rank `usize::MAX`), but only while neither has
-//!   built *past* the epoch: if a producer stacks its next block before
-//!   the preferred empty arrives, the arbiter's stale-height skip keeps
-//!   it on its own lineage and the fork outlives the epoch. Real fix is
-//!   parent-aware preference or the `extension_rank` ladder for empty
-//!   epochs (v2.1); at box scale the 1s relay against the 2s+ cadence
-//!   makes the window small, and the nightly sim will measure it.
+//!   blocks observed at rank `usize::MAX`). If a producer stacks its next
+//!   block before the preferred empty arrives, the branch rule
+//!   ([`CandidateTracker`]) still moves it across, up to
+//!   [`MAX_REPLACE_DEPTH`] blocks deep; a split deeper than that outlives
+//!   the epoch until a cross-history rule ships (audit F2, SIP-8).
 
 use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock};
@@ -50,10 +48,59 @@ pub enum Observation {
 /// A candidate awaiting its rank: block hash + the withdrawals to rank it by.
 type Unranked = ([u8; 32], Vec<Withdrawal>);
 
-/// Tracks the best candidate per epoch (keyed by Sova height).
-#[derive(Debug, Default)]
+/// How far below a candidate the attachment walk looks for the point
+/// where its branch meets our canonical chain.
+const MAX_ATTACH_DEPTH: u64 = 64;
+
+/// How many of this node's canonical blocks a preferred branch may replace
+/// (audit 2026-09-23, F1 follow-up). One is the late win at the tip; a
+/// little more lets two nodes that built on different siblings (a
+/// burn-less epoch sealed by both, a late rank-0 block) converge again.
+/// A branch forking deeper than this is not a candidate, whatever its rank.
+pub const MAX_REPLACE_DEPTH: u64 = 3;
+
+/// The canonical-hash lookup, borrowed.
+type Reader<'a> = &'a (dyn Fn(u64) -> Option<[u8; 32]> + Send + Sync);
+
+/// Reads the node's canonical block hash at a height (installed by
+/// bin/sova over its provider; see [`set_canonical_reader`]).
+pub type CanonicalReader = Box<dyn Fn(u64) -> Option<[u8; 32]> + Send + Sync>;
+
+static CANONICAL: OnceLock<CanonicalReader> = OnceLock::new();
+
+/// Install the canonical-hash reader the **sibling rule** needs (audit
+/// 2026-09-23 F1). Without it (unit tests, tools) every candidate counts as
+/// attached, the pre-rule behaviour.
+pub fn set_canonical_reader(reader: CanonicalReader) -> bool {
+    CANONICAL.set(reader).is_ok()
+}
+
+/// One observed candidate block for an epoch.
+#[derive(Debug, Clone, Copy)]
+struct Seen {
+    candidate: Candidate,
+    parent: [u8; 32],
+}
+
+/// Tracks every candidate per epoch (keyed by Sova height) with its parent.
+///
+/// **Branch rule** (audit 2026-09-23, F1): a candidate counts only if it is
+/// *attached* to this node's chain: its ancestry, through blocks we hold,
+/// meets our canonical chain, and where it first leaves it (the fork point)
+/// either our chain ends (it extends our head) or its block beats ours by
+/// preference ((rank, hash)) with at most [`MAX_REPLACE_DEPTH`] of our
+/// blocks above that point. Candidates are then ordered by their blocks at
+/// the height where their branches part, so every node holding the same
+/// blocks prefers the same branch. Without this rule a preferred block at
+/// the tip carried any ancestry with it and reth followed it however deep
+/// (free today; the rank-0 sealer's option even after SIP-6); with only a
+/// sibling rule (parent must be our block) two nodes that ever held
+/// different blocks at one height never converged again.
+#[derive(Default)]
 pub struct CandidateTracker {
-    best: Mutex<BTreeMap<u64, Candidate>>,
+    seen: Mutex<BTreeMap<u64, Vec<Seen>>>,
+    /// Per-instance canonical reader (tests); the global one otherwise.
+    canonical: Option<CanonicalReader>,
     /// Candidates observed before our follower had scanned their epoch —
     /// held at trust rank `usize::MAX` — with the withdrawals needed to
     /// rank them once it has ([`CandidateTracker::rerank`]). Without this
@@ -63,33 +110,63 @@ pub struct CandidateTracker {
     unranked: Mutex<BTreeMap<u64, Vec<Unranked>>>,
 }
 
+impl std::fmt::Debug for CandidateTracker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CandidateTracker").finish_non_exhaustive()
+    }
+}
+
 impl CandidateTracker {
-    /// Observe a candidate block for `sova_height`; returns whether it
-    /// becomes the epoch's best.
-    pub fn observe(&self, sova_height: u64, candidate: Candidate) -> Observation {
-        let Ok(mut best) = self.best.lock() else {
-            return Observation::NotBetter;
-        };
-        let outcome = match best.get(&sova_height) {
-            None => Observation::NewBest,
-            Some(current) => {
-                if prefer(&candidate, current) == std::cmp::Ordering::Less {
-                    Observation::NewBest
-                } else {
-                    Observation::NotBetter
+    /// A tracker that reads canonical hashes from `reader` instead of the
+    /// process-global one.
+    #[must_use]
+    pub fn with_canonical_reader(reader: CanonicalReader) -> Self {
+        Self {
+            canonical: Some(reader),
+            ..Self::default()
+        }
+    }
+
+    fn reader(&self) -> Option<&(dyn Fn(u64) -> Option<[u8; 32]> + Send + Sync)> {
+        self.canonical
+            .as_deref()
+            .or_else(|| CANONICAL.get().map(|b| b.as_ref()))
+    }
+
+    /// Observe a candidate block for `sova_height` whose parent is
+    /// `parent`; returns whether it is now the epoch's best attached
+    /// candidate.
+    pub fn observe(&self, sova_height: u64, candidate: Candidate, parent: [u8; 32]) -> Observation {
+        {
+            let Ok(mut seen) = self.seen.lock() else {
+                return Observation::NotBetter;
+            };
+            let entry = seen.entry(sova_height).or_default();
+            match entry
+                .iter_mut()
+                .find(|s| s.candidate.block_hash == candidate.block_hash)
+            {
+                // Same block again: keep its (possibly re-ranked) record.
+                Some(existing) => {
+                    if prefer(&candidate, &existing.candidate) != std::cmp::Ordering::Less {
+                        return Observation::NotBetter;
+                    }
+                    existing.candidate = candidate;
                 }
+                None => entry.push(Seen { candidate, parent }),
             }
-        };
-        if outcome == Observation::NewBest {
-            best.insert(sova_height, candidate);
-            while best.len() > RETAIN {
-                let Some((&lowest, _)) = best.first_key_value() else {
+            while seen.len() > RETAIN {
+                let Some((&lowest, _)) = seen.first_key_value() else {
                     break;
                 };
-                best.remove(&lowest);
+                seen.remove(&lowest);
             }
         }
-        outcome
+        if self.best(sova_height).map(|b| b.block_hash) == Some(candidate.block_hash) {
+            Observation::NewBest
+        } else {
+            Observation::NotBetter
+        }
     }
 
     /// Observe a candidate whose epoch our follower hasn't scanned yet: it
@@ -99,6 +176,7 @@ impl CandidateTracker {
         &self,
         sova_height: u64,
         block_hash: [u8; 32],
+        parent: [u8; 32],
         withdrawals: Vec<Withdrawal>,
     ) -> Observation {
         if let Ok(mut unranked) = self.unranked.lock() {
@@ -119,6 +197,7 @@ impl CandidateTracker {
                 sealer_rank: usize::MAX,
                 block_hash,
             },
+            parent,
         )
     }
 
@@ -134,38 +213,197 @@ impl CandidateTracker {
         rank_of: impl Fn(&[Withdrawal]) -> Option<usize>,
     ) -> Option<Candidate> {
         let pending = self.unranked.lock().ok()?.remove(&sova_height)?;
-        let mut best = self.best.lock().ok()?;
-        let before = best.get(&sova_height).copied();
-        let reranked: Vec<Candidate> = pending
-            .iter()
-            .filter_map(|(hash, withdrawals)| {
-                rank_of(withdrawals).map(|sealer_rank| Candidate {
-                    sealer_rank,
-                    block_hash: *hash,
-                })
-            })
-            .collect();
-        let untouched = before.filter(|b| !pending.iter().any(|(hash, _)| *hash == b.block_hash));
-        let new_best = reranked.into_iter().chain(untouched).min_by(prefer)?;
-        best.insert(sova_height, new_best);
-        (before.map(|b| b.block_hash) != Some(new_best.block_hash)).then_some(new_best)
+        let before = self.best(sova_height);
+        {
+            let mut seen = self.seen.lock().ok()?;
+            let entry = seen.entry(sova_height).or_default();
+            for (hash, withdrawals) in &pending {
+                let rank = rank_of(withdrawals);
+                match rank {
+                    Some(sealer_rank) => {
+                        if let Some(s) = entry.iter_mut().find(|s| s.candidate.block_hash == *hash)
+                        {
+                            s.candidate.sealer_rank = sealer_rank;
+                        }
+                    }
+                    None => entry.retain(|s| s.candidate.block_hash != *hash),
+                }
+            }
+        }
+        let after = self.best(sova_height)?;
+        (before.map(|b| b.block_hash) != Some(after.block_hash)).then_some(after)
     }
 
-    /// The current best candidate for an epoch, if any.
+    /// The best **attached** candidate for an epoch, if any (see the
+    /// branch rule on [`CandidateTracker`]).
     #[must_use]
     pub fn best(&self, sova_height: u64) -> Option<Candidate> {
-        self.best.lock().ok()?.get(&sova_height).copied()
+        let seen = self.seen.lock().ok()?;
+        let candidates = seen.get(&sova_height)?;
+        let Some(reader) = self.reader() else {
+            return candidates.iter().map(|s| s.candidate).min_by(prefer);
+        };
+        candidates
+            .iter()
+            .filter_map(|s| {
+                let b = branch(reader, &seen, sova_height, *s)?;
+                attached(reader, &seen, &b).then_some(b)
+            })
+            .min_by(|a, b| order(reader, &seen, a, b))
+            .and_then(|b| b.blocks.first().map(|&(_, c)| c))
     }
 
     /// Drop candidates above `sova_height` (Zcash reorg unwinding).
     pub fn unwind_above(&self, sova_height: u64) {
-        if let Ok(mut best) = self.best.lock() {
-            best.retain(|&h, _| h <= sova_height);
+        if let Ok(mut seen) = self.seen.lock() {
+            seen.retain(|&h, _| h <= sova_height);
         }
         if let Ok(mut unranked) = self.unranked.lock() {
             unranked.retain(|&h, _| h <= sova_height);
         }
     }
+}
+
+/// A candidate's branch: its blocks from the candidate down to the first
+/// one whose parent is our canonical block at `base`, top down.
+struct Branch {
+    blocks: Vec<(u64, Candidate)>,
+    base: u64,
+}
+
+impl Branch {
+    /// The branch's block hash at `height` (ours at or below `base`).
+    fn hash_at(&self, reader: Reader<'_>, height: u64) -> Option<[u8; 32]> {
+        if height > self.base {
+            self.blocks
+                .iter()
+                .find(|&&(h, _)| h == height)
+                .map(|&(_, c)| c.block_hash)
+        } else {
+            reader(height)
+        }
+    }
+
+    /// The branch's block at `height` as a candidate, when we observed it.
+    fn candidate_at(
+        &self,
+        reader: Reader<'_>,
+        seen: &BTreeMap<u64, Vec<Seen>>,
+        height: u64,
+    ) -> Option<Candidate> {
+        if height > self.base {
+            self.blocks
+                .iter()
+                .find(|&&(h, _)| h == height)
+                .map(|&(_, c)| c)
+        } else {
+            canonical_candidate(reader, seen, height)
+        }
+    }
+}
+
+/// Walk a candidate's ancestry, through blocks we hold, down to our
+/// canonical chain. `None` when an ancestor is missing or too deep.
+fn branch(
+    reader: Reader<'_>,
+    seen: &BTreeMap<u64, Vec<Seen>>,
+    height: u64,
+    tip: Seen,
+) -> Option<Branch> {
+    let mut blocks = vec![(height, tip.candidate)];
+    let mut parent = tip.parent;
+    let mut h = height;
+    loop {
+        let below = h.checked_sub(1)?;
+        if reader(below) == Some(parent) {
+            return Some(Branch {
+                blocks,
+                base: below,
+            });
+        }
+        if blocks.len() as u64 > MAX_ATTACH_DEPTH {
+            return None;
+        }
+        let s = seen
+            .get(&below)?
+            .iter()
+            .find(|s| s.candidate.block_hash == parent)?;
+        blocks.push((below, s.candidate));
+        parent = s.parent;
+        h = below;
+    }
+}
+
+/// Our canonical block at `height` as a candidate, when we observed it.
+fn canonical_candidate(
+    reader: Reader<'_>,
+    seen: &BTreeMap<u64, Vec<Seen>>,
+    height: u64,
+) -> Option<Candidate> {
+    let hash = reader(height)?;
+    seen.get(&height)?
+        .iter()
+        .find(|s| s.candidate.block_hash == hash)
+        .map(|s| s.candidate)
+}
+
+/// Whether a branch may become our chain: it extends our head, or it is our
+/// own block, or its block at the fork point beats ours there and replaces
+/// at most [`MAX_REPLACE_DEPTH`] of our blocks. A block of ours we never
+/// observed (imported before a restart) counts as the lowest rank, as in
+/// [`order`], so a restarted node still follows the late win; that it can
+/// be moved by any branch within the depth is audit F2.
+fn attached(reader: Reader<'_>, seen: &BTreeMap<u64, Vec<Seen>>, b: &Branch) -> bool {
+    let Some(&(fork, low)) = b.blocks.last() else {
+        return false;
+    };
+    match reader(fork) {
+        None => true,
+        Some(ours) if ours == low.block_hash => true,
+        Some(hash) => {
+            let ours = canonical_candidate(reader, seen, fork).unwrap_or(Candidate {
+                sealer_rank: usize::MAX,
+                block_hash: hash,
+            });
+            reader(fork.saturating_add(MAX_REPLACE_DEPTH)).is_none()
+                && prefer(&low, &ours) == std::cmp::Ordering::Less
+        }
+    }
+}
+
+/// Order two branches ending at the same height by their blocks at the
+/// height where they part (below it they are the same chain). Siblings part
+/// at their own height, so this is plain preference for them.
+fn order(
+    reader: Reader<'_>,
+    seen: &BTreeMap<u64, Vec<Seen>>,
+    a: &Branch,
+    b: &Branch,
+) -> std::cmp::Ordering {
+    let (Some(&(top, ca)), Some(&(_, cb))) = (a.blocks.first(), b.blocks.first()) else {
+        return std::cmp::Ordering::Equal;
+    };
+    let floor = a.base.min(b.base);
+    let fork = (floor.saturating_add(1)..=top)
+        .find(|&h| a.hash_at(reader, h) != b.hash_at(reader, h))
+        .unwrap_or(top);
+    let unknown = |hash| Candidate {
+        sealer_rank: usize::MAX,
+        block_hash: hash,
+    };
+    let at = |br: &Branch, fallback: Candidate| {
+        br.candidate_at(reader, seen, fork)
+            .unwrap_or_else(|| br.hash_at(reader, fork).map_or(fallback, unknown))
+    };
+    prefer(&at(a, ca), &at(b, cb))
+}
+
+/// Whether `block_hash` would replace our canonical block at `height` (a
+/// preferred branch below our head). `false` without a canonical reader.
+fn replaces_canonical(height: u64, block_hash: [u8; 32]) -> bool {
+    CANONICAL
+        .get()
+        .is_some_and(|reader| reader(height).is_some_and(|ours| ours != block_hash))
 }
 
 /// Process-global candidate tracker (see module docs for why).
@@ -214,8 +452,10 @@ pub fn notify_best(best: BestCandidate) {
 /// `head_height` reads the local Sova head and `fcu` performs the actual
 /// `engine_forkchoiceUpdated` with the caller's handle. A best candidate
 /// strictly below the head is stale — its epoch already produced a
-/// canonical block we've built past — and is skipped, which is what
-/// bounds v2 micro-reorgs to the epoch.
+/// canonical block we've built past — and is skipped, unless it is a
+/// different block from ours there: then it heads a preferred branch the
+/// tracker admitted (at most [`MAX_REPLACE_DEPTH`] blocks deep) and is
+/// adopted.
 pub async fn run_arbiter<H, W, F, Fut>(
     mut rx: tokio::sync::mpsc::UnboundedReceiver<BestCandidate>,
     head_height: H,
@@ -250,7 +490,9 @@ pub async fn run_arbiter<H, W, F, Fut>(
             }
         };
         let head = head_height();
-        if best.sova_height < head {
+        // Below our head only a preferred branch (the tracker bounds its
+        // depth) moves us; anything else there is an epoch already built past.
+        if best.sova_height < head && !replaces_canonical(best.sova_height, best.block_hash) {
             tracing::debug!(
                 height = best.sova_height,
                 head,
@@ -285,6 +527,14 @@ pub async fn run_arbiter<H, W, F, Fut>(
                 );
                 if pending.is_some_and(|p| p.sova_height <= best.sova_height) {
                     pending = None;
+                }
+                // A child observed before this block became canonical was
+                // not attached then (sibling rule); it may be now.
+                if let Some(next) = global().best(best.sova_height.saturating_add(1)) {
+                    pending = Some(BestCandidate {
+                        sova_height: best.sova_height.saturating_add(1),
+                        block_hash: next.block_hash,
+                    });
                 }
             }
             Err(err) => {
@@ -322,8 +572,43 @@ pub fn install_sync() -> Option<tokio::sync::watch::Receiver<Option<SyncTarget>>
     SYNC.set(tx).ok().map(|()| rx)
 }
 
-/// Offer a catch-up target; kept only if higher than the current one.
+/// Catch-up targets offered so far, by height (audit 2026-09-23 F3). The
+/// driver acts on the highest one our own Zcash scan already covers, so an
+/// unsatisfiable target (a bogus `Announce` of an absurd height) can no
+/// longer hide the real ones.
+static SYNC_TARGETS: Mutex<BTreeMap<u64, [u8; 32]>> = Mutex::new(BTreeMap::new());
+
+/// Targets kept at most; beyond it the **highest** are evicted first, which
+/// is where bogus announcements land.
+const MAX_SYNC_TARGETS: usize = 64;
+
+fn remember_target(target: SyncTarget) {
+    if let Ok(mut targets) = SYNC_TARGETS.lock() {
+        targets.insert(target.sova_height, target.block_hash);
+        while targets.len() > MAX_SYNC_TARGETS {
+            targets.pop_last();
+        }
+    }
+}
+
+/// The highest remembered target above `head` that our scan covers
+/// (`scanned = None` means no gate); drops targets at or below `head`.
+fn actionable_target(head: u64, scanned: Option<u64>) -> Option<SyncTarget> {
+    let mut targets = SYNC_TARGETS.lock().ok()?;
+    targets.retain(|&h, _| h > head);
+    targets
+        .range(..=scanned.unwrap_or(u64::MAX))
+        .next_back()
+        .map(|(&sova_height, &block_hash)| SyncTarget {
+            sova_height,
+            block_hash,
+        })
+}
+
+/// Offer a catch-up target: remembered for the sync driver, which acts on
+/// the highest one our own scan covers.
 pub fn request_sync(target: SyncTarget) {
+    remember_target(target);
     if let Some(tx) = SYNC.get() {
         tx.send_if_modified(|current| keep_higher(current, target));
     }
@@ -371,46 +656,50 @@ pub async fn run_sync_driver<H, W, F, Fut>(
     F: Fn(SyncTarget) -> Fut + Send,
     Fut: std::future::Future<Output = Result<(), String>> + Send,
 {
+    let mut waiting_logged = false;
     loop {
-        let Some(target) = *rx.borrow_and_update() else {
-            if rx.changed().await.is_err() {
-                return;
-            }
-            continue;
-        };
-        let mut waiting_logged = false;
-        while head_height() < target.sova_height {
-            if rx.has_changed().unwrap_or(false) {
-                break; // a higher target arrived
-            }
-            match watermark() {
-                Some(scanned) if scanned < target.sova_height => {
-                    if !waiting_logged {
-                        tracing::info!(
-                            target = target.sova_height,
-                            scanned,
-                            "catch-up waiting for our zebrad scan to reach the target"
-                        );
-                        waiting_logged = true;
-                    }
-                }
-                _ => match fcu(target).await {
+        // Targets sent straight into the channel (tests, older callers)
+        // join the remembered set.
+        if let Some(target) = *rx.borrow_and_update() {
+            remember_target(target);
+        }
+        let head = head_height();
+        let scanned = watermark();
+        match actionable_target(head, scanned) {
+            Some(target) => {
+                waiting_logged = false;
+                match fcu(target).await {
                     Ok(()) => {}
                     Err(status) => tracing::debug!(
                         target = target.sova_height,
                         %status,
                         "catch-up forkchoice pending (engine downloading/backfilling)"
                     ),
-                },
+                }
+                if head_height() >= target.sova_height {
+                    tracing::info!(height = target.sova_height, "caught up to sync target");
+                }
             }
-            tokio::time::sleep(SYNC_POLL).await;
-        }
-        if head_height() >= target.sova_height {
-            tracing::info!(height = target.sova_height, "caught up to sync target");
-            if rx.changed().await.is_err() {
-                return;
+            None => {
+                let pending = SYNC_TARGETS.lock().map(|t| t.len()).unwrap_or(0);
+                if pending == 0 {
+                    // Nothing to do until a new target arrives.
+                    if rx.changed().await.is_err() {
+                        return;
+                    }
+                    continue;
+                }
+                if !waiting_logged {
+                    tracing::info!(
+                        pending,
+                        ?scanned,
+                        "catch-up waiting for our zebrad scan to reach a target"
+                    );
+                    waiting_logged = true;
+                }
             }
         }
+        tokio::time::sleep(SYNC_POLL).await;
     }
 }
 
@@ -428,28 +717,28 @@ mod tests {
     #[test]
     fn first_candidate_is_best() {
         let t = CandidateTracker::default();
-        assert_eq!(t.observe(7, cand(3, 0xAA)), Observation::NewBest);
+        assert_eq!(t.observe(7, cand(3, 0xAA), [0; 32]), Observation::NewBest);
         assert_eq!(t.best(7), Some(cand(3, 0xAA)));
     }
 
     #[test]
     fn better_rank_displaces_regardless_of_order() {
         let t = CandidateTracker::default();
-        let _ = t.observe(7, cand(2, 0xFF));
+        let _ = t.observe(7, cand(2, 0xFF), [0; 32]);
         // Late rank-0 wins (rank beats timing).
-        assert_eq!(t.observe(7, cand(0, 0xEE)), Observation::NewBest);
+        assert_eq!(t.observe(7, cand(0, 0xEE), [0; 32]), Observation::NewBest);
         assert_eq!(t.best(7), Some(cand(0, 0xEE)));
         // A worse rank after that is ignored.
-        assert_eq!(t.observe(7, cand(1, 0x00)), Observation::NotBetter);
+        assert_eq!(t.observe(7, cand(1, 0x00), [0; 32]), Observation::NotBetter);
     }
 
     #[test]
     fn equivocation_tie_breaks_by_hash_and_duplicates_are_not_better() {
         let t = CandidateTracker::default();
-        let _ = t.observe(7, cand(1, 0x50));
-        assert_eq!(t.observe(7, cand(1, 0x40)), Observation::NewBest);
-        assert_eq!(t.observe(7, cand(1, 0x40)), Observation::NotBetter);
-        assert_eq!(t.observe(7, cand(1, 0x60)), Observation::NotBetter);
+        let _ = t.observe(7, cand(1, 0x50), [0; 32]);
+        assert_eq!(t.observe(7, cand(1, 0x40), [0; 32]), Observation::NewBest);
+        assert_eq!(t.observe(7, cand(1, 0x40), [0; 32]), Observation::NotBetter);
+        assert_eq!(t.observe(7, cand(1, 0x60), [0; 32]), Observation::NotBetter);
         assert_eq!(t.best(7), Some(cand(1, 0x40)));
     }
 
@@ -510,7 +799,7 @@ mod tests {
     fn own_block_imported_before_scan_is_reranked_in_place() {
         let t = CandidateTracker::default();
         assert_eq!(
-            t.observe_unranked(7, [0xAA; 32], w(1)),
+            t.observe_unranked(7, [0xAA; 32], [0; 32], w(1)),
             Observation::NewBest
         );
         assert_eq!(t.best(7), Some(cand(usize::MAX, 0xAA)));
@@ -522,8 +811,8 @@ mod tests {
     #[test]
     fn rerank_promotes_the_truly_better_candidate() {
         let t = CandidateTracker::default();
-        let _ = t.observe_unranked(7, [0x10; 32], w(1)); // hash-tiebreak winner at trust rank
-        let _ = t.observe_unranked(7, [0x90; 32], w(2));
+        let _ = t.observe_unranked(7, [0x10; 32], [0; 32], w(1)); // hash-tiebreak winner at trust rank
+        let _ = t.observe_unranked(7, [0x90; 32], [0; 32], w(2));
         assert_eq!(t.best(7), Some(cand(usize::MAX, 0x10)));
         // Scan says 0x90 is rank 0, 0x10 rank 1: the best flips.
         let rank_of = |wd: &[Withdrawal]| Some(if wd == w(2).as_slice() { 0 } else { 1 });
@@ -534,8 +823,8 @@ mod tests {
     #[test]
     fn contradicted_candidates_lose_their_place_and_known_ones_stay() {
         let t = CandidateTracker::default();
-        let _ = t.observe(7, cand(1, 0x50)); // already ranked when seen
-        let _ = t.observe_unranked(7, [0x40; 32], w(9));
+        let _ = t.observe(7, cand(1, 0x50), [0; 32]); // already ranked when seen
+        let _ = t.observe_unranked(7, [0x40; 32], [0; 32], w(9));
         // Our zebrad contradicts 0x40 (it never led: trust rank loses to
         // rank 1): nothing changes, so no adoption is signalled.
         assert_eq!(t.rerank(7, |_| None), None);
@@ -602,12 +891,122 @@ mod tests {
     #[test]
     fn epochs_are_independent_and_unwind_drops_above() {
         let t = CandidateTracker::default();
-        let _ = t.observe(5, cand(0, 1));
-        let _ = t.observe(6, cand(2, 2));
-        let _ = t.observe(7, cand(1, 3));
+        let _ = t.observe(5, cand(0, 1), [0; 32]);
+        let _ = t.observe(6, cand(2, 2), [0; 32]);
+        let _ = t.observe(7, cand(1, 3), [0; 32]);
         t.unwind_above(5);
         assert_eq!(t.best(5), Some(cand(0, 1)));
         assert_eq!(t.best(6), None);
         assert_eq!(t.best(7), None);
+    }
+
+    /// Canonical chain 0..=10 with hash `[h; 32]` at height h.
+    fn chain_to_10() -> CandidateTracker {
+        CandidateTracker::with_canonical_reader(Box::new(|h| (h <= 10).then_some([h as u8; 32])))
+    }
+
+    /// Audit 2026-09-23 F1: a better-ranked block on a foreign parent is not
+    /// a candidate; the honest block stays best. A sibling of the tip still
+    /// wins by rank (the late win).
+    #[test]
+    fn sibling_rule_ignores_foreign_ancestry() {
+        let t = chain_to_10();
+        let _ = t.observe(10, cand(1, 0x10), [9; 32]);
+        assert_eq!(
+            t.observe(10, cand(0, 0x01), [0xEE; 32]),
+            Observation::NotBetter
+        );
+        assert_eq!(t.best(10).map(|c| c.block_hash), Some([0x10; 32]));
+        assert_eq!(t.observe(10, cand(0, 0x02), [9; 32]), Observation::NewBest);
+        assert_eq!(t.best(10).map(|c| c.block_hash), Some([0x02; 32]));
+    }
+
+    /// Above the head a candidate must chain down to our head through
+    /// attached candidates; an unconnected chain is not a candidate.
+    #[test]
+    fn sibling_rule_attaches_forward_chains_only_through_our_head() {
+        let t = chain_to_10();
+        let _ = t.observe(11, cand(0, 0x11), [10; 32]);
+        let _ = t.observe(12, cand(0, 0x12), [0x11; 32]);
+        assert_eq!(t.best(12).map(|c| c.block_hash), Some([0x12; 32]));
+        // A chain whose bottom does not extend our head.
+        let _ = t.observe(11, cand(0, 0x21), [0xEE; 32]);
+        let _ = t.observe(12, cand(0, 0x01), [0x21; 32]);
+        assert_eq!(
+            t.best(12).map(|c| c.block_hash),
+            Some([0x12; 32]),
+            "a lower hash on an unattached chain must not win"
+        );
+    }
+
+    /// Canonical chain 0..=7 with hash `[h; 32]`; heights 6 and 7 observed.
+    fn split_at_6() -> CandidateTracker {
+        let t = CandidateTracker::with_canonical_reader(Box::new(|h| {
+            (h <= 7).then_some([h as u8; 32])
+        }));
+        let _ = t.observe(6, cand(usize::MAX, 6), [5; 32]);
+        let _ = t.observe(7, cand(1, 7), [6; 32]);
+        t
+    }
+
+    /// Audit F1 follow-up: two nodes that sealed different burn-less blocks
+    /// at 6 converge on the preferred one, and the late rank-0 block built
+    /// on it takes 7 with it (the ladder scenario's split).
+    #[test]
+    fn a_preferred_branch_within_depth_replaces_ours() {
+        let t = split_at_6();
+        assert_eq!(
+            t.observe(6, cand(usize::MAX, 0x01), [5; 32]),
+            Observation::NewBest
+        );
+        assert_eq!(
+            t.observe(7, cand(0, 0x71), [0x01; 32]),
+            Observation::NewBest
+        );
+        assert_eq!(t.best(7).map(|c| c.block_hash), Some([0x71; 32]));
+    }
+
+    /// The order is by the blocks where branches part, not at the tip: a
+    /// rank-0 block on the worse branch loses to rank 1 on the better one.
+    #[test]
+    fn branches_are_ordered_where_they_part() {
+        let t = split_at_6();
+        let _ = t.observe(6, cand(usize::MAX, 0xF0), [5; 32]); // worse than ours
+        assert_eq!(
+            t.observe(7, cand(0, 0x71), [0xF0; 32]),
+            Observation::NotBetter
+        );
+        assert_eq!(t.best(7).map(|c| c.block_hash), Some([7; 32]));
+        assert_eq!(t.best(6).map(|c| c.block_hash), Some([6; 32]));
+    }
+
+    /// Deeper than MAX_REPLACE_DEPTH a branch is not a candidate, however
+    /// well ranked; nor is one with an ancestor we do not hold.
+    #[test]
+    fn deep_or_unconnected_branches_are_ignored() {
+        let t = chain_to_10();
+        for h in 7..=10 {
+            let _ = t.observe(h, cand(1, h as u8), [h as u8 - 1; 32]);
+        }
+        // Fork at 7 would replace 7..=10: four blocks.
+        let _ = t.observe(7, cand(0, 0xA7), [6; 32]);
+        let _ = t.observe(8, cand(0, 0xA8), [0xA7; 32]);
+        assert_eq!(t.best(8).map(|c| c.block_hash), Some([8; 32]));
+        // Fork at 8 replaces 8..=10: three blocks, allowed.
+        let _ = t.observe(8, cand(0, 0xB8), [7; 32]);
+        assert_eq!(t.best(8).map(|c| c.block_hash), Some([0xB8; 32]));
+        // A missing ancestor.
+        let _ = t.observe(10, cand(0, 0xC0), [0xEE; 32]);
+        assert_eq!(t.best(10).map(|c| c.block_hash), Some([10; 32]));
+    }
+
+    /// No reader installed (tools, other tests): every candidate counts.
+    #[test]
+    fn without_a_reader_every_candidate_counts() {
+        let t = CandidateTracker::default();
+        assert_eq!(
+            t.observe(10, cand(0, 0x01), [0xEE; 32]),
+            Observation::NewBest
+        );
     }
 }

@@ -517,6 +517,26 @@ impl<B: GossipBackend> GossipService<B> {
         let now = Instant::now();
         let hash = block.hash();
         let since = self.held.peek(&hash).map_or(now, |h| h.since);
+        // Full: evict the *highest* held block (a flood of blocks far ahead
+        // of our scan lands there), and forget its hash so a later
+        // announcement can bring it back (audit F4: the LRU used to drop
+        // the oldest silently and leave it marked seen forever).
+        if self.held.peek(&hash).is_none() && self.held.len() >= MAX_HELD as usize {
+            let highest = self
+                .held
+                .iter()
+                .max_by_key(|(_, h)| h.block.number)
+                .map(|(k, h)| (*k, h.block.number));
+            if let Some((evict, number)) = highest {
+                if number <= block.number {
+                    // The newcomer is the highest: it is the one not kept.
+                    self.seen.remove(&hash);
+                    return;
+                }
+                self.held.remove(&evict);
+                self.seen.remove(&evict);
+            }
+        }
         self.held.insert(
             hash,
             Held {
@@ -1095,5 +1115,41 @@ mod tests {
         let (b, _) = block(11, B256::repeat_byte(10));
         h.msg(p1, announce(11, b.hash())).await;
         assert_eq!(drain(&mut rx_new), vec![get(b.hash())]);
+    }
+
+    /// Audit F4: a full held set drops the highest block and forgets its
+    /// hash, so it can be fetched again later; near-tip blocks are kept.
+    #[tokio::test]
+    async fn a_full_held_set_evicts_the_highest_and_forgets_it() {
+        let mut h = Harness::new();
+        let (p1, mut rx1) = h.connect(1).await;
+        let hold = || PayloadStatusEnum::Invalid {
+            validation_error: format!("{}: not scanned", crate::consensus::HOLD_MARKER),
+        };
+        h.mock.with(|s| {
+            s.statuses = (0..=MAX_HELD).map(|_| hold()).collect();
+            // Within sova/1 range of every announced height.
+            s.head = Some((1_040, B256::repeat_byte(0x01)));
+        });
+        let mut blocks = Vec::new();
+        for n in 0..=u64::from(MAX_HELD) {
+            let (b, rlp) = block(1_000 + n, B256::repeat_byte(0x10));
+            h.msg(p1, announce(1_000 + n, b.hash())).await;
+            drain(&mut rx1);
+            h.msg(p1, SovaMessage::Block(rlp)).await;
+            blocks.push(b);
+        }
+        // The highest (last) was not kept, and it can be fetched again.
+        let highest = blocks.last().map(|b| b.hash()).unwrap_or_default();
+        h.msg(p1, announce(1_000 + u64::from(MAX_HELD), highest))
+            .await;
+        assert_eq!(
+            drain(&mut rx1),
+            vec![SovaMessage::GetBlock(GetBlock { hash: highest })]
+        );
+        // The lowest is still held (not refetched).
+        let lowest = blocks.first().map(|b| b.hash()).unwrap_or_default();
+        h.msg(p1, announce(1_000, lowest)).await;
+        assert!(drain(&mut rx1).is_empty());
     }
 }

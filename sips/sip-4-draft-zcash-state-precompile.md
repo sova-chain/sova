@@ -259,7 +259,10 @@ Precedent: the Bitcoin-era Sova priced its pure decode precompile at
   its zebrad sees the reorg. Sova unwinds to `N = R − B + 1` and
   re-seals on the new branch. Contract state that depended on a
   reorged-out Zcash tx rolls back with it. That is consistent, because
-  every node rolls back identically.
+  every node rolls back identically. This rollback is the only reorg
+  Sova performs because of Zcash; reorgs among Sova blocks on one Zcash
+  chain are SIP-2's and SIP-6's business (added 2026-09-23 after the
+  reorg audit).
 - **Required work.** Today the sealer logs follower `Rollback` and
   continues (`driver.rs`, "v0 logs and continues"), and the arbiter
   never moves the head backwards on a Zcash event. SIP-4 needs a real

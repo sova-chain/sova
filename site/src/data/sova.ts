@@ -55,8 +55,8 @@ export const repo = {
   tree: (path: string) => `${REPO}/tree/main/${path}`,
 };
 
-// The SIPs (sips/*.md; SIP-5 is reserved in docs/WORKPLAN.md row z-2 and
-// docs/ROADMAP.md, not yet written, so it has no `file`). `st` is the status
+// The SIPs (sips/*.md; SIP-5 is withdrawn, its text kept as
+// sips/sip-5-withdrawn.md). `st` is the status
 // word shown as a tag; `note` is the status detail; `file` is the text in
 // sips/ (linked on GitHub). Rendered by /sips and the landing page.
 export const sips = [

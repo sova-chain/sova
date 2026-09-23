@@ -1,0 +1,177 @@
+---
+// /pulse: "Zcash pulse" (SIP-7 demo). Zcash's value pools, read live from
+// Sova state: the ZcashBlocks system contract at 0x…5A01 records every
+// anchored Zcash block. Unlisted demo: noindex, not in sitePages (nav,
+// footer, sitemap). Logic: src/scripts/pulse/app.ts. Local e2e:
+// tools/pulse-feed (anvil + the system call played from real testnet data).
+import Site from '../layouts/Site.astro';
+
+// Override per visit: ?rpc=<sova rpc>&at=<ZcashBlocks address>&n=<history blocks>
+const config = {
+  rpc: 'http://127.0.0.1:8545',
+  at: '0x0000000000000000000000000000000000005a01',
+  n: 96,
+  pollMs: 2000,
+};
+const rows = [
+  { key: 'sapling', label: 'sapling' },
+  { key: 'orchard', label: 'orchard' },
+  { key: 'ironwood', label: 'ironwood' },
+  { key: 'transparent', label: 'transparent' },
+  { key: 'shielded', label: 'Σ shielded' },
+];
+---
+<Site
+  title="Zcash pulse"
+  description="Zcash's shielded pools, read live by Sova every block. No oracle."
+  current="/pulse"
+  cmd="./zcash --pulse"
+  status="demo · unlisted"
+  indexable={false}
+>
+  <div id="pulse" data-config={JSON.stringify(config)}>
+    <h1>Zcash pulse</h1>
+    <p class="lead">Every shielded zatoshi, read by Sova. No oracle.</p>
+
+    <p id="tick" class="tick">
+      <span id="dot" class="dot" aria-hidden="true"></span>
+      zcash <b id="zh">#…</b> <code id="zhash">…</code> <span id="zt" class="dim"></span>
+      <span class="dim">·</span> sova <b id="sh">#…</b>
+    </p>
+
+    <section class="hero" aria-label="Shielded total">
+      <p class="k">ZEC shielded</p>
+      <p class="big" id="big">…</p>
+      <p class="sub">
+        <span id="big-d" class="dz">…</span> <span class="dim">this block</span>
+        <span class="dim">·</span>
+        <span id="big-w" class="dz">…</span> <span class="dim">over <span id="big-n">…</span> blocks</span>
+        <span class="dim">·</span>
+        <span id="big-share">…</span> <span class="dim">of supply</span>
+      </p>
+    </section>
+
+    <div class="pools" role="table" aria-label="Zcash value pools">
+      <div class="hd" role="row">
+        <span role="columnheader">pool</span>
+        <span role="columnheader" class="n">ZEC</span>
+        <span role="columnheader" class="n">this block</span>
+        <span role="columnheader" class="sp">trend</span>
+        <span role="columnheader" class="n">share</span>
+      </div>
+      {rows.map((r) => (
+        <div class={`row ${r.key === 'shielded' ? 'sum' : ''}`} id={`r-${r.key}`} role="row">
+          <span role="rowheader" class="nm">{r.label}</span>
+          <span role="cell" class="n v" id={`v-${r.key}`}>…</span>
+          <span role="cell" class="n dz" id={`d-${r.key}`}>…</span>
+          <svg role="presentation" aria-hidden="true" class="spark" id={`s-${r.key}`} viewBox="0 0 160 28" preserveAspectRatio="none"></svg>
+          <span role="cell" class="n sh"><span id={`p-${r.key}`}>…</span><i class="bar"><i id={`b-${r.key}`}></i></i></span>
+        </div>
+      ))}
+    </div>
+    <p id="others" class="dim others"></p>
+
+    <h2>blocks</h2>
+    <ol id="feed" class="feed" aria-live="polite"></ol>
+
+    <p id="status" class="status" data-k="wait" role="status"><span id="st">connecting</span><span class="cur" aria-hidden="true"></span></p>
+    <p class="dim foot-note"># read from Sova state each block (ZcashBlocks, 0x…5A01, SIP-7). aggregates only: who paid whom stays private.</p>
+    <p id="cfg" class="dim cfg"></p>
+  </div>
+</Site>
+
+<script>
+  import '../scripts/pulse/app';
+</script>
+
+<style>
+  .tick { font-size: 13.5px; margin: 0 0 18px; color: var(--cream); display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; max-width: none !important; }
+  .tick b { color: var(--g); font-weight: 700; }
+  .tick code { font-size: 12.5px; }
+  .tick[data-hover='1'] #zh { color: var(--cream); text-decoration: underline dotted; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--g); box-shadow: 0 0 8px rgba(244, 183, 40, 0.7); }
+  .dot.beat { animation: beat 1.2s ease-out; }
+  @keyframes beat {
+    0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(244, 183, 40, 0.8); }
+    30% { transform: scale(1.6); }
+    100% { transform: scale(1); box-shadow: 0 0 0 14px rgba(244, 183, 40, 0); }
+  }
+
+  .hero { border: 1px solid var(--line); border-left: 2px solid var(--g); background: #110e09; padding: 14px 16px 12px; margin: 0 0 22px; }
+  .hero p { margin: 0 !important; max-width: none !important; }
+  .k { font-size: 12.5px; color: var(--g3); letter-spacing: 0.08em; text-transform: uppercase; }
+  .big {
+    font-size: clamp(28px, 6.4vw, 54px); line-height: 1.15; font-weight: 700; color: var(--g);
+    font-variant-numeric: tabular-nums; letter-spacing: -0.02em; overflow-wrap: anywhere;
+    text-shadow: 0 0 1px rgba(244, 183, 40, 0.6), 0 0 18px rgba(244, 183, 40, 0.3);
+  }
+  .sub { font-size: 13.5px; margin-top: 4px !important; display: flex; flex-wrap: wrap; gap: 0 8px; }
+
+  .dz { font-variant-numeric: tabular-nums; color: var(--text); }
+  .dz[data-s='1'], [data-s='1'] { color: var(--g); }
+  .dz[data-s='-1'], [data-s='-1'] { color: var(--ember); }
+  .dz[data-s='0'] { color: var(--g3); }
+
+  .pools { font-size: 14px; font-variant-numeric: tabular-nums; }
+  .hd, .row {
+    display: grid; grid-template-columns: 12ch minmax(0, 1fr) 13ch minmax(90px, 160px) 10ch;
+    gap: 0 16px; align-items: center; padding: 6px 8px;
+  }
+  /* Same font size as the rows so the ch-based columns line up; shrink the text only. */
+  .hd { color: var(--g3); padding-bottom: 2px; border-bottom: 1px solid var(--line); }
+  .hd span { font-size: 12px; }
+  .row { border-bottom: 1px dashed var(--line); }
+  .row.sum { border-bottom: none; border-top: 1px solid var(--g3); margin-top: 2px; }
+  .row.sum .nm, .row.sum .v { color: var(--g); font-weight: 700; }
+  .row.hit { animation: hit 1.4s ease-out; }
+  @keyframes hit { from { background: rgba(244, 183, 40, 0.16); } to { background: transparent; } }
+  .nm { color: var(--cream); }
+  .n { text-align: right; white-space: nowrap; }
+  .v { color: var(--text); }
+  .spark { width: 100%; height: 28px; display: block; overflow: visible; cursor: crosshair; touch-action: pan-y; }
+  .spark :global(.l) { fill: none; stroke: var(--g); stroke-width: 1.5; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+  .spark :global(.a) { fill: rgba(244, 183, 40, 0.08); stroke: none; }
+  .spark :global(.d) { fill: var(--g); stroke: var(--bg); stroke-width: 1; vector-effect: non-scaling-stroke; }
+  .spark :global(.x) { stroke: var(--g3); stroke-width: 1; vector-effect: non-scaling-stroke; stroke-dasharray: 2 2; }
+  .sh { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; font-size: 13px; }
+  .bar { display: block; width: 100%; height: 2px; background: var(--line); }
+  .bar i { display: block; height: 100%; background: var(--g2); transition: width 0.6s ease-out; }
+  .others { font-size: 12.5px; margin: 8px 8px 0 !important; }
+
+  .feed { list-style: none; padding: 0; margin: 0 0 20px; font-size: 13.5px; font-variant-numeric: tabular-nums; }
+  .feed :global(li) { padding: 3px 0 3px 10px; border-left: 2px solid var(--line); display: flex; flex-wrap: wrap; gap: 0 12px; max-width: none; }
+  .feed :global(li:first-child) { border-left-color: var(--g); }
+  .feed :global(li b) { color: var(--cream); font-weight: 400; }
+  .feed :global(li.in) { animation: in 0.5s ease-out; }
+  @keyframes in { from { opacity: 0; transform: translateY(-6px); background: rgba(244, 183, 40, 0.12); } }
+
+  .status { background: #110e09; border: 1px solid var(--line); border-left: 2px solid var(--g); padding: 6px 12px; margin: 0 0 8px; color: var(--cream); font-size: 13px; max-width: none !important; }
+  .status::before { content: '$ '; color: var(--g3); }
+  .status[data-k='ok'] { color: var(--g2); }
+  .status[data-k='err'] { border-left-color: var(--ember); color: var(--ember); }
+  .status[data-k='err']::before { content: '! '; }
+  .cur { display: inline-block; width: 0.6em; height: 1.05em; margin-left: 4px; vertical-align: -0.18em; background: currentColor; animation: blink 1.1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .foot-note { font-size: 12.5px; }
+  .cfg { font-size: 11.5px; margin-top: 20px; overflow-wrap: anywhere; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .cur, .dot.beat, .row.hit, .feed :global(li.in) { animation: none; }
+    .bar i { transition: none; }
+  }
+
+  @media (max-width: 640px) {
+    .hd { display: none; }
+    .row {
+      grid-template-columns: 1fr auto; grid-template-areas: 'nm v' 'sp dz' 'sp sh';
+      gap: 2px 12px; padding: 8px 2px;
+    }
+    .nm { grid-area: nm; }
+    .v { grid-area: v; }
+    .row .dz { grid-area: dz; font-size: 13px; }
+    .spark { grid-area: sp; height: 34px; align-self: center; }
+    .sh { grid-area: sh; flex-direction: row; align-items: center; gap: 6px; font-size: 12px; }
+    .sh .bar { width: 44px; }
+    .feed :global(li) { gap: 0 8px; font-size: 12.5px; }
+  }
+</style>

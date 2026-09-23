@@ -61,6 +61,25 @@ consensus check defers — `Unknown` is **not** an error there, and the arbiter
 re-checks once the scan catches up (the documented accept-unknown debt,
 bounded to the tip).
 
+Corrected 2026-09-23 after the reorg audit
+(`docs/audits/2026-09-23-reorg-and-fork-choice.md`, F2): the scan gate
+makes every synced block *checkable*; it does not choose between two
+checkable histories. Today a catching-up node follows the first tip it is
+offered. Choosing needs a fork-choice rule across histories (the audit's
+§6.2) and a shipped checkpoint.
+
+Follow-up 2026-09-23 (audit F1 follow-up, `engine/sibling-rule`): an
+*online* node is bounded by the branch rule (`candidates.rs`,
+`CandidateTracker`, `MAX_REPLACE_DEPTH = 3`), not the sibling rule first
+shipped for F1: a branch counts only if it meets the node's chain and, at
+the fork point, extends the head or beats the node's block there by
+(rank, hash), replacing at most three blocks; candidates are ordered by
+their blocks where their branches part, so splits up to three blocks deep
+heal. None of this changes the catching-up case above: a joining or
+restarting node still takes the first valid history offered, a split
+deeper than three blocks does not heal by itself, and after a restart a
+block of the node's own that it never observed counts as the lowest rank.
+
 Open question for implementation: whether `validate_block_pre_execution` can
 distinguish "tip import" from "historical sync" cleanly, or whether the
 deferral should key purely on "height ≤ follower-scanned height → enforce;

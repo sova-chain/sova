@@ -1,0 +1,26 @@
+# zebrad (Zcash testnet) from the pinned official image, host networking,
+# state on the data volume. Config: /etc/sova/zebrad.toml (RPC on
+# 127.0.0.1 only). Image ref: /etc/sova/zebrad.env (ZEBRA_IMAGE_REF).
+[Unit]
+Description=zebrad (Zcash testnet)
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+EnvironmentFile=/etc/sova/zebrad.env
+ExecStartPre=-/usr/bin/docker rm -f zebrad
+ExecStart=/usr/bin/docker run --rm --name zebrad --network host \
+  --log-driver journald \
+  -v /etc/sova/zebrad.toml:/home/zebra/.config/zebrad.toml:ro \
+  -v /var/lib/sova/zebrad:/var/lib/sova/zebrad \
+  -e RUST_LOG=info \
+  ${ZEBRA_IMAGE_REF}
+# A clean stop flushes RocksDB (snapshots need it; see docs/ops/snapshots.md).
+ExecStop=/usr/bin/docker stop -t 110 zebrad
+TimeoutStopSec=120
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target

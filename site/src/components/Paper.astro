@@ -63,8 +63,8 @@ const refs: { a: string; t: string; href: string; extra?: string }[] = [
   { a: 'S. Nakamoto', t: 'Bitcoin: A Peer-to-Peer Electronic Cash System', extra: '2008', href: 'https://bitcoin.org/bitcoin.pdf' },
   { a: 'V. Buterin', t: 'Ethereum: A Next-Generation Smart Contract and Decentralized Application Platform', extra: '2014', href: 'https://ethereum.org/whitepaper' },
   { a: 'A. Dietrichs et al.', t: 'EIP-4895: Beacon chain push withdrawals as operations', href: 'https://eips.ethereum.org/EIPS/eip-4895' },
-  { a: 'Sova', t: 'SIP-6: Sealer Signatures', extra: '(draft)', href: sipUrl(6) },
-  { a: 'Sova', t: 'SIP-7: Zcash Pool State and Events', extra: '(draft)', href: sip7Url },
+  { a: 'Sova', t: 'SIP-6: Sealer Signatures', extra: '(accepted)', href: sipUrl(6) },
+  { a: 'Sova', t: 'SIP-7: Zcash Pool State and Events', extra: '(accepted)', href: sip7Url },
 ];
 ---
 <Direction
@@ -118,7 +118,8 @@ const refs: { a: string; t: string; href: string; extra?: string }[] = [
         chain’s gas, SOVA, is issued only by destroying ZEC in a transparent
         Zcash transaction that names an EVM address. Burns are grouped by Zcash
         block, one Sova block per Zcash block, so Zcash’s proof-of-work orders
-        Sova. Each epoch’s fixed reward is shared among that epoch’s burners in
+        Sova’s epochs and fixes what each one mints. Each epoch’s fixed reward
+        is shared among that epoch’s burners in
         proportion to the ZEC each destroyed, and the largest burner assembles
         the block. Every node re-derives every mint from its own Zcash node and
         rejects a block that disagrees, and every Sova block commits to the Zcash
@@ -273,8 +274,11 @@ const refs: { a: string; t: string; href: string; extra?: string }[] = [
       Sova had no other use for [5]: Zcash is Sova’s beacon (Figure 2). The
       parent hash chains Sova blocks to one another, and the anchor chains each
       of them to a Zcash block, whose own header chains to every Zcash block
-      before it. A Sova block therefore names one Zcash history, and a Sova
-      history is as hard to rewrite as the Zcash history it names.</p>
+      before it. A Sova block therefore names one Zcash history, and no Sova
+      history can name a Zcash history that did not happen. The reverse does
+      not hold: Zcash does not name Sova, so several Sova histories can name
+      the same Zcash chain, and Sova chooses among them by rules of its own
+      (Sections 5 and 10).</p>
 
       <figure class="fig" id="fig2">
         <svg class="dia" viewBox="0 0 420 192" role="img" aria-label="Two chains. Zcash blocks E−1, E and E+1 carry 2 burns, no burns and 1 burn. Below them, Sova blocks h−1, h and h+1 credit 2 addresses, mint nothing, and credit 1 address. Each chain links to its parent by hash; each Sova block points up to the Zcash block it settles, its anchor. h = E − B + 1.">
@@ -327,11 +331,12 @@ const refs: { a: string; t: string; href: string; extra?: string }[] = [
         chains each to the Zcash block it settles.</figcaption>
       </figure>
 
-      <p><span id="s3-3"></span>Fork choice follows each node’s own view of
-      Zcash. If Zcash reorganizes, the Sova blocks that settled the replaced
-      Zcash blocks are unwound and derived again from the replacement chain, and
-      finality on Sova is Zcash confirmation depth [3]. An epoch with no burns
-      still has its block, which mints nothing.</p>
+      <p><span id="s3-3"></span>If Zcash reorganizes, the Sova blocks that
+      settled the replaced Zcash blocks are unwound and derived again from the
+      replacement chain, so a mint is final at Zcash confirmation depth [3].
+      Among Sova blocks that settle the same Zcash chain, a node chooses near
+      the tip by the preference of Section 5; Section 10 says what holds deeper.
+      An epoch with no burns still has its block, which mints nothing.</p>
 
       <span class="folio" aria-hidden="true">3</span>
     </article>
@@ -414,12 +419,19 @@ const refs: { a: string; t: string; href: string; extra?: string }[] = [
       alone.</p>
       <p>Among an epoch’s valid blocks every node prefers the lower rank, then
       the lower block hash. A rank-0 block that arrives after a rank-1 block was
-      accepted displaces it (Figure 3): the node reorganizes one block, at the
-      tip, and builds on rank 0. Below the tip nothing is reconsidered, because
-      the next epoch has already been built on top. Preference is decided by the
-      receiving node from the block’s content, never by the sender and never by
-      arrival time, so two nodes that see the same blocks choose the same
-      head.</p>
+      accepted displaces it (Figure 3): the node replaces the one block at the
+      tip and builds on rank 0. The same preference decides between branches.
+      A block is a candidate if its ancestry, through blocks the node holds,
+      meets the node’s chain, and where it leaves that chain it either extends
+      the node’s head or is preferred to the node’s block at that height, with
+      at most three of the node’s blocks to replace. Candidates are compared by
+      their blocks at the height where their branches part. A branch that would
+      replace more is not a candidate, however it is ranked, so a node never
+      replaces a block once three blocks are built on it. Preference is decided
+      by the receiving node from the block’s content, never by the sender and
+      never by arrival time, so two nodes that see the same blocks choose the
+      same head, even after building on different blocks for up to three
+      epochs.</p>
 
       <figure class="fig" id="fig3">
         <svg class="dia" viewBox="0 0 420 250" role="img" aria-label="One epoch with two ranked burners, rank 0 with weight 5 and rank 1 with weight 2. At time 0 rank 0 may seal but is silent. At time step, rank 1 seals B1 and the head moves to B1. Later, rank 0 seals B0 on the same parent, and the head moves to B0. B1 is displaced: a one-block reorganization at the tip, and the next epoch builds on B0.">
@@ -467,7 +479,7 @@ const refs: { a: string; t: string; href: string; extra?: string }[] = [
           <path d="M120 235.5 L73 216" class="ln dim" marker-end="url(#f3a)" />
           <path d="M290 183.5 H233" class="ln" marker-end="url(#f3a)" />
           <text x="244" y="229" class="sm dim it">displaced: a one-block</text>
-          <text x="244" y="244" class="sm dim it">reorg, at the tip only</text>
+          <text x="244" y="244" class="sm dim it">reorg at the tip</text>
         </svg>
         <figcaption><span class="fl">Figure 3:</span> The ladder keeps the
         chain live when rank 0 is late; preference by rank keeps every node on
@@ -507,9 +519,10 @@ const refs: { a: string; t: string; href: string; extra?: string }[] = [
         requests it and receives it. Blocks are pulled, never pushed.</li>
         <li><span class="sn">5)</span> Each node validates a received block
         against its own Zcash view (Section 7). A valid block becomes a candidate
-        for its epoch, the node moves its head to the best candidate it knows by
-        the preference of Section 5, and it announces a block onward only after
-        accepting it.</li>
+        for its epoch if its branch meets the node’s own chain as Section 5
+        requires, the node moves its
+        head to the best candidate it knows by the preference of Section 5, and
+        it announces a block onward only after accepting it.</li>
         <li><span class="sn">6)</span> The next epoch’s sealer builds on the head
         its own node has chosen.</li>
       </ol>
@@ -523,7 +536,11 @@ const refs: { a: string; t: string; href: string; extra?: string }[] = [
       handshake. A node that has fallen behind fetches the missing blocks from
       peers by the ordinary Ethereum sync, but only up to the Zcash height its
       own Zcash node has reached, so that every block it imports meets a
-      settlement it can check.</p>
+      settlement it can check. Between two histories that both check, it does
+      not yet choose by a rule of its own: it takes the first tip it is
+      offered, and its operator should pin a recent block hash. A rule that
+      ranks whole histories, and checkpoints shipped with the client, are
+      future work (Section 10).</p>
 
       <span class="folio" aria-hidden="true">6</span>
     </article>
@@ -544,7 +561,10 @@ const refs: { a: string; t: string; href: string; extra?: string }[] = [
       mint is vouched for by the Zcash chain alone, as each node reads it. A
       peer cannot mint what the receiving node’s Zcash node does not show, and a
       history in which one mint was altered is rejected at that height by every
-      node that syncs it.</p>
+      node that syncs it. A history in which every mint is intact and the
+      transactions differ is not rejected; it is another valid history, and
+      Section 10 says how a node chooses between two and what it costs to make
+      one.</p>
       <p><span id="s5-2"></span>A block may arrive seconds before the node’s
       own Zcash node has the block it settles. Such a block is held, not
       rejected: the node retries once its scan reaches <i>E<sub>N</sub></i>. A
@@ -637,21 +657,50 @@ const refs: { a: string; t: string; href: string; extra?: string }[] = [
       block by hash. To change a mint at Sova height <i>N</i>, an attacker must
       replace Zcash block <i>E<sub>N</sub></i> and every Zcash block after it,
       that is, reorganize Zcash from that depth, and every Sova node would
-      follow the reorganization identically. Sova adds no proof-of-work of its
-      own and needs none: below the tip, its history is exactly as costly to
-      rewrite as Zcash’s, and the probability that an attacker overtakes the
-      honest Zcash chain from <i>z</i> blocks behind is as computed in [6]. At
-      the tip, the only reorganization Sova performs by itself is the one-block
-      replacement of Section 5, and only by a block of better rank for the same
-      epoch, which pays every burner the same share and moves the tip to its
-      sealer.</p>
+      follow the reorganization identically. The probability that an attacker
+      overtakes the honest Zcash chain from <i>z</i> blocks behind is as
+      computed in [6].</p>
+
+      <p><b>Rewriting a transaction.</b> Rewriting a block without changing its
+      mint is a different matter. Every block that carries the epoch’s
+      settlement at some rank and the epoch’s anchor is valid, whatever it
+      extends and whatever it contains, so Zcash alone does not decide between
+      two such histories, and Sova adds no proof-of-work of its own. Near the
+      tip, the preference of Section 5 decides: a node replaces at most three
+      of its blocks, and only for a branch whose block, where it leaves the
+      node’s chain, has the better rank for the same epoch. The common case is
+      the one block at the tip, replaced by a block of better rank, which pays
+      every burner the same share and moves the tip to its sealer. A
+      transaction is therefore settled once three more epochs are built on its
+      block, about four minutes, not before. Within those three blocks, a
+      rewrite costs a better-ranked block for the epoch where it begins: with
+      the sealer’s signature [9], a block signed by a better-ranked burner of
+      that epoch; until the signature ships, a block that claims the better
+      rank, which anyone can produce. Deeper, a node that is online is not
+      moved at all: a branch that would replace more than three of its blocks
+      is not a candidate (Section 5), however ranked. The same bound keeps a
+      split deeper than three blocks from healing by itself. A
+      node that is joining or catching up has no chain of its own yet to hold
+      to; between two valid histories it takes the first it is offered
+      (Section 6), and until checkpoints ship with the client, its operator
+      pins a recent block hash. Two stronger rules are future work: a
+      preference among whole histories by the ranks of their sealers, so that
+      rewriting from height <i>N</i> takes the key of the rank-0 burner of
+      every epoch since <i>N</i> [9], which still leaves those sealers able,
+      together, to rewrite what they sealed; and burns that name a recent Sova
+      block, so that the ZEC destroyed since <i>N</i> counts for the history
+      it named, and a rewrite must destroy more or reorganize Zcash. A Sova
+      history can never be harder to rewrite than the Zcash history it names;
+      the rules above say how much easier.</p>
 
       <p><b>Censoring at the tip.</b> A sealer chooses its block’s transactions
       for one epoch. With the sealer’s signature in the header [9], keeping a
       transaction out for <i>k</i> epochs means being rank 0 in each of them,
       that is, out-burning every other burner <i>k</i> times, and the ZEC is
       destroyed whether or not the transaction was worth excluding. The
-      transaction is included by the first sealer who is not the attacker.</p>
+      transaction is included by the first sealer who is not the attacker, and
+      stays included as long as that block is not rewritten (Sections 5 and
+      10).</p>
       <p><b>The price of a share.</b> In an epoch with total weight <i>W</i>&nbsp;=&nbsp;Σ&nbsp;<i>w</i>, a SOVA from the pro-rata pool costs <i>W</i>&nbsp;/&nbsp;((9/10)&nbsp;<i>R</i>) in destroyed ZEC. Since <i>R</i> is fixed by the schedule, competition raises this price and never
       the amount minted. At the floor, a burn of 1,000 zatoshis costs more in
       Zcash fees, about 20,000 zatoshis, than in ZEC destroyed; a miner that
@@ -691,7 +740,7 @@ const refs: { a: string; t: string; href: string; extra?: string }[] = [
       makes destroying ZEC the only way to earn SOVA, and makes competition
       raise its price rather than its supply. Ranking the burners chooses a
       sealer without an election, and a preference on rank keeps every node’s
-      choice the same. Because every node derives every mint from its own Zcash
+      choice the same near the tip. Because every node derives every mint from its own Zcash
       node, a node trusts no other node for anything, and the same derivation
       gives contracts a view of Zcash that is identical everywhere. The ZEC a
       contract verifies stays with its payee on Zcash, and the chain holds
@@ -701,7 +750,12 @@ const refs: { a: string; t: string; href: string; extra?: string }[] = [
       specifications are public [2, 3, 4, 5]. The anchor and the precompile of
       Sections 3, 7 and 8 are specified and built, and ship with the public
       testnet, which will be the first public network. The sealer signature of
-      Section 5 is a draft. A wrapped ZEC held by a third party’s signers is
+      Section 5 is accepted and not yet built. Mints are final at Zcash depth; transaction history
+      is not yet: an online node replaces no block once three are built on it,
+      a joining node takes
+      the first valid history it is offered, and the rules of Section 10 that
+      would rank histories objectively are future work. A wrapped ZEC held by
+      a third party’s signers is
       possible later work; it would be custody, it would be called custody, and
       it is no part of this design.</p>
 

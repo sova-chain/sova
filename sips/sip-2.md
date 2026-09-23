@@ -12,8 +12,22 @@ One Zcash block = one epoch. Every SIP-1 burn confirmed in the epoch's
 block makes its EVM address a miner of that epoch; an address's weight is
 the saturating sum of its burns. One Sova block is produced per epoch;
 from base height `B`, epoch `E`'s expected Sova height is `E − B + 1`.
-Sova fork choice follows the node's Zcash view: a Zcash reorg implies the
-corresponding Sova reorg (finality = Zcash confirmation depth).
+A Zcash reorg implies the corresponding Sova reorg; a *mint* is final at
+Zcash confirmation depth. Among Sova blocks on one Zcash chain, fork
+choice is the preference below, applied by the **branch rule**: a
+candidate counts only if its ancestry, through blocks the node holds,
+meets the node's chain, and at the fork point (where it leaves that
+chain) it either extends the node's head or its block beats the node's
+block there by preference, replacing at most `MAX_REPLACE_DEPTH = 3` of
+the node's blocks; candidates are ordered by their blocks at the height
+where their branches part. An online node therefore never replaces a
+block once three blocks are built on it. (Corrected 2026-09-23 after
+the reorg audit, `docs/audits/2026-09-23-reorg-and-fork-choice.md`;
+the earlier text read "Sova fork choice follows the node's Zcash view …
+finality = Zcash confirmation depth", which is true of mints only.)
+(Corrected 2026-09-23: sibling rule replaced by the bounded branch
+rule, see audit F1 follow-up. The sibling rule, "a candidate must extend
+the node's block at the previous height", made any split permanent.)
 
 ## Ranking and sealing
 
@@ -22,8 +36,14 @@ Rank 0 is the epoch's sealer; ranks 1… are liveness fallbacks on a
 timeout ladder (rank r may produce at elapsed ≥ r × step; draft step
 15 s). **Timeouts are liveness-only, never validity or preference**:
 among an epoch's candidate blocks, preference is (rank asc, block hash
-asc) — a late rank-0 block displaces an on-time rank-1 block via a
-micro-reorg bounded to the epoch; equivocations tie-break by hash.
+asc) — a late rank-0 block displaces an on-time rank-1 block, in the
+common case by a one-block replacement of its sibling; a branch that
+would replace more than three of the node's blocks is not a candidate
+(corrected 2026-09-23 after the reorg audit: "micro-reorg bounded to the
+epoch" did not bound the replaced block's ancestry; corrected again
+2026-09-23: sibling rule replaced by the bounded branch rule, see audit
+F1 follow-up; the sibling-rule text read "a block on another parent is
+not a candidate"); equivocations tie-break by hash.
 A node whose chain head already covers an epoch's expected height does
 not produce for it. Empty epochs (no burns) may be extended rewardless
 by recent sealers on the same ladder.
@@ -64,4 +84,9 @@ arbitrates between valid candidates on the receiver, never the sender
 ("relay delivers, arbiter decides"); burn-less epochs require empty
 withdrawals and their candidates tie-break by hash. A late rank-0
 block displacing an on-time rank-1 block via bounded micro-reorg is
-observed behavior, not just intent.
+observed behavior, not just intent. Since 2026-09-23 the bound is the
+branch rule's (Epochs): at most three blocks, and nodes split by up to
+three blocks converge; a deeper split does not heal by itself, and a
+joining or restarting node takes the first valid history offered (audit
+F2), until cumulative sealer-rank fork choice, SIP-8 anchored burns or
+client checkpoints ship.

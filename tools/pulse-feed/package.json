@@ -1,0 +1,19 @@
+{
+  "name": "sova-pulse-feed",
+  "version": "0.1.0",
+  "description": "Plays the SIP-7 ZcashBlocks system call on a dev chain from real Zcash samples, and the /pulse e2e.",
+  "private": true,
+  "type": "module",
+  "license": "MIT OR Apache-2.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "sample": "node sample.mjs",
+    "feed": "node feed.mjs",
+    "e2e": "node e2e.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "1.63.0"
+  }
+}

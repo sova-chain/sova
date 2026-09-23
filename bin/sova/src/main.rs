@@ -61,6 +61,10 @@
 //! `dev` and for the relay transport. `SOVA_DISCOVERY=off` opts out;
 //! `SOVA_P2P_ADDR` / `SOVA_NAT` set the bind IP and NAT resolver.
 //!
+//! Datadir (`SOVA_DATADIR`, see [`open_datadir`]): unset = a fresh
+//! ephemeral datadir per start (box, sims, CI); set = a persistent one, so
+//! the chain and the node key (and with it the enode) survive restarts.
+//!
 //! RPC profile (`SOVA_RPC_PROFILE`, see [`rpc`]): `local` (default —
 //! reth's standard `eth`/`net`/`web3` over HTTP on 127.0.0.1, unfiltered)
 //! or `public` (read-and-broadcast only: `http.api` pinned to
@@ -188,6 +192,7 @@ async fn main() -> eyre::Result<()> {
     // connect before `launch` returns). The service that drains
     // `sova_receivers` is spawned after launch.
     let (network_builder, sova_receivers) = gossip::network_builder(gossip);
+    let (database, datadir_line) = open_datadir(&mut node_config)?;
 
     // NOTE: bind `node` (not `_`, which drops immediately) — the `FullNode`
     // handle owns the running RPC server.
@@ -195,7 +200,8 @@ async fn main() -> eyre::Result<()> {
         node,
         node_exit_future,
     } = NodeBuilder::new(node_config)
-        .testing_node(runtime)
+        .with_database(database)
+        .with_launch_context(runtime)
         .with_types::<SovaNode>()
         .with_components(sova_node.components_builder().network(network_builder))
         .with_add_ons(sova_node.add_ons())
@@ -223,6 +229,24 @@ async fn main() -> eyre::Result<()> {
         "sova {} (pre-release, under construction)",
         env!("CARGO_PKG_VERSION")
     );
+    println!("{datadir_line}");
+    // Branch rule (audit 2026-09-23 F1): fork choice only considers
+    // candidates attached to our own chain, which needs our canonical hashes.
+    // SIP-4 §7: after a Zcash reorg, blocks above the rollback floor are
+    // stale, not ours, so the re-sealed branch extends our (effective) head
+    // however many stale blocks it replaces.
+    {
+        let reader_provider = node.provider.clone();
+        engine::candidates::set_canonical_reader(Box::new(move |h| {
+            let head = reader_provider.best_block_number().unwrap_or(0);
+            let effective = engine::expectations::global()
+                .effective_head(head, |x| canonical_anchor(&reader_provider, x));
+            if h > effective {
+                return None;
+            }
+            reader_provider.block_hash(h).ok().flatten().map(|b| b.0)
+        }));
+    }
     if chain_profile != chain::ChainProfile::Dev {
         println!(
             "chain profile: {} (chain ID {}, {} genesis alloc account(s))",
@@ -554,6 +578,65 @@ fn apply_port_overrides(node_config: &mut NodeConfig<ChainSpec>) {
     if let Some(port) = env_u16("SOVA_P2P_PORT") {
         node_config.network.port = port;
     }
+}
+
+/// `SOVA_DATADIR`: where the node keeps its database, static files and p2p
+/// identity.
+///
+/// - **Unset** (the box, the sims, CI): a fresh `$TMPDIR/reth-test-*`
+///   directory per start with reth's small test-database geometry — the
+///   datadir `testing_node` used to create, so every start is a new chain
+///   and a new node key, exactly as before.
+/// - **Set** (any long-lived node, e.g. `infra/testnet`): that directory,
+///   created if missing, reused across restarts, with reth's production
+///   MDBX geometry. The p2p secret key lives at `<dir>/discovery-secret`
+///   (created on first start), so the node's enode — which bootnode lists
+///   pin — survives restarts, and a restart resumes from the stored chain
+///   instead of re-syncing it.
+fn open_datadir(
+    node_config: &mut NodeConfig<ChainSpec>,
+) -> eyre::Result<(
+    std::sync::Arc<reth_ethereum::provider::db::DatabaseEnv>,
+    String,
+)> {
+    use reth_ethereum::{
+        node::core::{
+            args::DatadirArgs,
+            dirs::{DataDirPath, MaybePlatformPath},
+        },
+        provider::db::{ClientVersion, init_db, mdbx::DatabaseArguments, test_utils},
+    };
+
+    let persistent = std::env::var_os("SOVA_DATADIR")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from);
+    let (dir, args, line) = match persistent {
+        Some(dir) => {
+            std::fs::create_dir_all(&dir)
+                .map_err(|e| eyre::eyre!("SOVA_DATADIR {}: {e}", dir.display()))?;
+            let line = format!(
+                "datadir: {} (persistent; node key {})",
+                dir.display(),
+                dir.join("discovery-secret").display()
+            );
+            (dir, DatabaseArguments::new(ClientVersion::default()), line)
+        }
+        None => {
+            let dir = test_utils::tempdir_path();
+            let line = format!(
+                "datadir: {} (ephemeral: new chain and node key every start; set SOVA_DATADIR to keep them)",
+                dir.display()
+            );
+            (dir, DatabaseArguments::test(), line)
+        }
+    };
+    node_config.datadir = DatadirArgs {
+        datadir: MaybePlatformPath::<DataDirPath>::from(dir.clone()),
+        ..Default::default()
+    };
+    let db = init_db(dir.join("db"), args)
+        .map_err(|e| eyre::eyre!("opening the node database under {}: {e}", dir.display()))?;
+    Ok((std::sync::Arc::new(db), line))
 }
 
 /// Wires `SOVA_AUTH_JWT` (a path) into the node's own authrpc secret, and

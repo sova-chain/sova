@@ -1,0 +1,8 @@
+[Unit]
+Description=Sova host health check (disk, zebrad lag, epoch lag, C5 rejections)
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/sova/health.env
+ExecStart=/usr/local/lib/sova-infra/health.sh

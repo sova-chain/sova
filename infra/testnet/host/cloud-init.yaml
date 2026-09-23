@@ -1,0 +1,75 @@
+#cloud-config
+# infra/testnet/host/cloud-init.yaml -- first boot of every M1 testnet host
+# (Ubuntu 24.04, x86_64). Base only: an admin user, SSH hardening, host
+# firewall default-deny, unattended security upgrades, journald caps (log
+# rotation), Docker for the pinned zebrad image. Role setup (zebrad, sova,
+# faucet, keeper, cloudflared) is setup-host.sh, pushed by deploy.sh, so it
+# can be re-run for upgrades. The admin public key is filled in by
+# provision.sh; nothing secret is ever in this file.
+
+package_update: true
+package_upgrade: true
+packages:
+  - ca-certificates
+  - curl
+  - jq
+  - zstd
+  - ufw
+  - unattended-upgrades
+  - docker.io
+  - python3
+  - git
+  - rsync
+
+users:
+  - name: sova-admin
+    gecos: Sova testnet admin
+    groups: [sudo, adm, systemd-journal]
+    shell: /bin/bash
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: true
+    ssh_authorized_keys:
+      - "@SSH_PUBLIC_KEY@"
+
+disable_root: true
+ssh_pwauth: false
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/60-sova.conf
+    permissions: "0644"
+    content: |
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin no
+      AllowUsers sova-admin
+      X11Forwarding no
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    permissions: "0644"
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+  # Log rotation: every service logs to journald (Docker included, below),
+  # capped here.
+  - path: /etc/systemd/journald.conf.d/60-sova.conf
+    permissions: "0644"
+    content: |
+      [Journal]
+      SystemMaxUse=2G
+      SystemKeepFree=4G
+      MaxRetentionSec=30day
+  # Host networking only (no published ports), so Docker never needs to
+  # rewrite iptables and can't punch holes past ufw.
+  - path: /etc/docker/daemon.json
+    permissions: "0644"
+    content: |
+      {"log-driver": "journald", "iptables": false}
+
+runcmd:
+  - [systemctl, restart, systemd-journald]
+  - [systemctl, restart, docker]
+  - [systemctl, restart, ssh]
+  - [ufw, default, deny, incoming]
+  - [ufw, default, allow, outgoing]
+  - [ufw, allow, 22/tcp]
+  - [ufw, --force, enable]
+  - [systemctl, enable, --now, unattended-upgrades]

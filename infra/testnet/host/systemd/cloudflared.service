@@ -1,0 +1,21 @@
+# Cloudflare Tunnel (outbound only; the host opens no inbound port). The
+# tunnel token is the only secret on rpc/faucet hosts: /etc/sova/cloudflared.env
+# (TUNNEL_TOKEN=..., root 0600), written by `cloudflare.sh tunnels` over
+# SSH stdin, never stored in git or config.env. Ingress rules live at
+# Cloudflare (remotely managed tunnel).
+[Unit]
+Description=cloudflared tunnel
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/etc/sova/cloudflared.env
+
+[Service]
+EnvironmentFile=/etc/sova/cloudflared.env
+ExecStart=/usr/bin/cloudflared --no-autoupdate tunnel run
+Restart=always
+RestartSec=5
+DynamicUser=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

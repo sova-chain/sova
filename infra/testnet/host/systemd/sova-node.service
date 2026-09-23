@@ -1,0 +1,32 @@
+# Sova node: sova-testnet profile, sova/1 P2P + discovery, follow-only
+# (C5-enforcing against this host's own zebrad) unless the env says
+# otherwise (keeper). All knobs: /etc/sova/sova-node.env, written by
+# setup-host.sh. HTTP RPC and authrpc bind to 127.0.0.1 (reth defaults).
+[Unit]
+Description=Sova node (sova-testnet)
+Wants=network-online.target zebrad.service
+After=network-online.target zebrad.service
+# Refuse to start without a pinned epoch base (setup-host.sh writes this
+# marker only once SOVA_EPOCH_BASE is set).
+ConditionPathExists=/etc/sova/epoch-base-pinned
+
+[Service]
+User=sova
+Group=sova
+EnvironmentFile=/etc/sova/sova-node.env
+Environment=TMPDIR=/var/lib/sova/node/tmp
+ExecStart=/usr/local/bin/sova
+Restart=always
+RestartSec=10
+TimeoutStopSec=60
+LimitNOFILE=1048576
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/sova/node
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+
+[Install]
+WantedBy=multi-user.target

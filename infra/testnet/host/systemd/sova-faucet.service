@@ -1,0 +1,22 @@
+# TAZ faucet (infra-2 D5): its own user, its own hot key, loopback only;
+# the public reaches it through cloudflared. docs/ops/faucet.md.
+[Unit]
+Description=Sova TAZ faucet
+Wants=network-online.target zebrad.service
+After=network-online.target zebrad.service
+ConditionPathExists=/var/lib/sova/faucet/keystore.json
+
+[Service]
+User=sova-faucet
+Group=sova-faucet
+ExecStart=/usr/local/bin/sova-faucet run --config /etc/sova/faucet.toml
+Restart=always
+RestartSec=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/sova/faucet
+
+[Install]
+WantedBy=multi-user.target

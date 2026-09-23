@@ -1,0 +1,28 @@
+# Disclosed keeper miner (infra-2 D8, docs/ops/keeper-miner.md). Installed
+# but NOT enabled by setup-host.sh: starting it is a decision (fund the
+# t-addr, publish the disclosure first). Budgets: /etc/sova/keeper.env.
+# Stops itself when the per-run budget is spent (Restart=on-failure).
+[Unit]
+Description=Sova keeper miner (disclosed)
+Wants=network-online.target zebrad.service
+After=network-online.target zebrad.service
+
+[Service]
+User=sova-keeper
+Group=sova-keeper
+EnvironmentFile=/etc/sova/keeper.env
+ExecStart=/usr/local/bin/sova-miner --network test --data-dir /var/lib/sova/keeper mine \
+  --rpc http://127.0.0.1:${ZEBRA_RPC_PORT} \
+  --per-epoch-zat ${KEEPER_PER_EPOCH_ZAT} \
+  --budget-zat ${KEEPER_BUDGET_ZAT} \
+  --lifetime-budget-zat ${KEEPER_LIFETIME_BUDGET_ZAT}
+Restart=on-failure
+RestartSec=30
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/sova/keeper
+
+[Install]
+WantedBy=multi-user.target

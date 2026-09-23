@@ -87,9 +87,14 @@ withdrawals (`driver.rs` `identify_sealer`), and the result is the same
 rank as the honest block. `candidates.rs` then picks the lower hash
 (`sealer::prefer`, `sealer.rs:45-49`). Preference is deterministic, so
 every node that sees both blocks adopts the copy, even if it arrived
-later. The only limit is the arbiter's stale-height skip
-(`candidates.rs:231-239`): the copy must land before the next epoch's
-block is built on top, which gives about 75 s.
+later. The only limit is the branch rule's depth bound (§2.6,
+`MAX_REPLACE_DEPTH = 3` in `candidates.rs`): the copy must land before
+three blocks are built on the honest one, which gives about 225 s, and
+it takes the blocks built on the honest one down with it. (Corrected
+2026-09-23: sibling rule replaced by the bounded branch rule, see audit
+F1 follow-up.) The earlier text read "the arbiter's stale-height skip:
+the copy must land before the next epoch's block is built on top, which
+gives about 75 s."
 
 **What the attacker gains:**
 
@@ -111,8 +116,21 @@ block is built on top, which gives about 75 s.
 
 - **Change the mint.** Withdrawals must equal a rank's derivation (C5),
   so every burner, and the true sealer's tip, is paid exactly as before.
-- **Change the anchor** (SIP-4), rewrite history below the tip epoch,
-  include invalid transactions, or change any rank.
+- **Change the anchor** (SIP-4), include invalid transactions, or change
+  any rank.
+- **Rewrite history more than three blocks below the head**, given the
+  branch rule of §2.6: a candidate's branch must meet the node's chain
+  and, where it leaves it, beat the node's block there, replacing at
+  most three of the node's blocks. Within those three blocks the grinded
+  copy above does rewrite history, today at no cost. (Corrected
+  2026-09-23: sibling rule replaced by the bounded branch rule, see
+  audit F1 follow-up.) The earlier text read "Rewrite history below the
+  tip epoch, once the sibling rule of §2.6 is in place: a candidate must
+  extend the node's canonical block at the previous height." (Corrected
+  2026-09-23 after the reorg audit,
+  `docs/audits/2026-09-23-reorg-and-fork-choice.md` F1: without that
+  rule a grinded tip copy carries any ancestry with it, and the arbiter
+  follows it.)
 
 ### 1.2 The light-client gap
 
@@ -325,11 +343,14 @@ hash tiebreak among concurrent empty producers goes away. So does the
 - **Burn-bearing epochs:** the null block is also valid, at the lowest
   preference (§2.6). Any correctly signed block from any rank displaces
   it. Today empty withdrawals on a burn-bearing epoch are invalid
-  ("reward-withholding", `expectations.rs:439-442`). That rule existed to
-  stop unranked producers withholding mint. It is relaxed only for this
-  one deterministic block. A null block can only become permanent if no
-  ranked burner publishes a signed block before the next epoch is built
-  on top, which is about 75 s.
+  ("reward-withholding", `expectations.rs:439-442`). That rule existed
+  to stop unranked producers withholding mint. It is relaxed only for
+  this one deterministic block. A null block can only become permanent
+  if no ranked burner publishes a signed block before three more epochs
+  are built on top, which is about 225 s (the branch rule's depth,
+  §2.6). (Corrected 2026-09-23: sibling rule replaced by the bounded
+  branch rule, see audit F1 follow-up.) The earlier text read "before
+  the next epoch is built on top, which is about 75 s."
 
 **Production is a liveness policy, not a rule.** A node produces
 `null(parent, E)` when no signed candidate for `E` is known and either:
@@ -404,13 +425,36 @@ Candidate rank, replacing `identify_sealer`'s role in `candidates.rs`:
 | null block | `NULL = usize::MAX` |
 
 Preference stays `(rank asc, hash asc)` (`sealer.rs:45-49`), and the
-rest of SIP-2 is unchanged: timeouts are liveness-only, a late better
-rank wins by micro-reorg, and the arbiter never reorgs below the tip.
-The hash tiebreak now only ever separates one equivocator's own blocks.
-Nobody else can make a block at a signed rank, and there is one null
-block per parent. The ladder's `produce_decision` also treats a seen
-null or equivocator candidate as worse than its own rank, so rank `r+1`
-still seals.
+rest of SIP-2 is unchanged: timeouts are liveness-only, and a late
+better rank wins, in the common case by a one-block replacement of its
+sibling. **Branch rule** (`candidates.rs`, `CandidateTracker`): a
+candidate counts only if its ancestry, through blocks the node holds,
+meets the node's canonical chain, and at the fork point (the height
+where it leaves that chain) either the node's chain ends (it extends the
+head) or its block beats the node's block there by preference, replacing
+at most `MAX_REPLACE_DEPTH = 3` of the node's blocks. Candidates are
+ordered by their blocks at the height where their branches part, so
+every node holding the same blocks prefers the same branch, and nodes
+split by up to three blocks converge. A branch forking deeper is not a
+candidate, whatever its rank: the arbiter never reorgs more than three
+blocks, and a split deeper than that does not heal by itself (audit F2).
+An unobserved block of the node's own (imported before a restart) counts
+as the lowest rank. After SIP-6, beating a block at the fork point needs
+a better-ranked signed block for that epoch. (Corrected 2026-09-23:
+sibling rule replaced by the bounded branch rule, see audit F1
+follow-up.) The sibling rule it replaces ("a candidate is observed only
+if its parent is the node's canonical block at the previous height (or
+it extends a candidate chain attached to it); the arbiter therefore
+never reorgs below the tip") made any split permanent: two nodes that
+once held different blocks at one height never converged again (the
+nightly ladder scenario). (Corrected 2026-09-23 after the reorg audit:
+the earlier "the arbiter never reorgs below the tip" was asserted
+without any such rule, and was false as built, since preference never
+read the parent.) The hash tiebreak now only ever separates one
+equivocator's own blocks. Nobody else can make a block at a signed rank,
+and there is one null block per parent. The ladder's `produce_decision`
+also treats a seen null or equivocator candidate as worse than its own
+rank, so rank `r+1` still seals.
 
 The trust rank for unscanned heights (`usize::MAX`, `observe_unranked`)
 goes away with SIP-4, which holds those blocks instead of accepting them
@@ -473,11 +517,22 @@ After SIP-6, only the ranked sealer can vary its own block: transaction
 selection and order, beneficiary, vanity, timestamp within bounds, and
 which of its candidate blocks to publish. **That is ordinary block
 producer power**, the same as a PoW miner's or a PoS proposer's, and it
-lasts for one block. The difference from today is cost. Censoring a
-transaction at the tip now means **outburning the top burner in every
-epoch you want to censor**. A censored transaction lands in the next
-epoch that has a different sealer. Hash grinding buys the sealer
-nothing: rank beats hash, and publishing two blocks is equivocation.
+lasts for its own block, *given the branch rule of §2.6*: published
+late, that block still displaces a lower rank's block for its epoch, and
+the blocks built on it, until three blocks are built on top. (Corrected
+2026-09-23: sibling rule replaced by the bounded branch rule, see audit
+F1 follow-up.) The earlier text read "it lasts for one block, given the
+sibling rule of §2.6". (Corrected 2026-09-23 after the reorg audit:
+without that rule a rank-0 sealer can build its block on an alternate
+parent and every node follows, so its power reaches back to every epoch
+in which it holds a ranked key; and even with it, a coalition of past
+rank-0 sealers can still offer a joining node a rewritten history, which
+the audit's §6.2 rule and client checkpoints are to bound.) The
+difference from today is cost. Censoring a transaction at the tip now
+means **outburning the top burner in every epoch you want to censor**. A
+censored transaction lands in the next epoch that has a different
+sealer. Hash grinding buys the sealer nothing: rank beats hash, and
+publishing two blocks is equivocation.
 
 Two fields should still be pinned because they are cheap to pin:
 
@@ -582,9 +637,19 @@ it later:
   block was signed by someone else, so no evidence arises. The sealer's
   covered-tip logic still reads `best_seen` from the tracker. A null or
   equivocator candidate counts as beatable.
-- **Arbiter.** It is unchanged. The stale-height skip still bounds reorgs
-  to the tip epoch. It is also what limits an equivocator: evidence that
-  arrives after the next epoch was built on top changes nothing.
+- **Arbiter.** It gains the branch rule (§2.6): below the head it moves
+  only to a preferred branch the tracker admitted, at most three blocks
+  deep. The stale-height skip alone does not bound reorgs, because it
+  compares heights and never parents (corrected 2026-09-23 after the
+  reorg audit; the earlier text read "It is unchanged. The stale-height
+  skip still bounds reorgs to the tip epoch."). (Corrected 2026-09-23:
+  sibling rule replaced by the bounded branch rule, see audit F1
+  follow-up.) The earlier corrected text read "It gains the sibling rule
+  (§2.6)" and "The stale-height skip is still what limits an
+  equivocator: evidence that arrives after the next epoch was built on
+  top changes nothing." The depth bound is now what limits an
+  equivocator: evidence that arrives after three blocks were built on
+  top changes nothing.
 - **sova/1 and the box relay.** The wire format is unchanged. Blocks
   carry the seal in their header (+65 bytes). Both submit via
   `new_payload`, so both go through the conversion shim (§2.1). A bad

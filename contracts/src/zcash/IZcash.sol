@@ -25,6 +25,10 @@ library ZcashStatus {
     uint8 internal constant NO_SUCH_OUTPUT = 4;
     /// @dev burnInfo: the tx is found but is not a SIP-1 burn.
     uint8 internal constant NOT_A_BURN = 5;
+    /// @dev SIP-7 poolValue: the pool id is not defined at this height (a
+    /// status, not a revert, so code written for a future pool behaves the
+    /// same before and after that pool's fork). See IZcashPools.
+    uint8 internal constant NO_SUCH_POOL = 6;
 }
 
 /// @title IZcash: SIP-4 Zcash state precompile (v1)

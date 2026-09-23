@@ -128,10 +128,12 @@ impl PayloadValidator<SovaEngineTypes> for SovaEngineValidator {
                     sealer_rank,
                     block_hash: block.hash().0,
                 },
+                block.parent_hash.0,
             ),
             None => candidates::global().observe_unranked(
                 height,
                 block.hash().0,
+                block.parent_hash.0,
                 withdrawals.map(<[_]>::to_vec).unwrap_or_default(),
             ),
         };
