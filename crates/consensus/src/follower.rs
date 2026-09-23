@@ -46,6 +46,8 @@ pub struct TxOut {
 pub struct TxView {
     /// Txid, display-order bytes.
     pub txid: [u8; 32],
+    /// Transaction format version (SIP-4 `txInfo`).
+    pub version: u32,
     /// Transparent outputs in order.
     pub outputs: Vec<TxOut>,
 }
@@ -59,6 +61,8 @@ pub struct BlockView {
     pub hash: [u8; 32],
     /// Parent block hash, display-order bytes.
     pub prev_hash: [u8; 32],
+    /// Header time (SIP-4 `blockAt`).
+    pub time: u32,
     /// Transactions, block order (coinbase included — the burn rule is
     /// total over every transaction).
     pub txs: Vec<TxView>,
@@ -94,6 +98,11 @@ pub struct EpochData {
     pub hash: [u8; 32],
     /// Every SIP-1 burn recognized in the block, block order.
     pub burns: Vec<EpochBurn>,
+    /// Header time.
+    pub time: u32,
+    /// Every transaction, block order (coinbase first). Feeds the SIP-4
+    /// Zcash index; consumers that only need burns may drop it.
+    pub txs: Vec<TxView>,
 }
 
 /// Events from [`Follower::poll`], in application order.
@@ -201,6 +210,8 @@ impl Follower {
                 height: block.height,
                 hash: block.hash,
                 burns,
+                time: block.time,
+                txs: block.txs,
             }));
         }
 
@@ -240,6 +251,7 @@ mod tests {
                     script: burn_lock_script().to_vec(),
                 },
             ],
+            version: 5,
         }
     }
 
@@ -250,6 +262,7 @@ mod tests {
                 value_zat: 42,
                 script: vec![0x51],
             }],
+            version: 5,
         }
     }
 
@@ -270,6 +283,7 @@ mod tests {
                 hash: h32(hash_byte),
                 prev_hash,
                 txs,
+                time: 0,
             });
         }
 

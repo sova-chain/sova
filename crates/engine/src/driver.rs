@@ -254,7 +254,9 @@ impl SealerCore {
                     self.queue.retain(|&h, _| h <= to_height);
                     out.push(SealerOutcome::Rollback { to_height });
                 }
-                FollowerEvent::Epoch(epoch) => {
+                FollowerEvent::Epoch(mut epoch) => {
+                    // The sealer needs burns, not the full tx list.
+                    epoch.txs = Vec::new();
                     let ranked = rank_miners(&epoch.burns);
                     self.queue.insert(
                         epoch.height,
@@ -493,6 +495,13 @@ pub async fn run_sealer<V: ZcashView>(
                                     "sova epoch trigger"
                                 );
                             }
+                            // Our own consensus holds a block whose epoch the
+                            // expectations follower hasn't scanned yet (SIP-4
+                            // "hold, don't accept"). That follower polls
+                            // separately from ours, so give it a moment rather
+                            // than build a block we'd hold and re-build after
+                            // RETRIGGER.
+                            wait_for_scan(sova_height).await;
                             let target = crate::miner::BuildTarget {
                                 sova_height,
                                 sibling: late_win,
@@ -511,6 +520,26 @@ pub async fn run_sealer<V: ZcashView>(
             Err(err) => tracing::warn!(%err, "zcash view poll failed; retrying"),
         }
         tokio::time::sleep(poll_interval).await;
+    }
+}
+
+/// Longest the sealer waits for the expectations follower to scan a height
+/// it is about to build.
+const SCAN_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Wait (bounded by [`SCAN_WAIT`]) until the expectations follower has
+/// scanned `sova_height`. Returns immediately on a node with no follower
+/// (nothing scanned), where nothing is held.
+async fn wait_for_scan(sova_height: u64) {
+    let started = tokio::time::Instant::now();
+    while let Some(scanned) = crate::expectations::global().scanned_through() {
+        if scanned >= sova_height || started.elapsed() >= SCAN_WAIT {
+            if scanned < sova_height {
+                tracing::debug!(sova_height, scanned, "building ahead of our own scan");
+            }
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 }
 
@@ -544,6 +573,8 @@ mod tests {
             height: 77,
             hash: [0x77; 32],
             burns,
+            time: 0,
+            txs: Vec::new(),
         }
     }
 
@@ -650,6 +681,7 @@ mod tests {
                     script: burn_lock_script().to_vec(),
                 },
             ],
+            version: 5,
         };
         OneShotView {
             blocks: vec![
@@ -658,12 +690,14 @@ mod tests {
                     hash: [1; 32],
                     prev_hash: [0; 32],
                     txs: vec![],
+                    time: 0,
                 },
                 BlockView {
                     height: 2,
                     hash: [2; 32],
                     prev_hash: [1; 32],
                     txs: vec![burn_tx],
+                    time: 0,
                 },
             ],
         }
@@ -794,6 +828,7 @@ mod tests {
                     script: burn_lock_script().to_vec(),
                 },
             ],
+            version: 5,
         };
         OneShotView {
             blocks: vec![
@@ -802,12 +837,14 @@ mod tests {
                     hash: [1; 32],
                     prev_hash: [0; 32],
                     txs: vec![],
+                    time: 0,
                 },
                 BlockView {
                     height: 2,
                     hash: [2; 32],
                     prev_hash: [1; 32],
                     txs: vec![tx(9, top, 60_000), tx(8, second, 40_000)],
+                    time: 0,
                 },
             ],
         }
@@ -868,6 +905,8 @@ mod tests {
             height: 2,
             hash: [2; 32],
             burns: vec![eb(9, 0xBB, 60_000), eb(8, 0xAA, 40_000)],
+            time: 0,
+            txs: Vec::new(),
         };
         let ranked = ranked_miners(&e.burns);
         assert_eq!(
@@ -1104,6 +1143,8 @@ mod tests {
             height: 2,
             hash: [2; 32],
             burns: vec![eb(9, 0xBB, 50_000)],
+            time: 0,
+            txs: Vec::new(),
         };
         assert_eq!(
             identify_sealer(&e, &ranked_miners(&e.burns), DRAFT_EPOCH_REWARD_GWEI, &w),

@@ -102,6 +102,10 @@ impl ZcashView for ZebradClient {
             Some(p) => hash_from_hex(p)?,
             None => [0u8; 32], // genesis
         };
+        let time = field(&block, "time", "getblock")?
+            .as_u64()
+            .and_then(|t| u32::try_from(t).ok())
+            .ok_or_else(|| ViewError::Backend("getblock: time not a u32".to_string()))?;
         let txids = field(&block, "tx", "getblock")?
             .as_array()
             .ok_or_else(|| ViewError::Backend("getblock: tx not an array".to_string()))?
@@ -113,6 +117,10 @@ impl ZcashView for ZebradClient {
                 .as_str()
                 .ok_or_else(|| ViewError::Backend("getblock: txid not a string".to_string()))?;
             let tx = self.call_required("getrawtransaction", json!([txid_hex, 1]))?;
+            let version = field(&tx, "version", "getrawtransaction")?
+                .as_u64()
+                .and_then(|v| u32::try_from(v).ok())
+                .ok_or_else(|| ViewError::Backend("tx: version not a u32".to_string()))?;
             let vout = field(&tx, "vout", "getrawtransaction")?
                 .as_array()
                 .cloned()
@@ -134,6 +142,7 @@ impl ZcashView for ZebradClient {
             }
             txs.push(TxView {
                 txid: hash_from_hex(txid_hex)?,
+                version,
                 outputs,
             });
         }
@@ -142,6 +151,7 @@ impl ZcashView for ZebradClient {
             height,
             hash,
             prev_hash,
+            time,
             txs,
         }))
     }

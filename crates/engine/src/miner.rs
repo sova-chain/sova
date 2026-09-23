@@ -185,8 +185,16 @@ where
                 target == best,
                 "late-win height {target} is no longer the tip ({best})"
             );
-        } else {
-            if target <= best {
+        } else if target <= best {
+            // Built already — unless the canonical block there is anchored to
+            // a Zcash block that reorged away (SIP-4 §7): then re-seal it on
+            // its canonical parent; adopting ours reorgs the stale tail out.
+            let anchor = self
+                .provider
+                .sealed_header(target)?
+                .and_then(|h| h.parent_beacon_block_root())
+                .map(|r| r.0);
+            if !crate::expectations::global().is_stale(target, anchor) {
                 tracing::debug!(
                     target,
                     best,
@@ -194,6 +202,12 @@ where
                 );
                 return Ok(());
             }
+            tracing::warn!(
+                target,
+                best,
+                "sova miner: canonical block anchored to an orphaned zcash block; re-sealing"
+            );
+        } else {
             eyre::ensure!(
                 target == best.saturating_add(1),
                 "parent {} not canonical yet (head {best})",

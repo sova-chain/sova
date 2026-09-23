@@ -227,7 +227,28 @@ pub async fn run_arbiter<H, W, F, Fut>(
     F: Fn(BestCandidate) -> Fut + Send,
     Fut: std::future::Future<Output = Result<(), String>> + Send,
 {
-    while let Some(best) = rx.recv().await {
+    // An adoption whose forkchoice update failed (typically SYNCING: the
+    // block was held until our Zcash scan reached it, and imported a moment
+    // later). The candidate stays preferred, so no new notification comes;
+    // retry it until it lands or stops being the one to adopt.
+    let mut pending: Option<BestCandidate> = None;
+    let mut retry = tokio::time::interval(ADOPT_RETRY);
+    retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        let best = tokio::select! {
+            msg = rx.recv() => match msg {
+                Some(best) => best,
+                None => return,
+            },
+            _ = retry.tick(), if pending.is_some() => {
+                let Some(p) = pending.take() else { continue };
+                // Only if it is still the preferred candidate for its height.
+                if global().best(p.sova_height).map(|c| c.block_hash) != Some(p.block_hash) {
+                    continue;
+                }
+                p
+            }
+        };
         let head = head_height();
         if best.sova_height < head {
             tracing::debug!(
@@ -256,19 +277,30 @@ pub async fn run_arbiter<H, W, F, Fut>(
             continue;
         }
         match fcu(best).await {
-            Ok(()) => tracing::info!(
-                height = best.sova_height,
-                hash = %alloy_primitives::hex::encode(best.block_hash),
-                "arbiter adopted preferred candidate"
-            ),
-            Err(err) => tracing::warn!(
-                height = best.sova_height,
-                %err,
-                "arbiter forkchoice update failed"
-            ),
+            Ok(()) => {
+                tracing::info!(
+                    height = best.sova_height,
+                    hash = %alloy_primitives::hex::encode(best.block_hash),
+                    "arbiter adopted preferred candidate"
+                );
+                if pending.is_some_and(|p| p.sova_height <= best.sova_height) {
+                    pending = None;
+                }
+            }
+            Err(err) => {
+                tracing::warn!(
+                    height = best.sova_height,
+                    %err,
+                    "arbiter forkchoice update failed; will retry"
+                );
+                pending = Some(best);
+            }
         }
     }
 }
+
+/// How often a failed adoption is retried (see [`run_arbiter`]).
+pub const ADOPT_RETRY: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// A chain tip a peer offered that is too far ahead for `sova/1`'s bounded
 /// ancestor chase: the catch-up target for [`run_sync_driver`].

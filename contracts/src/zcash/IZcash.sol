@@ -23,6 +23,8 @@ library ZcashStatus {
     /// @dev txOutput: the tx is found but has no transparent output `vout`
     /// (vout >= nOut; a fully shielded tx has nOut = 0).
     uint8 internal constant NO_SUCH_OUTPUT = 4;
+    /// @dev burnInfo: the tx is found but is not a SIP-1 burn.
+    uint8 internal constant NOT_A_BURN = 5;
 }
 
 /// @title IZcash: SIP-4 Zcash state precompile (v1)
@@ -77,7 +79,7 @@ interface IZcash {
     function txInfo(bytes32 txid)
         external
         view
-        returns (uint8 status, uint64 height, uint32 index, uint64 confirmations, uint16 nOut, uint32 version);
+        returns (uint8 status, uint64 height, uint32 index, uint64 confirmations, uint32 nOut, uint32 version);
 
     /// @notice A transparent output of a mined transaction.
     /// @return status OK, NOT_FOUND (tx unknown) or NO_SUCH_OUTPUT
@@ -91,8 +93,8 @@ interface IZcash {
 
     /// @notice The SIP-1 burn carried by a tx, via the exact consensus
     /// parser (`sip1::extract_burn`).
-    /// @return status OK, or NOT_FOUND (see report: tx-unknown vs
-    /// not-a-burn is an open point for the node side).
+    /// @return status OK, NOT_FOUND (tx unknown or outside Z[B .. E_N]),
+    /// or NOT_A_BURN (tx found, not a SIP-1 burn).
     /// @return credited Sova address the burn credits.
     /// @return signal SIP-1 signal field.
     /// @return weightZat Burned weight in zatoshis.

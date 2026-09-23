@@ -844,3 +844,217 @@ trust". Proposed:
    toward a target and one when that target is gated on the follower,
    e.g. `catch-up: target H (hash), follower scanned S; waiting` and
    `catch-up: FCU to H (download|backfill)`.
+
+## SIP-4 anchor precompile: `anchor-precompile-scenario.sh` (nightly CI)
+
+Proves the SIP-4 `anchor()` precompile (`0x…5A00`, `crates/evm/src/zcash.rs`,
+`docs/design/sip4-evm-seam.md`) gives the same answer on every node and
+every import path. A 57-byte recorder contract (inline bytecode, listed in
+the script header) STATICCALLs `anchor()` and SSTOREs the result at slots
+`2N` (`E_N`) and `2N+1` (hash), so a node whose precompile answered
+differently would compute a different state root.
+
+- **A** is mine mode, sova/1, dev profile. The epoch base is set after 10
+  pre-mined Zcash blocks (`B = 11`), so `E_N = N + B − 1` is not the
+  identity.
+- **B** is follow-only, C5-enforcing, with sova/1 static peer A.
+- **J** is a late joiner. It is follow-only, starts from an empty datadir,
+  and has static peer A. It starts after the recorder blocks exist, with
+  `JOIN_DEPTH` (default 5) more blocks after them. The gap stays inside
+  sova/1's 33-block chase.
+
+All three nodes share one regtest zebrad, as in `two-node-p2p-scenario.sh`.
+Each node answers from its **own** follower's index. Transactions are
+signed with reth's public dev key through `cast send`, so foundry must be
+on PATH. The workflow installs it with `foundry-rs/foundry-toolchain`.
+The scenario never burns, so it needs no `sova-miner`.
+
+Assertions:
+
+- (1) At least 5 recorder transactions land in consecutive blocks, and
+  every receipt has status 1.
+- (a) For every recorder block, the block hash and `stateRoot` match on
+  A, B and J, and so does the receipt.
+- (b) At every recorder block N, on all three nodes, `storage[2N]` equals
+  `N+B−1`. `storage[2N+1]` equals that block's `parentBeaconBlockRoot`,
+  which equals zebrad's `getblockhash(N+B−1)`. In the control block (the
+  one before the first recorder block), slot `2N` is 0.
+- (c) `eth_call` of `anchor()` at `0x5A00`, run at each historical recorder
+  block, returns `(N+B−1, root_N)` on all three nodes.
+- (d) J catches up. A, B and J have the same hash and `stateRoot` at a
+  common tip, and no node logs a reputation hit.
+
+Isolation: zebrad on `:18362` (project `sova-anchor-sim`, container
+`sova-zebrad-anchor`), A 9745/9751/30711, B 9845/9851/30712, J
+9945/9951/30713 (J uses `p2p-common.sh`'s C slot, log `node-j.log`).
+
+### Results on 2026-09-23: green, two runs from cold
+
+    PASS (1) 5 recorder tx(s); 5 in consecutive blocks (blocks 4 5 6 7 8)
+    PASS (d) J reached the join tip 13 in 9s
+    PASS (a) blocks 4..8: hash/stateRoot identical on A, B, J (block 4: 0x557365c4…cff16d / 0xece86919…eecbc)
+    PASS (b) node A/B/J block 4: stored E_N=14, hash == parentBeaconBlockRoot == zebrad getblockhash(14) (0x27d2964c…f2dbee)
+    PASS (b) control: no anchor stored for block 3
+    PASS (c) node A/B/J eth_call@4..8: anchor() == (14..18, root_N)
+    PASS (d) common tip 19: hash/stateRoot identical on A, B, J
+    diagnostics: node B refused precompile calls: 4 ('engine submit failed': 2), A 0, J 0
+                 node A: eth_call anchor() at "pending": ERR ... zcash index has no block at anchored height 30 (sova block 20)
+    ANCHOR PRECOMPILE SCENARIO PASSED
+
+What the diagnostics show:
+
+- **B refuses blocks and then retries them, as SIP-4 §5 describes.** In
+  both runs, some recorder blocks reached B before B's own follower had
+  indexed their epoch. For example:
+  `fatal: sova zcash precompile: zcash index has no block at anchored height 14 (sova block 4)`.
+  The block was refused on the sova/1 `new_payload` path (`engine submit
+  failed`) and on the engine tree's downloaded-block path. It was never
+  marked invalid. B imported it on the next announcement, one block
+  later, with the same state root. The refusal happens *at execution*
+  because C5's `check_settlements` *defers* (returns `Ok`) when
+  `height > scanned`. The seam doc's still-needed item 4, a transient
+  `AnchorUnscanned` hold before execution, would stop these blocks
+  before they run.
+- **J never refuses a block.** It fetches its whole history through
+  sova/1's ancestor chase after its follower has scanned everything, so
+  every buffered block executes against a full index.
+- **`anchor()` at `pending` is a fatal RPC error.** `N = latest + 1`, and
+  that Zcash block does not exist yet. So `eth_call` and `eth_estimateGas`
+  at `pending` fail for any transaction that reaches the precompile. The
+  scenario passes an explicit gas limit so it never estimates.
+
+## SIP-4 §7 Zcash reorg: `zcash-reorg-scenario.sh` (nightly)
+
+This is the acceptance test for SIP-4 §7 (`sips/sip-4-draft-zcash-state-precompile.md`
+§7, and §11 box scenario 2). A Zcash reorg to height `R` must invalidate
+every Sova block with `E_N > R` on every node. Sova unwinds to
+`N_R = R − B + 1`, re-seals on the new branch, and contract state that
+depended on a reorged-out Zcash transaction rolls back the same way on
+every node. **It passes since the §7 rollback landed** (37/37 locally):
+after a Zcash rollback to `R`, `ExpectedSettlements::effective_head`
+reports `N_R` while the canonical block at `N_R + 1` is anchored to an
+orphaned Zcash block, so the sealer re-seals `N_R + 1` on its canonical
+parent and the arbiter adopts it below the stale tip; reth then reorgs the
+stale tail out. It gates the nightly like every other scenario.
+Assertion (r) checks that no node seals on the stale tip while Zcash has no
+replacement branch (an artificial state: on a live network a reorg *is* a
+longer branch arriving); the head itself moves back only once a
+replacement block exists, so RPC can serve the stale tip for that gap.
+Before the rollback landed, this scenario failed 11 assertions (heads stuck
+at the old tip, orphaned mint kept).
+
+- **A** runs in mine mode (sova/1, dev profile) with a `sova-miner init`
+  identity, so A is rank 0 for its own burn. **B** is follow-only and
+  C5-enforcing, with sova/1 static peer A. Both share one regtest zebrad.
+- A 75-byte **recorder** (inline bytecode, listed in the script header)
+  takes a Zcash txid as calldata, STATICCALLs `txInfo(txid)` at `0x…5A00`,
+  and stores `status+1`, `height` and `confirmations` at slots `3N..3N+2`.
+  Block N's state root therefore depends on what the node's index says
+  about T as of `E_N`.
+- **T** is a real SIP-1 burn (`sova-miner mine --max-epochs 1`) mined at
+  Zcash `h`. It mints at `N_burn = h − B + 1`. The epoch base is
+  `B = 102`, set after the 101 funding blocks.
+- **Reorg.** Zcash is frozen and zebrad runs `invalidateblock(h)`, so
+  `R = h − 1`. A replacement branch without T is mined, 2 blocks longer
+  than the old one, and auto-mine resumes. T is then re-broadcast and
+  re-mined at `h'` (set `REINCLUDE=0` to skip this). Recorder calls land
+  before the reorg, on the new branch before `h'`, and after `h'`.
+
+Assertions:
+
+- **(P) control, before the reorg.** A and B match on every block, every
+  anchor equals zebrad's hash, the recorder saw T at `h` with
+  `E_N − h + 1` confirmations, and the burn minted only at `N_burn`. The
+  miner's balance equals its withdrawals. Transactions pay zero priority
+  fee, and the miner is also the fee recipient, so fees can't blur the
+  mint check.
+- **(r)** Within 30 s of `invalidateblock`, before any replacement block
+  exists, both heads drop to exactly `N_R`.
+- **(a)** At the end, every canonical block `1..head` on both nodes has
+  `parentBeaconBlockRoot == getblockhash(N+B−1)` on the new branch. Blocks
+  `N_R+1..H_old` carry new hashes, and blocks `1..N_R` keep their old ones.
+- **(b)** A and B have identical hash and `stateRoot` at every height
+  from `N_R` to the head, and the same head.
+- **(c)** Every canonical recorder observation above `N_R` matches the
+  new branch's derivation: `NOT_FOUND` while `E_N < h'`, otherwise
+  `(h', E_N − h' + 1)`. A and B agree. At least one `NOT_FOUND`
+  observation and one found-at-`h'` observation exist.
+- **(d)** The orphaned mint is gone. The only canonical withdrawal to the
+  miner is at `h' − B + 1`. The balance matches on A and B, equals the
+  canonical withdrawals, and equals one epoch reward.
+- **(e)** After the reorg both heads keep advancing, B stays within 1 of
+  A, and no node logs a reputation hit.
+
+Isolation: zebrad on `:18392` (project `sova-reorg-sim`, container
+`sova-zebrad-reorg`), A 9445/9451/30811, B 9645/9651/30812. The script
+copies zebrad's log into the work dir as `zebrad.log`, so
+`SOVA_P2P_SIM_KEEP_LOGS` keeps it. Foundry's `cast` must be on PATH. A
+run takes about 5 minutes.
+
+### A harness finding: zebrad re-submits T on the new branch
+
+The first local runs sometimes had the "T-less" replacement branch
+re-mine T at the same height `h`. That makes the reorg invisible to the
+recorder and to the mint. The cause is not the mempool reset: after
+`invalidateblock`, zebrad logs `re-verifying mempool transactions after a
+chain fork transactions=0`. The cause is zebrad's **`sendrawtransaction`
+retry queue** (`zebra-rpc/src/queue.rs`). Every transaction sent over RPC
+waits there until a queue pass sees it in the mempool or the chain. A
+pass runs once per target block spacing, which is **75 s on regtest**,
+and only if the tip height moved since the previous pass. If no pass ran
+between T's broadcast and the invalidation, the next pass re-submits T
+onto the new branch. It happened in 2 of the first 5 runs. The scenario
+now waits `RPC_QUEUE_WAIT_S` (90 s) after the burn before freezing, and
+mines one block every 15 s meanwhile so the tip moves and the reorg stays
+shallow. It also watches the mempool from the invalidation to the
+replacement and aborts the setup if T reappears. Any future reorg
+scenario that invalidates a block holding an RPC-submitted transaction
+needs the same wait.
+
+### Results on 2026-09-23 (`z1/sip4-v1` + this scenario): fails as expected
+
+Three runs in a row (276 to 305 s each) failed identically, with 11
+failed assertions each. The control (P) passed every time. A typical run: `B=102`, `h=106`,
+`R=105`, `N_R=4`, old Zcash tip 116, old Sova head 15, T re-mined at
+`h'=123`.
+
+    PASS (P) A and B identical 1..15; anchors == zebrad; recorder saw T at h=106; mint only at 5
+    FAIL (r) node A: head 15 after 30s (lowest seen 15), want N_R=4: blocks 5..15 still anchor orphaned Zcash blocks
+    FAIL (r) node B: head 15 after 30s (lowest seen 15), want N_R=4
+    FAIL (a) node A/B: 11 canonical block(s) anchored to ORPHANED Zcash blocks: heights 5..15
+    FAIL (a) blocks still carrying their PRE-reorg hash above N_R=4: 5..15
+    PASS (b) block hash and stateRoot identical on A and B at every height 4..head
+    FAIL (c) block 6..9: stored A='1 106 2..5' B='1 106 2..5', want '2 0 0' (T NOT_FOUND on the new branch)
+    PASS (c) blocks 19..21: T NOT_FOUND; blocks after h': T at 123 with new confirmations
+    FAIL (d) canonical miner withdrawals at '5 22', want '22' (the orphaned burn's mint stayed)
+    FAIL (d) balance 12500000000000000000000 wei == 2.0 epoch rewards, want 1
+    PASS (e) liveness (B within 1 of A); no reputation hits
+
+What happens on the current code:
+
+- **Nobody unwinds, and nobody stalls.** Both nodes log `expectations and
+  candidates unwound (zcash reorg) to_height=R`. A's sealer also logs
+  `zcash reorg observed (v0: log-only)`. Both heads stay at the old head
+  for the whole 30 s window (`lowest seen` never drops). No block is ever
+  held for an anchor mismatch (`'anchor mismatch': 0`). B's only holds are
+  the ordinary tip `zcash epoch not scanned yet` holds, which clear within
+  a poll.
+- **The chain grows on top of the orphaned blocks.** The sealer skips new
+  epochs whose expected height is at or below the stale head. Once the
+  new branch passes the old Zcash tip, it seals `H_old+1` on top of the
+  stale block `H_old`, anchored to the new branch. `check_settlements`
+  validates only the new block's own anchor. It never checks that the
+  parent chain is anchored to the same Zcash chain, and blocks that are
+  already canonical are never re-checked after the expectations are
+  unwound. B imports the same blocks, so A and B agree with each other,
+  and **(b) passes**, but both disagree with their own zebrad for every
+  block in `N_R+1..H_old`.
+- **The precompile itself is correct after the reorg.** New blocks see T
+  as `NOT_FOUND`, then at `h'` with the right confirmations, because the
+  index is unwound and rebuilt from the new branch. Only the stale blocks
+  keep their answers. So the missing piece is the head rollback (FCU to
+  `N_R`, then re-seal), and B needs the equivalent move when it holds
+  canonical blocks above `N_R`. Not run here, but it follows from
+  `check_settlements`: a late joiner would hold the stale blocks on
+  `AnchorMismatch`, which is transient, so it would stall rather than
+  fork. This scenario doesn't cover that case.

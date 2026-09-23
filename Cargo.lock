@@ -2895,6 +2895,7 @@ dependencies = [
 name = "evm"
 version = "0.1.0"
 dependencies = [
+ "consensus",
  "eyre",
  "reth-ethereum",
 ]

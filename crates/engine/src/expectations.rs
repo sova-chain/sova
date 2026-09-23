@@ -121,6 +121,11 @@ pub struct ExpectedSettlements {
     /// Highest Sova height with a record, contiguous from the first
     /// scanned height; 0 = nothing scanned (Sova heights start at 1).
     scanned: AtomicU64,
+    /// Lowest pending rollback floor + 1 (0 = none): after a Zcash reorg
+    /// unwinds us to Sova height `N_R`, canonical blocks above `N_R` may
+    /// be anchored to orphaned Zcash blocks until they are re-sealed
+    /// (SIP-4 §7). See [`Self::effective_head`].
+    unwound: AtomicU64,
 }
 
 impl ExpectedSettlements {
@@ -151,12 +156,56 @@ impl ExpectedSettlements {
     }
 
     /// Drop expectations above `height` (Zcash reorg: they regenerate
-    /// from the replacement chain).
+    /// from the replacement chain) and remember `height` as a rollback
+    /// floor for [`Self::effective_head`].
     pub fn unwind_above(&self, height: u64) {
         if let Ok(mut map) = self.map.lock() {
             map.retain(|&h, _| h <= height);
             self.scanned.fetch_min(height, Ordering::SeqCst);
         }
+        let floor = height.saturating_add(1);
+        let _ = self
+            .unwound
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |cur| {
+                Some(if cur == 0 { floor } else { cur.min(floor) })
+            });
+    }
+
+    /// Whether the canonical block at `height`, whose Zcash anchor is
+    /// `canonical_anchor`, commits to a Zcash block our follower no longer
+    /// has there (it was built on a branch Zcash reorged away).
+    #[must_use]
+    pub fn is_stale(&self, height: u64, canonical_anchor: Option<[u8; 32]>) -> bool {
+        self.record(height)
+            .is_some_and(|r| canonical_anchor != Some(r.epoch.hash))
+    }
+
+    /// SIP-4 §7: the head the sealer and arbiter should act on. After a
+    /// Zcash reorg unwound us to `N_R`, canonical blocks above `N_R` are
+    /// stale until the block at `N_R + 1` matches our follower's new branch;
+    /// until then the effective head is `N_R`, so the sealer re-seals
+    /// `N_R + 1` on its canonical parent and the arbiter adopts a
+    /// replacement below the (stale) tip. reth then reorgs the stale
+    /// blocks out when the replacement becomes head.
+    /// `anchor_at(h)` reads the canonical block's `parent_beacon_block_root`.
+    pub fn effective_head(&self, head: u64, anchor_at: impl Fn(u64) -> Option<[u8; 32]>) -> u64 {
+        let pending = self.unwound.load(Ordering::SeqCst);
+        if pending == 0 {
+            return head;
+        }
+        let floor = pending - 1;
+        let first = floor.saturating_add(1);
+        let resolved = head <= floor
+            || self
+                .record(first)
+                .is_some_and(|r| anchor_at(first) == Some(r.epoch.hash));
+        if resolved {
+            let _ = self
+                .unwound
+                .compare_exchange(pending, 0, Ordering::SeqCst, Ordering::SeqCst);
+            return head;
+        }
+        floor
     }
 
     /// SIP-4 anchor check: a block at `height` must commit, in
@@ -278,12 +327,18 @@ pub async fn run_expectations<V: ZcashView>(
                             let sova = to_height.saturating_sub(base_height).saturating_add(1);
                             global().unwind_above(sova);
                             crate::candidates::global().unwind_above(sova);
+                            crate::zcash_index::global().unwind_above(to_height);
                             tracing::warn!(
                                 to_height,
                                 "expectations and candidates unwound (zcash reorg)"
                             );
                         }
-                        FollowerEvent::Epoch(epoch) => {
+                        FollowerEvent::Epoch(mut epoch) => {
+                            // Index first: once the expectations watermark
+                            // lets a block through consensus, the precompile
+                            // must already cover its anchor.
+                            crate::zcash_index::global().insert(&epoch);
+                            epoch.txs = Vec::new();
                             let sova_height =
                                 epoch.height.saturating_sub(base_height).saturating_add(1);
                             let reward_gwei = schedule.reward_gwei(sova_height.saturating_sub(1));
@@ -347,6 +402,8 @@ mod tests {
                 height: 0,
                 hash: [0; 32],
                 burns: Vec::new(),
+                time: 0,
+                txs: Vec::new(),
             },
             ranked: Vec::new(),
         }
@@ -418,6 +475,8 @@ mod tests {
             height: 100,
             hash: [7; 32],
             burns,
+            time: 0,
+            txs: Vec::new(),
         };
         let ranked = ranked_miners(&epoch.burns);
 
@@ -494,5 +553,58 @@ mod tests {
         assert_eq!(e.check(4, None), Verdict::Match);
         assert_eq!(e.check(5, None), Verdict::Unknown);
         assert_eq!(e.check(10, None), Verdict::Unknown);
+    }
+
+    fn rb_rec(hash: u8) -> HeightRecord {
+        HeightRecord {
+            withdrawals: Vec::new(),
+            epoch: EpochData {
+                height: 0,
+                hash: [hash; 32],
+                burns: Vec::new(),
+                time: 0,
+                txs: Vec::new(),
+            },
+            ranked: Vec::new(),
+        }
+    }
+
+    /// SIP-4 §7: after a Zcash reorg to N_R, the effective head is N_R
+    /// until the block at N_R + 1 matches the new branch; then it clears.
+    #[test]
+    fn effective_head_holds_at_the_rollback_floor_until_resealed() {
+        let e = ExpectedSettlements::default();
+        for h in 1..=10 {
+            e.insert(h, rb_rec(h as u8));
+        }
+        // Canonical chain 1..=15 anchored to the old branch (hash = h).
+        let old = |h: u64| Some([h as u8; 32]);
+        assert_eq!(e.effective_head(15, old), 15, "no rollback yet");
+        e.unwind_above(4);
+        // New branch rescanned: heights 5.. now carry different hashes.
+        for h in 5..=12 {
+            e.insert(h, rb_rec(0x80 + h as u8));
+        }
+        assert!(e.is_stale(5, old(5)));
+        assert!(!e.is_stale(4, old(4)));
+        assert_eq!(e.effective_head(15, old), 4, "stale above N_R");
+        // The replacement at 5 became canonical.
+        let new = |h: u64| {
+            Some(if h >= 5 {
+                [0x80 + h as u8; 32]
+            } else {
+                [h as u8; 32]
+            })
+        };
+        assert_eq!(e.effective_head(5, new), 5);
+        assert_eq!(e.effective_head(15, old), 15, "cleared once resolved");
+    }
+
+    #[test]
+    fn a_rollback_above_the_head_changes_nothing() {
+        let e = ExpectedSettlements::default();
+        e.insert(1, rb_rec(1));
+        e.unwind_above(7);
+        assert_eq!(e.effective_head(3, |_| None), 3);
     }
 }

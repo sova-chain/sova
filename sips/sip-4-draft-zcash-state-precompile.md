@@ -133,8 +133,10 @@ answer reports its depth. The Solidity library requires an explicit
 
 One precompile address (provisional): `0x0000000000000000000000000000000000005A00`.
 It uses Solidity ABI dispatch (4-byte selectors), so contracts call it
-through an ordinary `interface IZcash`. It is read-only: a call with
-`value > 0` reverts, and `STATICCALL` and `DELEGATECALL` both work.
+through an ordinary `interface IZcash`. It is read-only: a direct call with
+`value > 0` reverts, and `STATICCALL` and `DELEGATECALL` both work. Under `DELEGATECALL` the precompile sees the caller's
+apparent value, so rejecting that would break payable functions that
+forward to it.
 
 Byte order: `txid` and block hashes are **display-order** bytes (what
 explorers and RPC hex show), as in the follower. Values are integer
@@ -144,13 +146,19 @@ explorers and RPC hex show), as in the follower. Values are integer
 |---|---|---|
 | `anchor()` | `(uint64 height, bytes32 hash)` | `E_N` and its committed hash |
 | `blockAt(uint64 h)` | `(uint8 status, bytes32 hash, uint32 time)` | header time, for `B ≤ h ≤ E_N` |
-| `txInfo(bytes32 txid)` | `(uint8 status, uint64 height, uint32 index, uint64 confirmations, uint16 nOut, uint32 version)` | any tx, fully shielded ones included (txid, height and position are public) |
+| `txInfo(bytes32 txid)` | `(uint8 status, uint64 height, uint32 index, uint64 confirmations, uint32 nOut, uint32 version)` | any tx, fully shielded ones included (txid, height and position are public) |
 | `txOutput(bytes32 txid, uint32 vout)` | `(uint8 status, uint64 valueZat, bytes script)` | transparent outputs only; script ≤ 10,000 bytes |
 | `burnInfo(bytes32 txid)` | `(uint8 status, address credited, uint32 signal, uint64 weightZat)` | the exact consensus SIP-1 parser (`sip1::extract_burn`) |
 | `spentBy(bytes32 txid, uint32 vout)` *(v1.1)* | `(uint8 status, bytes32 spender, uint64 height)` | outputs created at `≥ B`; needs the follower to index inputs |
 
 Status codes: `OK = 0`, `NOT_FOUND = 1` (not in `Z[B .. E_N]` on the
-anchored chain), `NOT_YET = 2`, `OUT_OF_RANGE = 3`, `NO_SUCH_OUTPUT = 4`.
+anchored chain), `NOT_YET = 2`, `OUT_OF_RANGE = 3`, `NO_SUCH_OUTPUT = 4`,
+`NOT_A_BURN = 5` (`burnInfo`: the tx exists but is not a SIP-1 burn).
+`nOut` is `uint32`: a valid transaction can carry more than 65,535
+transparent outputs. **Coverage precondition:** before answering anything,
+the node must hold every Zcash block in `B ..= E_N`; otherwise the call is
+fatal (the block is refused and retried), so "not found" is never a
+node-local accident.
 "Not found" is a **result**, and it is consensus-identical on every
 honest node. Malformed calldata reverts.
 
@@ -198,13 +206,26 @@ Precedent: the Bitcoin-era Sova priced its pure decode precompile at
   a block reaches execution only when the index covers `E_N` on the
   committed chain. The sealer builds epoch `E` only after its follower
   emitted `E` (already true in `driver.rs`).
-- **The belt-and-braces path is crash, not divergence.** If execution
-  still hits a missing record at or below `E_N` (a bug or a corrupt
-  store), the precompile returns `PrecompileError::Fatal`. revm treats
-  that as an abort, not a revert. reth v2.6.0 maps
-  `BlockExecutionError::Internal` to `InsertBlockFatalError`
-  (`engine/primitives/src/error.rs:109-132`), which halts the engine.
-  A stopped node is recoverable; a node with a divergent state root
+- **The belt-and-braces path is refusal, not divergence.** If execution
+  still hits a missing anchor (a bug, a corrupt store, or a builder
+  racing its own index), the precompile returns
+  `PrecompileError::Fatal`. revm treats that as an abort, not a revert;
+  alloy-evm surfaces it as `BlockExecutionError::Internal`. In reth
+  v2.6.0 the block is then **refused without being cached as invalid**
+  and the engine keeps running (`engine/tree/src/tree/mod.rs:3283-3291`,
+  `1693-1716`; downloaded/buffered blocks only log, `2697-2700`,
+  `3077-3080`), so it is retried once the index catches up. Two
+  consequences (`docs/design/sip4-evm-seam.md`):
+  - The **backfill pipeline** is the exception: an execution error there
+    unwinds and caches the block as invalid
+    (`stages/api/src/pipeline/mod.rs:608-622`). The §1 anchor hold must
+    therefore stop such blocks before execution, which it does, and the
+    sync driver only targets scanned heights.
+  - **Fatal is reserved for "the anchor is not indexed".** A missing
+    txid or output is a status code, never Fatal: in the payload builder
+    a Fatal fails the whole build attempt, so any tx that could trigger
+    one on demand would be a poison transaction that stalls sealing.
+  A refused block is recoverable; a node with a divergent state root
   silently forks.
 - **The reth precompile cache must be off for this address.** reth's
   engine wraps "cacheable" precompiles in a cache keyed on
@@ -226,7 +247,7 @@ Precedent: the Bitcoin-era Sova priced its pure decode precompile at
 | Own zebrad on another Zcash fork at `E_N` | Transient off-fork; held; imports if Zcash converges on the committed chain | No |
 | zebrad RPC down or erroring | Follower retries; the index doesn't advance, so blocks hold | No |
 | Two zebrad versions disagree on Zcash validity (e.g. a missed NU) | They are on different Zcash chains, so anchors mismatch and the minority holds | No. Visible as a stall and alertable ("epoch lag", `infra-m1.md`) |
-| Index missing a record `≤ E_N` (bug) | `PrecompileError::Fatal`, engine halts | No, by design |
+| Index missing the anchor `≤ E_N` (bug or race) | `PrecompileError::Fatal`; block refused, not cached invalid, retried | No, by design |
 | reth precompile cache enabled by mistake | Would replay stale answers | **Yes**. Prevented by `new_stateful` plus a test |
 | Answer read from tip or mempool by mistake | Would differ per node | **Yes**. Prevented by the spec (§2) and the differential sim (§11) |
 | Deep Zcash reorg (> follower window, 1,024) | Follower unwinds to base and rescans; Sova reorgs accordingly | No; expensive |

@@ -139,13 +139,13 @@ contract MockZcash is IZcash {
     function txInfo(bytes32 txid)
         external
         view
-        returns (uint8 status, uint64 height, uint32 index, uint64 confirmations, uint16 nOut, uint32 version)
+        returns (uint8 status, uint64 height, uint32 index, uint64 confirmations, uint32 nOut, uint32 version)
     {
         uint8 f = forced[txid];
         if (f != 0) return (f - 1, 0, 0, 0, 0, 0);
         Tx storage t = txs[txid];
         if (!_visible(t)) return (ZcashStatus.NOT_FOUND, 0, 0, 0, 0, 0);
-        return (ZcashStatus.OK, t.height, t.index, anchorHeight - t.height + 1, uint16(outs[txid].length), t.version);
+        return (ZcashStatus.OK, t.height, t.index, anchorHeight - t.height + 1, uint32(outs[txid].length), t.version);
     }
 
     function txOutput(bytes32 txid, uint32 vout)
@@ -168,7 +168,8 @@ contract MockZcash is IZcash {
         returns (uint8 status, address credited, uint32 signal, uint64 weightZat)
     {
         Tx storage t = txs[txid];
-        if (!_visible(t) || burnCredited[txid] == address(0)) return (ZcashStatus.NOT_FOUND, address(0), 0, 0);
+        if (!_visible(t)) return (ZcashStatus.NOT_FOUND, address(0), 0, 0);
+        if (burnCredited[txid] == address(0)) return (ZcashStatus.NOT_A_BURN, address(0), 0, 0);
         return (ZcashStatus.OK, burnCredited[txid], burnSignal[txid], burnWeight[txid]);
     }
 

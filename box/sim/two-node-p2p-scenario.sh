@@ -143,6 +143,15 @@ echo "settled height: ${SETTLED_HEIGHT}"
 # ============================================================
 echo ""
 echo "=== (a) lockstep sampling (B vs A) ==="
+# B imports only as far as its own Zcash scan (SIP-4 hold-don't-accept), so
+# right after the ~100-block funding burst it can still be catching up.
+# Lockstep is a claim about the steady state: wait for catch-up first.
+CATCHUP_TARGET="$(eth_block_number "${ENGINE_RPC_A}")"
+if wait_for_block_number "${ENGINE_RPC_B}" "${CATCHUP_TARGET}" 60; then
+  echo "node B caught up to A's height ${CATCHUP_TARGET}"
+else
+  fail "(a) node B never caught up to A's height ${CATCHUP_TARGET} within 60s"
+fi
 for i in 1 2 3; do
   A_BLOCK="$(eth_block_number "${ENGINE_RPC_A}")"
   B_BLOCK="$(eth_block_number "${ENGINE_RPC_B}")"

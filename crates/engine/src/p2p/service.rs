@@ -74,6 +74,19 @@ pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 pub const MAX_ANNOUNCES_PER_SEC: u32 = 128;
 /// Per-peer, per-second budget of inbound `GetBlock`s we serve.
 pub const MAX_GET_BLOCKS_PER_SEC: u32 = 64;
+/// Held blocks (consensus said "not yet": our zebrad hasn't scanned the
+/// block's Zcash epoch) kept for resubmission.
+pub const MAX_HELD: u32 = 64;
+/// A held block is resubmitted at least this often, and immediately once
+/// our scan watermark reaches its height.
+pub const HOLD_RETRY: Duration = Duration::from_secs(3);
+/// How often held blocks are checked against our scan watermark: a block
+/// that arrived a moment before our zebrad's epoch should import as soon
+/// as the scan reaches it.
+pub const HELD_POLL: Duration = Duration::from_millis(200);
+/// A block still held after this long is dropped (and forgotten, so a
+/// later announcement can bring it back).
+pub const MAX_HOLD: Duration = Duration::from_secs(300);
 /// Canonical blocks walked back from a new head when announcing.
 pub const MAX_ANNOUNCE_WALK: usize = 64;
 
@@ -139,6 +152,17 @@ struct Orphan {
     depth: u32,
 }
 
+/// A block the engine held (see [`MAX_HELD`]).
+#[derive(Debug, Clone)]
+struct Held {
+    block: SealedBlock<reth_ethereum::Block>,
+    rlp: Bytes,
+    peer: PeerId,
+    depth: u32,
+    since: Instant,
+    last_try: Instant,
+}
+
 /// A block to submit.
 #[derive(Debug)]
 struct Pending {
@@ -156,6 +180,7 @@ pub struct GossipService<B> {
     announced: LruMap<B256, ()>,
     recent_blocks: LruMap<B256, Bytes>,
     orphans: LruMap<B256, Orphan>,
+    held: LruMap<B256, Held>,
     in_flight: HashMap<B256, InFlight>,
     last_head: Option<B256>,
 }
@@ -180,6 +205,7 @@ impl<B: GossipBackend> GossipService<B> {
             announced: LruMap::new(ByLength::new(ANNOUNCED_CAPACITY)),
             recent_blocks: LruMap::new(ByLength::new(RECENT_BLOCKS_CAPACITY)),
             orphans: LruMap::new(ByLength::new(MAX_ORPHANS)),
+            held: LruMap::new(ByLength::new(MAX_HELD)),
             in_flight: HashMap::new(),
             last_head: None,
         }
@@ -195,6 +221,8 @@ impl<B: GossipBackend> GossipService<B> {
         head_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut housekeeping = tokio::time::interval(Duration::from_secs(1));
         housekeeping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut held_tick = tokio::time::interval(HELD_POLL);
+        held_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tokio::select! {
                 biased;
@@ -208,6 +236,7 @@ impl<B: GossipBackend> GossipService<B> {
                 },
                 _ = head_tick.tick() => self.on_head_tick(),
                 _ = housekeeping.tick() => self.expire_requests(Instant::now()),
+                _ = held_tick.tick() => self.retry_held(Instant::now()).await,
             }
         }
         tracing::warn!("sova/1: gossip service stopped (connection channels closed)");
@@ -397,6 +426,17 @@ impl<B: GossipBackend> GossipService<B> {
             let hash = block.hash();
             let height = block.number;
             let parent = block.parent_hash;
+            // Ahead of our own Zcash scan: consensus would hold it, so park
+            // it without a round trip (and without the engine's invalid-
+            // block logging) until the scan catches up.
+            if crate::expectations::global()
+                .scanned_through()
+                .is_some_and(|scanned| height > scanned)
+            {
+                tracing::debug!(%peer, height, %hash, "sova/1: block ahead of our zcash scan; parked");
+                self.park_held(peer, block, rlp, depth);
+                continue;
+            }
             let status = self.backend.submit(block.clone()).await;
             match status {
                 Ok(PayloadStatusEnum::Valid | PayloadStatusEnum::Accepted) => {
@@ -439,10 +479,10 @@ impl<B: GossipBackend> GossipService<B> {
                 {
                     // Held, not bad: our zebrad hasn't reached (or is on
                     // another fork at) the block's Zcash epoch. Not the
-                    // peer's fault; forget the hash so a later
-                    // announcement can retry it.
+                    // peer's fault; park it and resubmit once our scan
+                    // catches up (`retry_held`).
                     tracing::info!(%peer, height, %hash, %validation_error, "sova/1: block held");
-                    self.seen.remove(&hash);
+                    self.park_held(peer, block, rlp, depth);
                 }
                 Ok(PayloadStatusEnum::Invalid { validation_error }) => {
                     tracing::warn!(
@@ -457,11 +497,78 @@ impl<B: GossipBackend> GossipService<B> {
                     self.drop_orphans_of(hash);
                 }
                 Err(err) => {
-                    // Local engine trouble, not the peer's fault: forget
-                    // it so a later announcement can retry.
+                    // Local engine trouble, not the peer's fault (e.g. a
+                    // block that reached the SIP-4 precompile before our
+                    // index had its anchor): park it for a retry.
                     tracing::warn!(%peer, height, %hash, %err, "sova/1: engine submit failed");
-                    self.seen.remove(&hash);
+                    self.park_held(peer, block, rlp, depth);
                 }
+            }
+        }
+    }
+
+    fn park_held(
+        &mut self,
+        peer: PeerId,
+        block: SealedBlock<reth_ethereum::Block>,
+        rlp: Bytes,
+        depth: u32,
+    ) {
+        let now = Instant::now();
+        let hash = block.hash();
+        let since = self.held.peek(&hash).map_or(now, |h| h.since);
+        self.held.insert(
+            hash,
+            Held {
+                block,
+                rlp,
+                peer,
+                depth,
+                since,
+                last_try: now,
+            },
+        );
+    }
+
+    /// Resubmits held blocks whose Zcash epoch our follower has now
+    /// scanned, or that haven't been tried for [`HOLD_RETRY`]; drops those
+    /// held longer than [`MAX_HOLD`].
+    pub(crate) async fn retry_held(&mut self, now: Instant) {
+        let scanned = crate::expectations::global().scanned_through();
+        let mut due = Vec::new();
+        let mut expired = Vec::new();
+        for (hash, h) in self.held.iter() {
+            if now.duration_since(h.since) >= MAX_HOLD {
+                expired.push(*hash);
+            } else if scanned.is_some_and(|s| s >= h.block.number)
+                || now.duration_since(h.last_try) >= HOLD_RETRY
+            {
+                due.push(*hash);
+            }
+        }
+        for hash in expired {
+            self.held.remove(&hash);
+            self.seen.remove(&hash);
+            tracing::info!(%hash, "sova/1: held block expired; forgotten");
+        }
+        for hash in due {
+            let Some(h) = self.held.remove(&hash) else {
+                continue;
+            };
+            if self.backend.has_block(hash) {
+                continue;
+            }
+            // Keep the original hold time across the resubmission.
+            let since = h.since;
+            self.submit_chain(Pending {
+                peer: h.peer,
+                block: h.block,
+                rlp: h.rlp,
+                depth: h.depth,
+            })
+            .await;
+            if let Some(again) = self.held.get(&hash) {
+                again.since = since;
             }
         }
     }
@@ -856,7 +963,40 @@ mod tests {
         drain(&mut rx1);
         h.msg(p1, SovaMessage::Block(rlp)).await;
         assert!(h.mock.with(|s| s.penalized.is_empty()));
-        // A later announcement fetches it again.
+        // Parked, not forgotten: a re-announcement doesn't refetch it...
+        h.msg(p1, announce(11, b.hash())).await;
+        assert!(drain(&mut rx1).is_empty());
+        // ...nothing is retried before HOLD_RETRY...
+        h.svc.retry_held(Instant::now()).await;
+        assert_eq!(h.mock.with(|s| s.submitted.len()), 1);
+        // ...then it is resubmitted, accepted, and re-announced onward.
+        h.svc.retry_held(Instant::now() + HOLD_RETRY).await;
+        assert_eq!(
+            h.mock.with(|s| s.submitted.clone()),
+            vec![b.hash(), b.hash()]
+        );
+        assert!(h.mock.with(|s| s.penalized.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn a_block_held_too_long_is_forgotten() {
+        let mut h = Harness::new();
+        let (p1, mut rx1) = h.connect(1).await;
+        let (b, rlp) = block(11, B256::repeat_byte(10));
+        let hold = || PayloadStatusEnum::Invalid {
+            validation_error: format!("{}: not scanned", crate::consensus::HOLD_MARKER),
+        };
+        h.mock.with(|s| s.statuses = VecDeque::from([hold()]));
+        h.msg(p1, announce(11, b.hash())).await;
+        drain(&mut rx1);
+        h.msg(p1, SovaMessage::Block(rlp)).await;
+        h.svc.retry_held(Instant::now() + MAX_HOLD).await;
+        assert_eq!(
+            h.mock.with(|s| s.submitted.len()),
+            1,
+            "expired, not retried"
+        );
+        // Forgotten, so a later announcement brings it back.
         h.msg(p1, announce(11, b.hash())).await;
         assert_eq!(
             drain(&mut rx1),

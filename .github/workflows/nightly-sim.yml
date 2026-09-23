@@ -221,8 +221,35 @@ jobs:
           mkdir -p "${RUNNER_TEMP}/nightly-sim-logs"
           JOIN_DEPTH=150 box/sim/join-scenario.sh 2>&1 | tee "${RUNNER_TEMP}/nightly-sim-logs/join-scenario.log"
 
+      - name: Install foundry (cast, for the anchor precompile scenario)
+        # anchor-precompile-scenario.sh signs its deploy/recorder txs with
+        # reth's dev key via `cast send`; nothing else here needs foundry.
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Run SIP-4 anchor precompile scenario (box/sim/anchor-precompile-scenario.sh)
+        # SIP-4 anchor(): a recorder contract stores the precompile's answer
+        # per block, so the state root depends on it. A, B (sova/1 import)
+        # and a late joiner J must agree on hashes, state roots, the stored
+        # (E_N, hash) == (N+B-1, parentBeaconBlockRoot) and historical eth_call.
+        id: anchor-precompile-scenario
+        continue-on-error: true
+        run: |
+          mkdir -p "${RUNNER_TEMP}/nightly-sim-logs"
+          box/sim/anchor-precompile-scenario.sh 2>&1 | tee "${RUNNER_TEMP}/nightly-sim-logs/anchor-precompile-scenario.log"
+
+      - name: Run SIP-4 §7 Zcash reorg scenario (box/sim/zcash-reorg-scenario.sh)
+        # A recorder contract stores txInfo(T) per block; a regtest
+        # invalidateblock orphans the burn T. Both nodes must roll Sova back
+        # to N_R = R - B + 1, re-seal on the new branch, drop the orphaned
+        # mint, and agree on hashes, state roots and recorder observations.
+        id: zcash-reorg-scenario
+        continue-on-error: true
+        run: |
+          mkdir -p "${RUNNER_TEMP}/nightly-sim-logs"
+          box/sim/zcash-reorg-scenario.sh 2>&1 | tee "${RUNNER_TEMP}/nightly-sim-logs/zcash-reorg-scenario.log"
+
       - name: Upload sim logs
-        if: steps.run-scenarios.outcome == 'failure' || steps.two-node-scenario.outcome == 'failure' || steps.ladder-scenario.outcome == 'failure' || steps.two-node-p2p-scenario.outcome == 'failure' || steps.ladder-p2p-scenario.outcome == 'failure' || steps.three-node-discovery-scenario.outcome == 'failure' || steps.join-scenario.outcome == 'failure'
+        if: steps.run-scenarios.outcome == 'failure' || steps.two-node-scenario.outcome == 'failure' || steps.ladder-scenario.outcome == 'failure' || steps.two-node-p2p-scenario.outcome == 'failure' || steps.ladder-p2p-scenario.outcome == 'failure' || steps.three-node-discovery-scenario.outcome == 'failure' || steps.join-scenario.outcome == 'failure' || steps.anchor-precompile-scenario.outcome == 'failure' || steps.zcash-reorg-scenario.outcome == 'failure'
         uses: actions/upload-artifact@v4
         with:
           name: nightly-sim-logs
@@ -238,7 +265,7 @@ jobs:
         # `on:` block: no push/pull_request trigger at all).
         if: always()
         run: |
-          if [[ "${{ steps.run-scenarios.outcome }}" == "failure" || "${{ steps.two-node-scenario.outcome }}" == "failure" || "${{ steps.ladder-scenario.outcome }}" == "failure" || "${{ steps.two-node-p2p-scenario.outcome }}" == "failure" || "${{ steps.ladder-p2p-scenario.outcome }}" == "failure" || "${{ steps.three-node-discovery-scenario.outcome }}" == "failure" || "${{ steps.join-scenario.outcome }}" == "failure" ]]; then
+          if [[ "${{ steps.run-scenarios.outcome }}" == "failure" || "${{ steps.two-node-scenario.outcome }}" == "failure" || "${{ steps.ladder-scenario.outcome }}" == "failure" || "${{ steps.two-node-p2p-scenario.outcome }}" == "failure" || "${{ steps.ladder-p2p-scenario.outcome }}" == "failure" || "${{ steps.three-node-discovery-scenario.outcome }}" == "failure" || "${{ steps.join-scenario.outcome }}" == "failure" || "${{ steps.anchor-precompile-scenario.outcome }}" == "failure" || "${{ steps.zcash-reorg-scenario.outcome }}" == "failure" ]]; then
             echo "::error::One or more nightly sim scenarios failed -- see the nightly-sim-logs artifact."
             exit 1
           fi

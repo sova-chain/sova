@@ -236,6 +236,11 @@ async fn main() -> eyre::Result<()> {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(1);
+    // SIP-4: the Zcash query precompile answers from the node's Zcash
+    // index, fed by the expectations follower (empty without a zebrad, so
+    // calls are fatal: such a node cannot execute blocks that use the
+    // precompile). EVMs resolve the source per block.
+    engine::zcash_index::install(base_height);
 
     // SIP-3 emission schedule (SOVA_EMISSION_SCHEDULE): "flat" (default
     // — regtest/box determinism, the draft 6,250/epoch) or "sip3" (slow
@@ -300,7 +305,13 @@ async fn main() -> eyre::Result<()> {
             let engine_handle = node.add_ons_handle.beacon_engine_handle.clone();
             tokio::spawn(engine::candidates::run_arbiter(
                 arbiter_rx,
-                move || head_provider.best_block_number().unwrap_or(0),
+                // SIP-4 §7: after a Zcash reorg, stale blocks don't count,
+                // so a replacement below the stale tip can be adopted.
+                move || {
+                    let head = head_provider.best_block_number().unwrap_or(0);
+                    engine::expectations::global()
+                        .effective_head(head, |h| canonical_anchor(&head_provider, h))
+                },
                 || {
                     Some(
                         engine::expectations::global()
@@ -464,7 +475,12 @@ async fn main() -> eyre::Result<()> {
         tokio::spawn(run_sealer(
             core,
             ZebradClient::new(zebrad_url.clone()),
-            move || head_provider.best_block_number().unwrap_or(0),
+            // SIP-4 §7: stale blocks above a Zcash rollback floor are re-sealed.
+            move || {
+                let head = head_provider.best_block_number().unwrap_or(0);
+                engine::expectations::global()
+                    .effective_head(head, |h| canonical_anchor(&head_provider, h))
+            },
             pending,
             trigger_tx,
             Duration::from_secs(2),
@@ -562,4 +578,19 @@ fn apply_shared_jwt(node_config: &mut NodeConfig<ChainSpec>) -> eyre::Result<Opt
     let secret = JwtSecret::from_file(&path)?;
     node_config.rpc.auth_jwtsecret = Some(path);
     Ok(Some(secret))
+}
+
+/// The canonical block's SIP-4 Zcash anchor (`parent_beacon_block_root`)
+/// at `height`, if any.
+fn canonical_anchor<P: reth_ethereum::provider::HeaderProvider>(
+    provider: &P,
+    height: u64,
+) -> Option<[u8; 32]> {
+    use reth_ethereum::primitives::AlloyBlockHeader;
+    provider
+        .sealed_header(height)
+        .ok()
+        .flatten()
+        .and_then(|h| h.parent_beacon_block_root())
+        .map(|r| r.0)
 }

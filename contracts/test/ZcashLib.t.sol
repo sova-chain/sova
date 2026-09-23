@@ -119,7 +119,7 @@ contract ZcashLibTest is Test {
         assertEq(s, ZcashStatus.NOT_FOUND);
         z.mine(1);
         uint64 conf;
-        uint16 nOut;
+        uint32 nOut;
         (s,,, conf, nOut,) = IZcash(ZCASH_PRECOMPILE).txInfo(TX);
         assertEq(s, ZcashStatus.OK);
         assertEq(conf, 1);
@@ -201,7 +201,7 @@ contract ZcashLibTest is Test {
 
     function testShieldedOnlyTxHasNoOutputs() public {
         z.addTx(TX, BASE + 50, 5); // no transparent outputs
-        (uint8 s,,,, uint16 nOut,) = IZcash(ZCASH_PRECOMPILE).txInfo(TX);
+        (uint8 s,,,, uint32 nOut,) = IZcash(ZCASH_PRECOMPILE).txInfo(TX);
         assertEq(s, ZcashStatus.OK);
         assertEq(nOut, 0);
         (ZcashLib.Result r,) = lib.outputPays(TX, 0, ZcashLib.p2pkh(PKH), 1, 1);

@@ -106,6 +106,10 @@ cleanup() {
     (cd "${REGTEST_DIR}" && ${COMPOSE} down -v) >/dev/null 2>&1 || true
   fi
   if [[ -n "${WORK_DIR}" && -d "${WORK_DIR}" ]]; then
+    if [[ -n "${SOVA_SIM_KEEP_LOGS:-}" ]]; then
+      mkdir -p "${SOVA_SIM_KEEP_LOGS}"
+      cp "${WORK_DIR}"/*.log "${SOVA_SIM_KEEP_LOGS}/" 2>/dev/null || true
+    fi
     rm -rf "${WORK_DIR}"
   fi
   if [[ "${exit_code}" -eq 0 && "${FAILURES}" -gt 0 ]]; then

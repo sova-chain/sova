@@ -9,6 +9,7 @@
 //! stateful engine path — the same validation a real network would
 //! perform; this task is transport only.
 
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use alloy_rpc_types::engine::ExecutionData;
@@ -48,6 +49,13 @@ use serde_json::{Value, json};
 ///
 /// Per-peer errors (unreachable peer, rejected payload, JWT/transport
 /// failure) are logged and do not stop the loop or affect other peers.
+///
+/// A peer that does not *accept* a block — it holds it (its zebrad hasn't
+/// scanned the block's Zcash epoch yet, `crate::consensus::HOLD_MARKER`),
+/// answers `SYNCING` (a parent is missing), or fails — gets a resend
+/// cursor at that height. Each poll re-pushes to it from the cursor until
+/// it accepts, so one transient hold can't strand a peer: the relay has no
+/// other catch-up path (no p2p peers to backfill from).
 pub async fn run_relay(
     chain_head: impl Fn() -> u64,
     fetch_block: impl Fn(u64) -> Option<ExecutionData>,
@@ -60,6 +68,12 @@ pub async fn run_relay(
     }
 
     let mut last_relayed: u64 = 0;
+    // Per peer: the lowest height it has not accepted yet.
+    let mut resend: BTreeMap<String, u64> = BTreeMap::new();
+    // Hashes we pushed for recent heights: a late win or a SIP-4 §7
+    // re-seal replaces the canonical block at a height already relayed,
+    // and the replacement must go out too.
+    let mut sent: BTreeMap<u64, [u8; 32]> = BTreeMap::new();
 
     loop {
         let head = chain_head();
@@ -71,6 +85,52 @@ pub async fn run_relay(
             );
             last_relayed = head;
         }
+        // Replaced blocks at already-relayed heights: walk down from the
+        // tip while the canonical hash differs from what we sent.
+        let mut replaced_from = None;
+        let mut h = last_relayed;
+        while h >= 1 {
+            let Some(was) = sent.get(&h) else { break };
+            let now = fetch_block(h).map(|d| d.payload.block_hash().0);
+            if now.as_ref() == Some(was) {
+                break;
+            }
+            replaced_from = Some(h);
+            h -= 1;
+        }
+        if let Some(from) = replaced_from {
+            tracing::info!(
+                height = from,
+                "relay: canonical block replaced at a relayed height; resending"
+            );
+            for peer in &peers {
+                let cursor = resend.entry(peer.clone()).or_insert(from);
+                *cursor = (*cursor).min(from);
+            }
+        }
+        // Catch lagging peers up first, in order, stopping at the first
+        // height a peer still doesn't accept. A peer missing the parent
+        // (SYNCING) is walked back one height per poll.
+        for (peer, cursor) in &mut resend {
+            while *cursor <= last_relayed {
+                let Some(data) = fetch_block(*cursor) else {
+                    break;
+                };
+                sent.insert(*cursor, data.payload.block_hash().0);
+                match relay_block(std::slice::from_ref(peer), &jwt, *cursor, data)
+                    .await
+                    .pop()
+                {
+                    Some((_, Some(Delivery::Accepted))) => *cursor += 1,
+                    Some((_, Some(Delivery::NotYet(status)))) if status.starts_with("SYNCING") => {
+                        *cursor = cursor.saturating_sub(1).max(1);
+                        break;
+                    }
+                    _ => break,
+                }
+            }
+        }
+        resend.retain(|_, cursor| *cursor <= last_relayed);
         while last_relayed < head {
             let next = last_relayed + 1;
             let Some(data) = fetch_block(next) else {
@@ -80,18 +140,48 @@ pub async fn run_relay(
                 );
                 break;
             };
-            relay_block(&peers, &jwt, next, data).await;
+            sent.insert(next, data.payload.block_hash().0);
+            let current: Vec<String> = peers
+                .iter()
+                .filter(|p| !resend.contains_key(*p))
+                .cloned()
+                .collect();
+            for (peer, outcome) in relay_block(&current, &jwt, next, data).await {
+                match outcome {
+                    Some(Delivery::Accepted) => {}
+                    Some(Delivery::NotYet(status)) if status.starts_with("SYNCING") => {
+                        resend.insert(peer, next.saturating_sub(1).max(1));
+                    }
+                    _ => {
+                        resend.insert(peer, next);
+                    }
+                }
+            }
             last_relayed = next;
+        }
+        while sent.len() > SENT_RETAIN {
+            sent.pop_first();
         }
         tokio::time::sleep(poll_interval).await;
     }
 }
 
-/// Assembles one block's `engine_newPayloadV4` / `engine_forkchoiceUpdatedV3`
-/// params and pushes them to every peer, isolating each peer's failures.
-async fn relay_block(peers: &[String], jwt: &JwtSecret, height: u64, data: ExecutionData) {
+/// Recent relayed heights whose hashes are remembered, to spot a
+/// replaced canonical block (late win, §7 re-seal).
+const SENT_RETAIN: usize = 256;
+
+/// Assembles one block's `engine_newPayloadV4` params and pushes them to
+/// every peer, isolating each peer's failures. Returns each peer's
+/// outcome (`None` = transport or RPC failure).
+async fn relay_block(
+    peers: &[String],
+    jwt: &JwtSecret,
+    height: u64,
+    data: ExecutionData,
+) -> Vec<(String, Option<Delivery>)> {
+    let mut delivered = Vec::new();
     if peers.is_empty() {
-        return;
+        return delivered;
     }
 
     let ExecutionData { payload, sidecar } = data;
@@ -110,7 +200,10 @@ async fn relay_block(peers: &[String], jwt: &JwtSecret, height: u64, data: Execu
             "relay: sealed block is not V3-shaped (pre-Cancun, or BAL-bearing/Amsterdam); \
              gossip v1 only relays engine_newPayloadV4-shaped blocks, skipping"
         );
-        return;
+        return peers
+            .iter()
+            .map(|p| (p.clone(), Some(Delivery::Accepted)))
+            .collect();
     };
     let Some(parent_beacon_block_root) = sidecar.parent_beacon_block_root() else {
         tracing::error!(
@@ -119,7 +212,10 @@ async fn relay_block(peers: &[String], jwt: &JwtSecret, height: u64, data: Execu
             "relay: sealed block has no parent beacon block root; newPayloadV4 requires \
              Cancun fields, skipping"
         );
-        return;
+        return peers
+            .iter()
+            .map(|p| (p.clone(), Some(Delivery::Accepted)))
+            .collect();
     };
     let versioned_hashes = sidecar.versioned_hashes().cloned().unwrap_or_default();
     // `ExecutionPayloadSidecar::from_block` (used by
@@ -163,8 +259,13 @@ async fn relay_block(peers: &[String], jwt: &JwtSecret, height: u64, data: Execu
         Ok(results) => {
             for (peer, result) in results {
                 match result {
-                    Ok(()) => {
+                    Ok(Delivery::Accepted) => {
                         tracing::info!(height, %block_hash, peer, "relay: peer accepted block");
+                        delivered.push((peer, Some(Delivery::Accepted)));
+                    }
+                    Ok(Delivery::NotYet(status)) => {
+                        tracing::info!(height, %block_hash, peer, %status, "relay: peer not ready; will resend");
+                        delivered.push((peer, Some(Delivery::NotYet(status))));
                     }
                     Err(err) => {
                         tracing::warn!(
@@ -174,6 +275,7 @@ async fn relay_block(peers: &[String], jwt: &JwtSecret, height: u64, data: Execu
                             %err,
                             "relay: peer failed; continuing with remaining peers"
                         );
+                        delivered.push((peer, None));
                     }
                 }
             }
@@ -182,6 +284,7 @@ async fn relay_block(peers: &[String], jwt: &JwtSecret, height: u64, data: Execu
             tracing::warn!(height, %block_hash, %join_err, "relay: blocking relay task panicked");
         }
     }
+    delivered
 }
 
 /// Pushes one block to one peer: `engine_newPayloadV4` only, with a
@@ -198,14 +301,47 @@ fn relay_to_peer(
     authrpc_url: &str,
     jwt: &JwtSecret,
     new_payload_params: &Value,
-) -> Result<(), RelayError> {
-    call_authrpc(
+) -> Result<Delivery, RelayError> {
+    let result = call_authrpc(
         authrpc_url,
         jwt,
         "engine_newPayloadV4",
         new_payload_params.clone(),
     )?;
-    Ok(())
+    Ok(classify_status(&result))
+}
+
+/// What a peer did with a pushed block.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Delivery {
+    /// `VALID` or `ACCEPTED`.
+    Accepted,
+    /// Not taken yet (held, `SYNCING`, or `INVALID`): resend later. A
+    /// genuinely invalid block can never be accepted, so the cursor simply
+    /// stays on it; that peer is on another chain and the relay has no
+    /// business forcing it.
+    NotYet(String),
+}
+
+fn classify_status(result: &Value) -> Delivery {
+    let status = result
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("UNKNOWN");
+    match status {
+        "VALID" | "ACCEPTED" => Delivery::Accepted,
+        other => {
+            let why = result
+                .get("validationError")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            Delivery::NotYet(if why.is_empty() {
+                other.to_string()
+            } else {
+                format!("{other}: {why}")
+            })
+        }
+    }
 }
 
 /// One JSON-RPC call to a peer's authrpc, authenticated with a freshly
@@ -252,4 +388,32 @@ enum RelayError {
     /// The peer answered with a JSON-RPC error object.
     #[error("rpc error: {0}")]
     Rpc(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn peer_statuses_classify_for_resend() {
+        assert_eq!(
+            classify_status(&json!({"status": "VALID"})),
+            Delivery::Accepted
+        );
+        assert_eq!(
+            classify_status(&json!({"status": "ACCEPTED"})),
+            Delivery::Accepted
+        );
+        assert!(matches!(
+            classify_status(&json!({"status": "SYNCING"})),
+            Delivery::NotYet(_)
+        ));
+        assert!(matches!(
+            classify_status(&json!({"status": "INVALID", "validationError": "sova-hold: not scanned"})),
+            Delivery::NotYet(s) if s.contains("sova-hold")
+        ));
+        assert!(matches!(classify_status(&json!(null)), Delivery::NotYet(_)));
+    }
 }

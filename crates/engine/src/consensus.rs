@@ -10,10 +10,13 @@
 //! runs on all three paths — and withdrawals sit in the body, so no
 //! execution is needed — which makes it the enforcement point.
 //!
-//! Heights above the follower's scanned watermark are deferred (accepted),
-//! matching the payload path's `Unknown` handling: a Sova block can
-//! legitimately outrun our zebrad by seconds at the tip. Nothing below the
-//! watermark is deferred. The payload-path check stays for candidate
+//! Heights above the follower's scanned watermark are **held** (SIP-4 §1,
+//! "hold, don't accept"): a transient error, never cached as invalid, and
+//! retried once our zebrad catches up (the sova/1 service parks held
+//! blocks and resubmits them). A Sova block can legitimately outrun our
+//! zebrad by seconds at the tip, but executing it would need Zcash answers
+//! (the SIP-4 precompile) this node can't give yet, and accepting it on
+//! trust would skip the mint check. The payload-path check stays for candidate
 //! observation; the two share [`ExpectedSettlements::check_ranked`], so
 //! they cannot disagree about validity.
 
@@ -62,6 +65,17 @@ pub enum SettlementError {
     MissingRecord {
         /// The Sova height checked.
         height: u64,
+    },
+    /// SIP-4: the block's epoch is above what our follower has scanned.
+    /// Held until the scan reaches it.
+    #[error(
+        "{HOLD_MARKER}: zcash epoch not scanned yet at height {height} (scanned through {scanned})"
+    )]
+    Unscanned {
+        /// The Sova height checked.
+        height: u64,
+        /// Our scan watermark (Sova height).
+        scanned: u64,
     },
     /// SIP-4: the block's Zcash anchor (`parent_beacon_block_root`) is
     /// not the Zcash block our follower has at the block's epoch. Held,
@@ -114,12 +128,10 @@ impl SovaConsensus {
             return Ok(());
         };
         if height > scanned {
-            tracing::debug!(
+            return Err(ConsensusError::other(SettlementError::Unscanned {
                 height,
                 scanned,
-                "settlement check deferred: epoch not yet scanned"
-            );
-            return Ok(());
+            }));
         }
         // The anchor comes first: only once the block provably settles the
         // same Zcash block as our follower does is a withdrawals mismatch
@@ -211,7 +223,9 @@ impl Consensus<Block> for SovaConsensus {
     fn is_transient_error(&self, error: &ConsensusError) -> bool {
         if let ConsensusError::Other(err) = error
             && let Some(
-                SettlementError::MissingRecord { .. } | SettlementError::AnchorMismatch { .. },
+                SettlementError::MissingRecord { .. }
+                | SettlementError::Unscanned { .. }
+                | SettlementError::AnchorMismatch { .. },
             ) = err.downcast_ref()
         {
             return true;
@@ -290,6 +304,8 @@ mod tests {
                 height: 0,
                 hash: ANCHOR,
                 burns: Vec::new(),
+                time: 0,
+                txs: Vec::new(),
             },
             ranked: Vec::new(),
         }
@@ -351,11 +367,15 @@ mod tests {
     }
 
     #[test]
-    fn above_watermark_defers() {
+    fn above_watermark_is_held() {
         let e = leak();
         e.insert(5, burnless_record());
         let c = consensus(e);
-        assert!(c.check_settlements(&block(6, vec![mint()])).is_ok());
+        let Err(err) = c.check_settlements(&block(6, vec![mint()])) else {
+            panic!("an unscanned epoch must not be accepted on trust");
+        };
+        assert!(c.is_transient_error(&err), "unscanned must be a hold");
+        assert!(err.to_string().contains(HOLD_MARKER));
     }
 
     /// History a joining node syncs: every height below the watermark is
@@ -391,10 +411,10 @@ mod tests {
         e.unwind_above(7);
         assert_eq!(e.scanned_through(), Some(7));
         let c = consensus(e);
-        assert!(
-            c.check_settlements(&block(9, vec![mint()])).is_ok(),
-            "unwound heights defer"
-        );
+        let Err(err) = c.check_settlements(&block(9, vec![mint()])) else {
+            panic!("unwound heights must be held, not accepted");
+        };
+        assert!(c.is_transient_error(&err), "unwound heights are held");
     }
 
     /// SIP-4: a block on another Zcash fork is held, never cached invalid,

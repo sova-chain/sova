@@ -38,6 +38,7 @@ pub mod expectations;
 pub mod miner;
 pub mod p2p;
 pub mod relay;
+pub mod zcash_index;
 
 pub use builder::{SovaPayloadBuilder, SovaPayloadBuilderBuilder};
 pub use consensus::{SettlementError, SovaConsensus, SovaConsensusBuilder};
