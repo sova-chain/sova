@@ -56,6 +56,59 @@ impl SovaEngineValidator {
     fn chain_spec(&self) -> &ChainSpec {
         self.inner.chain_spec()
     }
+
+    /// reth's payload well-formedness checks, with room for a SIP-6 seal.
+    ///
+    /// alloy's payload conversion rejects `extra_data` over 32 bytes and is
+    /// not configurable (SIP-6 §2.1), but a sealed block carries 97. So a
+    /// 97-byte payload is converted with its `extra_data` cut to the
+    /// vanity — reth's checks run unchanged on that — and the seal is then
+    /// put back and the result checked against the payload's own block
+    /// hash. Whether a seal is *allowed* (activation) and valid is
+    /// `SovaConsensus`'s header rule, not this function's.
+    fn well_formed(
+        &self,
+        payload: ExecutionData,
+    ) -> Result<reth_ethereum::primitives::SealedBlock<reth_ethereum::Block>, NewPayloadError> {
+        use crate::seal::{SEALED_EXTRA_LEN, VANITY_LEN};
+        let full = payload.payload.as_v1().extra_data.clone();
+        if full.len() != SEALED_EXTRA_LEN {
+            return self
+                .inner
+                .ensure_well_formed_payload(payload)
+                .map_err(Into::into);
+        }
+        let expected = payload.payload.block_hash();
+        let ExecutionData {
+            mut payload,
+            sidecar,
+        } = payload;
+        payload.as_v1_mut().extra_data =
+            alloy_primitives::Bytes::copy_from_slice(&full[..VANITY_LEN]);
+        // The vanity-only block's hash, so reth's own hash check passes.
+        let unsealed = reth_ethereum::primitives::SealedBlock::seal_slow(
+            payload
+                .clone()
+                .try_into_block_with_sidecar::<reth_ethereum::TransactionSigned>(&sidecar)
+                .map_err(Into::<NewPayloadError>::into)?,
+        );
+        payload.as_v1_mut().block_hash = unsealed.hash();
+        let checked = self
+            .inner
+            .ensure_well_formed_payload(ExecutionData { payload, sidecar })
+            .map_err(Into::<NewPayloadError>::into)?;
+        let mut block = checked.into_block();
+        block.header.extra_data = full;
+        let sealed = reth_ethereum::primitives::SealedBlock::seal_slow(block);
+        if sealed.hash() != expected {
+            return Err(reth_ethereum::rpc::types::engine::PayloadError::BlockHash {
+                execution: sealed.hash(),
+                consensus: expected,
+            }
+            .into());
+        }
+        Ok(sealed)
+    }
 }
 
 impl PayloadValidator<SovaEngineTypes> for SovaEngineValidator {
@@ -65,10 +118,7 @@ impl PayloadValidator<SovaEngineTypes> for SovaEngineValidator {
         &self,
         payload: ExecutionData,
     ) -> Result<reth_ethereum::primitives::SealedBlock<Self::Block>, NewPayloadError> {
-        let block = self
-            .inner
-            .ensure_well_formed_payload(payload)
-            .map_err(Into::<NewPayloadError>::into)?;
+        let block = self.well_formed(payload)?;
 
         // C5 (v2): re-derive the height's settlements from our own Zcash
         // view; the block is valid when its withdrawals match some rank's
@@ -228,6 +278,71 @@ mod tests {
             },
             epoch: None,
         }
+    }
+
+    /// A pre-Shanghai block (V1 payload) with `extra` as its extra data.
+    fn block_with_extra(extra: &[u8]) -> reth_ethereum::Block {
+        let mut block = reth_ethereum::Block::default();
+        block.header.number = 1;
+        block.header.timestamp = 1;
+        block.header.gas_limit = 30_000_000;
+        block.header.base_fee_per_gas = Some(7);
+        block.header.extra_data = alloy_primitives::Bytes::copy_from_slice(extra);
+        block
+    }
+
+    fn payload_of(block: reth_ethereum::Block) -> ExecutionData {
+        use reth_ethereum::node::api::PayloadTypes;
+        crate::SovaEngineTypes::block_to_payload(
+            reth_ethereum::primitives::SealedBlock::seal_slow(block),
+            None,
+        )
+    }
+
+    /// SIP-6 §2.1/§8: a 97-byte sealed block survives block → payload →
+    /// block with its hash, seal and signer unchanged; a tampered seal
+    /// fails the payload's own hash check; other lengths over 32 still
+    /// fail alloy's conversion.
+    #[test]
+    fn a_sealed_block_round_trips_through_the_payload_conversion() {
+        let mut block = block_with_extra(b"");
+        crate::seal::sign(&mut block.header, b"sova", B256::repeat_byte(0x42), 82_330)
+            .unwrap_or_else(|e| panic!("{e}"));
+        let hash = block.header.hash_slow();
+        let converted = validator()
+            .well_formed(payload_of(block.clone()))
+            .unwrap_or_else(|e| panic!("sealed payload rejected: {e}"));
+        assert_eq!(converted.hash(), hash);
+        assert_eq!(converted.header().extra_data, block.header.extra_data);
+        assert_eq!(
+            crate::seal::recover(converted.header(), 82_330),
+            crate::seal::address_of(B256::repeat_byte(0x42))
+        );
+
+        let mut tampered = payload_of(block);
+        let mut extra = tampered.payload.as_v1().extra_data.to_vec();
+        extra[40] ^= 1;
+        tampered.payload.as_v1_mut().extra_data = extra.into();
+        assert!(
+            validator().well_formed(tampered).is_err(),
+            "a changed seal changes the hash"
+        );
+
+        assert!(
+            validator()
+                .well_formed(payload_of(block_with_extra(&[1; 33])))
+                .is_err()
+        );
+        assert!(
+            validator()
+                .well_formed(payload_of(block_with_extra(&[1; 98])))
+                .is_err()
+        );
+        assert!(
+            validator()
+                .well_formed(payload_of(block_with_extra(b"sova")))
+                .is_ok()
+        );
     }
 
     /// `epoch: None` is vanilla behavior and must validate cleanly.

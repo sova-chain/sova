@@ -37,7 +37,8 @@ directories.
 
 ## What is built from it
 
-`contracts/script/Deploy.s.sol` (run by `box/deploy-dapps.sh`) deploys
+`contracts/script/deploy-kit.sh` (run by `box/deploy-dapps.sh` and
+`infra/testnet/deploy-contracts.sh`) deploys
 `UniswapV2Factory` (which creates `UniswapV2Pair` contracts) and
 `UniswapV2Router02` from this code, by artifact name, as separate
 contracts. Sova's own contracts (`WSOVA.sol`, `Ashwings.sol`, the scripts)

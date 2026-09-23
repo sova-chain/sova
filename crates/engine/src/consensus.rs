@@ -102,6 +102,9 @@ pub struct SovaConsensus {
     /// Read per check, not at construction: bin/sova sets the process
     /// schedule after the node (and so this consensus) is built.
     schedule: fn() -> consensus::schedule::Schedule,
+    /// SIP-6 activation (the chain ID seals are checked under), read per
+    /// check for the same reason.
+    sip6: fn() -> Option<u64>,
 }
 
 impl SovaConsensus {
@@ -114,10 +117,22 @@ impl SovaConsensus {
         schedule: fn() -> consensus::schedule::Schedule,
     ) -> Self {
         Self {
-            inner: EthBeaconConsensus::new(chain_spec),
+            // The 97-byte sealed extra_data passes the inner check; the
+            // exact SIP-6 length rule (and the 32-byte one before it) is
+            // `crate::seal::check_header`.
+            inner: EthBeaconConsensus::new(chain_spec)
+                .with_max_extra_data_size(crate::seal::SEALED_EXTRA_LEN),
             expectations,
             schedule,
+            sip6: crate::seal::active_chain_id,
         }
+    }
+
+    /// The same consensus with SIP-6 activation read from `sip6` (tests).
+    #[must_use]
+    pub const fn with_sip6(mut self, sip6: fn() -> Option<u64>) -> Self {
+        self.sip6 = sip6;
+        self
     }
 
     /// The C5 rule for one block.
@@ -177,7 +192,10 @@ impl SovaConsensus {
 
 impl HeaderValidator for SovaConsensus {
     fn validate_header(&self, header: &SealedHeader) -> Result<(), ConsensusError> {
-        self.inner.validate_header(header)
+        self.inner.validate_header(header)?;
+        crate::seal::check_header(header.header(), (self.sip6)())
+            .map(|_| ())
+            .map_err(ConsensusError::other)
     }
 
     fn validate_header_against_parent(
@@ -343,6 +361,68 @@ mod tests {
 
     fn consensus(e: &'static ExpectedSettlements) -> SovaConsensus {
         SovaConsensus::new(DEV.clone(), e, flat)
+    }
+
+    /// A header reth's own checks accept on DEV (all forks active).
+    fn dev_header(extra: &[u8]) -> reth_ethereum::primitives::Header {
+        reth_ethereum::primitives::Header {
+            number: 5,
+            gas_limit: 30_000_000,
+            base_fee_per_gas: Some(7),
+            withdrawals_root: Some(crate::seal::EMPTY_ROOT),
+            blob_gas_used: Some(0),
+            excess_blob_gas: Some(0),
+            parent_beacon_block_root: Some(B256::from(ANCHOR)),
+            requests_hash: Some(alloy_primitives::b256!(
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            )),
+            transactions_root: crate::seal::EMPTY_ROOT,
+            extra_data: alloy_primitives::Bytes::copy_from_slice(extra),
+            ..Default::default()
+        }
+    }
+
+    /// SIP-6 §2.5: before activation the header rule is Ethereum's 32
+    /// bytes; after it, exactly a null block or a valid seal.
+    #[test]
+    fn the_seal_rule_is_enforced_once_active() {
+        let before = consensus(leak()).with_sip6(|| None);
+        let after = consensus(leak()).with_sip6(|| Some(82_330));
+        let plain = SealedHeader::seal_slow(dev_header(b"reth/v2.6.0"));
+        let mut sealed = dev_header(b"");
+        crate::seal::sign(&mut sealed, b"sova", B256::repeat_byte(0x42), 82_330)
+            .unwrap_or_else(|e| panic!("{e}"));
+        let sealed = SealedHeader::seal_slow(sealed);
+        let null = SealedHeader::seal_slow(dev_header(b""));
+
+        assert!(
+            before.validate_header(&plain).is_ok(),
+            "{:?}",
+            before.validate_header(&plain)
+        );
+        assert!(
+            before.validate_header(&sealed).is_err(),
+            "97 bytes before activation"
+        );
+        assert!(
+            after.validate_header(&sealed).is_ok(),
+            "{:?}",
+            after.validate_header(&sealed)
+        );
+        assert!(
+            after.validate_header(&null).is_ok(),
+            "{:?}",
+            after.validate_header(&null)
+        );
+        assert!(
+            after.validate_header(&plain).is_err(),
+            "unsealed after activation"
+        );
+        let wrong_chain = consensus(leak()).with_sip6(|| Some(8_233));
+        assert!(
+            wrong_chain.validate_header(&sealed).is_ok(),
+            "recovers, but another signer"
+        );
     }
 
     #[test]

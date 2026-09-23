@@ -121,4 +121,6 @@ the `Schedule` type feeds the sealer, the expectations follower, and
 the validator from one construction site (`SOVA_EMISSION_SCHEDULE=sip3`
 selects this schedule; the default stays flat for regtest and the box
 scenarios' deterministic exact-mint assertions). The sip3 mode's live
-debut is the public-testnet reset.
+debut is mainnet genesis: the public testnet mints a flat 6,250 SOVA per
+epoch (Rob, 2026-09-23), so testers hold usable balances from the first
+epoch.

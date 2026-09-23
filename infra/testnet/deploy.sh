@@ -14,6 +14,15 @@
 #   ./deploy.sh alerts
 #       Push TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID (from YOUR environment)
 #       to /etc/sova/health.env (root 0600) on every host, over SSH stdin.
+#   ./deploy.sh check
+#       Validate config.env offline (no token, no SSH, no API call).
+#   ./deploy.sh render [--out DIR] [--systemd-verify]
+#       check, then write every host's files (host.env, /etc/sova/*, the
+#       systemd units) under DIR (default out/render/<server>/) with the
+#       same code setup-host.sh runs on the host, and lint them: every
+#       EnvironmentFile exists, every ${VAR} a unit uses is defined.
+#       --systemd-verify also runs `systemd-analyze verify` on them in a
+#       throwaway ubuntu:24.04 container (needs Docker). Nothing remote.
 #
 # Needs: provision.sh up has run (out/servers/*.ipv4), the SSH key from
 # config.env. No cloud API token is used here.
@@ -21,15 +30,20 @@ set -euo pipefail
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-usage() { sed -n '2,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "${BASH_SOURCE[0]}"; }
 
 CMD=deploy
 ONLY=""
+RENDER_DIR=""
+SYSTEMD_VERIFY=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=1 ;;
     --only) ONLY="${2:?--only needs a server name}"; shift ;;
+    --out) RENDER_DIR="${2:?--out needs a directory}"; shift ;;
+    --systemd-verify) SYSTEMD_VERIFY=1 ;;
     alerts) CMD=alerts ;;
+    check | render) CMD="$1"; DRY_RUN=1 ;;
     -h | --help) usage; exit 0 ;;
     *) die "unknown argument '$1'" ;;
   esac
@@ -37,7 +51,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 load_config
-validate_servers
+if [[ "${CMD}" == check || "${CMD}" == render ]]; then
+  validate_config
+else
+  validate_servers
+fi
 EXTRA_BOOTNODES="${EXTRA_BOOTNODES:-}"
 REMOTE_DIR=/tmp/sova-infra-kit
 
@@ -126,7 +144,7 @@ bootnodes_for() {
     if [[ -s "${f}" ]]; then
       list+="${list:+,}$(cat "${f}")"
     elif [[ "${DRY_RUN}" == 1 ]]; then
-      list+="${list:+,}enode://<${name}>@<ip>:${SOVA_P2P_PORT}"
+      list+="${list:+,}enode://DRYRUN-${name}-node-id@203.0.113.1:${SOVA_P2P_PORT}"
     else
       die "no enode recorded for seed ${name}"
     fi
@@ -175,7 +193,114 @@ cmd_alerts() {
   done
 }
 
+cmd_check() {
+  log "config OK (${CONFIG_WARNINGS} open item(s) above, none blocking this step)"
+}
+
+# Lints one rendered host: every EnvironmentFile a unit names exists (or is
+# optional, or is written by a later step), and every ${VAR} in its
+# ExecStart is defined by one of them or by an Environment= line.
+LINT_FAIL=0
+lint_render() { # render-root server
+  local root="$1" name="$2" unit ef path opt vars v defined f
+  for unit in "${root}"/etc/systemd/system/*.service; do
+    local envfiles=()
+    while read -r ef; do
+      opt=0
+      [[ "${ef}" == -* ]] && opt=1 && ef="${ef#-}"
+      path="${root}${ef}"
+      if [[ -f "${path}" ]]; then
+        envfiles+=("${path}")
+      elif [[ ${opt} == 1 ]]; then
+        :
+      elif [[ "${ef}" == /etc/sova/cloudflared.env ]]; then
+        echo "  note ${name}/${unit##*/}: ${ef} is written later by cloudflare.sh tunnels"
+      else
+        echo "  FAIL ${name}/${unit##*/}: EnvironmentFile ${ef} was not rendered"
+        LINT_FAIL=$((LINT_FAIL + 1))
+      fi
+    done < <(sed -n 's/^EnvironmentFile=//p' "${unit}")
+    # ExecStart with its continuation lines joined.
+    # shellcheck disable=SC2016 # a literal ${NAME} pattern
+    vars="$(awk '/^ExecStart=/{on=1} on{print} on && !/\\$/{on=0}' "${unit}" |
+      grep -o '\${[A-Z_][A-Z0-9_]*}' | tr -d '${}' | sort -u || true)"
+    for v in ${vars}; do
+      defined=0
+      grep -q "^Environment=${v}=" "${unit}" && defined=1
+      for f in "${envfiles[@]+"${envfiles[@]}"}"; do
+        grep -q "^${v}=" "${f}" && defined=1
+      done
+      if [[ ${defined} == 0 ]]; then
+        echo "  FAIL ${name}/${unit##*/}: ExecStart uses \${${v}}, which no EnvironmentFile defines"
+        LINT_FAIL=$((LINT_FAIL + 1))
+      fi
+    done
+  done
+  f="${root}/etc/sova/sova-node.env"
+  if [[ -f "${f}" ]]; then
+    for v in SOVA_CHAIN SOVA_ZEBRAD_RPC SOVA_DATADIR SOVA_P2P_PORT SOVA_HTTP_PORT SOVA_AUTH_PORT SOVA_RPC_PROFILE; do
+      grep -q "^${v}=." "${f}" || { echo "  FAIL ${name}: sova-node.env has no ${v}"; LINT_FAIL=$((LINT_FAIL + 1)); }
+    done
+    grep -q '^SOVA_EPOCH_BASE=.' "${f}" ||
+      echo "  note ${name}: SOVA_EPOCH_BASE empty, so no epoch-base-pinned marker: sova-node stays stopped until 'Pin B'"
+  fi
+}
+
+# systemd-analyze verify in a throwaway container: the real parser, with
+# stub binaries at the paths the units name.
+systemd_verify() { # render-dir
+  need_cmd docker "for --systemd-verify"
+  log "systemd-analyze verify in ubuntu:24.04 (throwaway container)"
+  docker run --rm -v "$1:/render:ro" ubuntu:24.04 bash -c '
+    set -e
+    apt-get update -qq >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq systemd >/dev/null
+    for b in /usr/local/bin/sova /usr/local/bin/sova-miner /usr/local/bin/sova-faucet /usr/bin/docker \
+      /usr/bin/cloudflared /usr/local/lib/sova-infra/health.sh; do
+      mkdir -p "$(dirname "$b")"; printf "#!/bin/sh\n" >"$b"; chmod 755 "$b"
+    done
+    for u in sova sova-faucet sova-keeper; do useradd --system "$u" 2>/dev/null || true; done
+    # cloud-init installs Docker on the real hosts; stand in for its unit.
+    printf "[Unit]\nDescription=stub\n[Service]\nExecStart=/usr/bin/docker\n" >/etc/systemd/system/docker.service
+    rc=0
+    for host in /render/*/; do
+      rm -rf /etc/sova && cp -r "$host/etc/sova" /etc/sova
+      cp "$host"/etc/systemd/system/* /etc/systemd/system/
+      units=$(cd "$host/etc/systemd/system" && ls)
+      if out=$(cd /etc/systemd/system && systemd-analyze verify $units 2>&1); then
+        echo "  ok   $(basename "$host"): systemd-analyze verify: $(echo $units)"
+      else
+        echo "$out" | grep -v "^$" | sed "s|^|  FAIL $(basename "$host"): |"; rc=1
+      fi
+      (cd "$host/etc/systemd/system" && rm -f $(printf "/etc/systemd/system/%s " $units))
+    done
+    exit $rc'
+}
+
+cmd_render() {
+  local dir="${RENDER_DIR:-${OUT_DIR}/render}" s name envf
+  rm -rf "${dir}"
+  mkdir -p "${dir}" "${OUT_DIR}/servers"
+  for s in "${SERVERS[@]}"; do
+    name="$(srv_name "${s}")"
+    [[ -z "${ONLY}" || "${ONLY}" == "${name}" ]] || continue
+    mkdir -p "${dir}/${name}"
+    envf="${dir}/${name}/host.env"
+    host_env "${s}" "$(bootnodes_for "${name}")" >"${envf}"
+    bash "${KIT_DIR}/host/setup-host.sh" "${envf}" --render "${dir}/${name}" 2>&1 | sed 's/^/  /'
+    lint_render "${dir}/${name}" "${name}"
+    echo "  ${name} ($(srv_role "${s}")): $(cd "${dir}/${name}" && find etc -type f | sort | tr '\n' ' ')"
+  done
+  [[ ${LINT_FAIL} == 0 ]] || die "${LINT_FAIL} problem(s) in the rendered files"
+  log "rendered and linted: ${dir}"
+  if [[ ${SYSTEMD_VERIFY} == 1 ]]; then
+    systemd_verify "${dir}" || die "systemd-analyze verify failed"
+  fi
+  log "config OK (${CONFIG_WARNINGS} open item(s) above)"
+}
+
 case "${CMD}" in
   deploy) cmd_deploy ;;
   alerts) cmd_alerts ;;
+  check) cmd_check ;;
+  render) cmd_render ;;
 esac

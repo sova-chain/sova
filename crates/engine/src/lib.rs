@@ -38,6 +38,8 @@ pub mod expectations;
 pub mod miner;
 pub mod p2p;
 pub mod relay;
+pub mod seal;
+pub mod signer;
 pub mod zcash_index;
 
 pub use builder::{SovaPayloadBuilder, SovaPayloadBuilderBuilder};

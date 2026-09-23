@@ -59,8 +59,8 @@ Remaining:
       and mined, then the format is frozen (in progress)
 - [ ] **Infrastructure.** One seed node and one rate-limited public RPC. A
       courtesy bootstrap: nothing in consensus names them (next)
-- [ ] **Testnet genesis and parameters.** Zcash testnet anchor height, SIP-3
-      schedule switched on (next)
+- [ ] **Testnet genesis and parameters.** Zcash testnet anchor height, a
+      flat 6,250 SOVA per epoch (SIP-3's schedule starts at mainnet) (next)
 - [ ] **Explorer** (next)
 
 **Exit:**

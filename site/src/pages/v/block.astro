@@ -1,0 +1,271 @@
+---
+// Homepage direction A, "Block" (2026-09-23 round). Early-Bitcoin hacker: a
+// terminal on a laptop runs the box, burns ZEC and watches Sova seal the
+// matching block; under it the two chains grow one block for one block.
+// CSS-only motion: every line and block is in the DOM from the start, each
+// with its own generated keyframes on one loop, so nothing reflows. Reduced
+// motion shows the finished transcript and the whole chain. No script.
+//
+// Transcript values: mcp/docs/walkthrough.md (epoch 1 at Zcash height 103,
+// 100000 zat per epoch, txid c5632d5e…, address 0x00953dbc…3523, burns at
+// 103/105/107/109/111), box/README.md (three components), box/up/README.md
+// (settled=true log line), sips/sip-1.md (the eater script), sips/sip-2.md
+// (one Sova block per Zcash block), sips/sip-3.md (6,250 SOVA; regtest mints
+// the full reward). Sources: site/README.md, "Where each claim comes from".
+import Direction from '../../layouts/Direction.astro';
+import DirSwitch from '../../components/DirSwitch.astro';
+import TestnetStats from '../../components/TestnetStats.astro';
+import { WORDMARK_PATHS, REWARD_SOVA, doors, readLinks, footerLinks } from '../../data/sova';
+
+const LOOP = 16;
+const HIDE = 15.2;
+const pct = (s: number) => ((s / LOOP) * 100).toFixed(2);
+const show = (name: string, from: number, to = HIDE) =>
+  `@keyframes ${name}{0%,${pct(from)}%{opacity:0;transform:translateY(3px)}${pct(from + 0.3)}%,${pct(to)}%{opacity:1;transform:none}${pct(to + 0.3)}%,100%{opacity:0;transform:none}}`;
+const type = (name: string, from: number, dur: number, n: number) =>
+  `@keyframes ${name}{0%,${pct(from)}%{width:0}${pct(from + dur)}%,100%{width:${n}ch}}`;
+
+type L = { k: 'cmd' | 'out' | 'note' | 'log' | 'mint' | 'wait'; t: string; at: number; dur?: number };
+const lines: L[] = [
+  { k: 'cmd', t: './box/up.sh', at: 0.3, dur: 0.6 },
+  { k: 'out', t: 'zebrad · sova node · sova-miner   up', at: 1.2 },
+  { k: 'cmd', t: 'sova-miner mine --per-epoch-zat 100000', at: 2.0, dur: 1.3 },
+  { k: 'wait', t: 'zcash block 103 ', at: 3.6 },
+  { k: 'out', t: 'epoch 1: height=103 burn=100000zat …', at: 6.0 },
+  { k: 'note', t: '# to 76a914 00…00 88ac, unspendable', at: 6.7 },
+  { k: 'log', t: 'INFO sova epoch trigger height=103 settled=true', at: 7.7 },
+  { k: 'mint', t: `+${REWARD_SOVA} SOVA to 0x0095…3523`, at: 8.7 },
+];
+const FOUND_AT = 5.6;
+const CURSOR_AT = 9.3;
+
+// The chain: Zcash heights 103..112, burns every other block (the
+// walkthrough's five burns). One Sova block per Zcash block; a burn-less
+// epoch still gets its block and mints nothing.
+const cols = Array.from({ length: 10 }, (_, i) => {
+  const h = 103 + i;
+  return { h, burn: h % 2 === 1, at: 1.0 + i * 1.3 };
+});
+
+const css = [
+  ...lines.map((l, i) => show(`bl${i}`, l.at)),
+  ...lines.map((l, i) => (l.k === 'cmd' ? type(`bt${i}`, l.at, l.dur ?? 1, l.t.length) : '')),
+  show('bw0', lines[3].at, FOUND_AT - 0.3),
+  show('bw1', FOUND_AT),
+  show('bcur', CURSOR_AT),
+  ...cols.map((c, i) => show(`bz${i}`, c.at)),
+  ...cols.map((c, i) => show(`bs${i}`, c.at + 0.45)),
+].join('');
+---
+<Direction
+  title="Sova: burn ZEC, mine SOVA"
+  description="Burn ZEC, mine SOVA, on your laptop. An EVM sidechain with one block per Zcash block. Permissionless, oracle-less, self-custody."
+  preload={['mono']}
+  theme="#0c0a07"
+>
+  <Fragment set:html={`<style>${css}</style>`} />
+  <div class="scan" aria-hidden="true"></div>
+
+  <header class="top">
+    <a href="/v/block" class="mark" aria-label="Sova">
+      <svg viewBox="0 0 387 70" width="77" height="14" aria-hidden="true">
+        {WORDMARK_PATHS.map((d) => <path fill="currentColor" d={d} />)}
+      </svg>
+    </a>
+    <span class="state">pre-release · local today · testnet next</span>
+  </header>
+
+  <main id="main">
+    <section class="hero">
+      <h1><span>Burn ZEC.</span> <span>Mine SOVA.</span> <span class="hl">On your laptop.</span></h1>
+      <p class="sub">An EVM sidechain, one block per Zcash block.</p>
+      <p class="props"><span>Permissionless.</span> <span>Oracle-less.</span> <span>Self-custody.</span></p>
+    </section>
+
+    <figure class="tty">
+      <div class="bar" aria-hidden="true"><span>anon@laptop: ~/sova</span><span class="net">regtest</span></div>
+      <pre class="body" aria-hidden="true"><code>{lines.map((l, i) => (
+        <span class={`ln ${l.k}`} style={`animation-name:bl${i}`}>{
+          l.k === 'cmd'
+            ? <><span class="ps">$ </span><span class="ty" style={`animation-name:bt${i};animation-timing-function:steps(${l.t.length},end)`}>{l.t}</span></>
+            : l.k === 'wait'
+              ? <>{l.t}<span class="alt"><span class="w0" style="animation-name:bw0">mining <span class="spin">|</span></span><span class="w1" style="animation-name:bw1">found</span></span></>
+              : l.t
+        }</span>
+      ))}<span class="ln cur" style="animation-name:bcur"><span class="ps">$ </span><span class="blk">▌</span></span></code></pre>
+      <figcaption>A burn on Zcash, a block on Sova, SOVA in your wallet. <span class="dim">Regtest transcript, shortened.</span></figcaption>
+      <p class="sr">Terminal transcript: ./box/up.sh starts a Zcash regtest node, a Sova node and a miner. The miner burns 100,000 zatoshis in Zcash block 103, the Sova node settles that epoch, and 6,250 SOVA is minted to the miner's EVM address.</p>
+    </figure>
+
+    <figure class="chain">
+      <div class="rows" aria-hidden="true">
+        <span class="lab z">zcash</span>
+        <span class="lab s">sova</span>
+        {cols.map((c, i) => (
+          <div class="col" style={`--i:${i}`}>
+            <span class={`b zb${c.burn ? ' burn' : ''}`} style={`animation-name:bz${i}`}>{c.h}</span>
+            <span class={`b sb${c.burn ? ' mint' : ''}`} style={`animation-name:bs${i}`}>{c.burn ? `+${REWARD_SOVA}` : '+0'}</span>
+          </div>
+        ))}
+      </div>
+      <figcaption>Every Zcash block gets one Sova block. Blocks with a burn mint SOVA.</figcaption>
+    </figure>
+
+    <TestnetStats label="testnet, live" note="Numbers go live with the public testnet." />
+
+    <nav class="doors" aria-label="Get started">
+      {doors.map((d) => (
+        <a href={d.href}><code>$ {d.cmd}</code><b>{d.h}</b><span>{d.t}</span></a>
+      ))}
+    </nav>
+
+    <nav class="read" aria-label="Read">
+      <span class="ps" aria-hidden="true">$ ls</span>
+      {readLinks.map((r) => <a href={r.href}>{r.label.toLowerCase()}</a>)}
+    </nav>
+  </main>
+
+  <footer class="foot">
+    <p>
+      {footerLinks.map((p, i) => <>{i > 0 && ' · '}{p.href ? <a href={p.href}>{p.label}</a> : <span aria-disabled="true" data-placeholder={p.key}>{p.label}</span>}</>)}
+    </p>
+    <p class="dim">MIT or Apache-2.0.</p>
+    <DirSwitch current="block" />
+  </footer>
+</Direction>
+
+<style>
+  :global(:root) {
+    --bg: #0c0a07;
+    --g: #f4b728;
+    --g2: #cf9d2a;
+    --g3: #8a6a1f;
+    --cream: #fbf3dc;
+    --ember: #e0703f;
+    --line: #3a2f18;
+    --mono: 'Roboto Mono', ui-monospace, Menlo, Consolas, monospace;
+  }
+  :global(body) {
+    background: var(--bg) radial-gradient(ellipse at 50% 0%, #1c1710 0%, var(--bg) 65%) no-repeat;
+    color: var(--g2);
+    font: 15px/1.6 var(--mono);
+    overflow-x: hidden;
+  }
+  :global(::selection) { background: var(--g); color: var(--bg); }
+  a { color: var(--g); text-underline-offset: 3px; text-decoration-color: rgba(244, 183, 40, 0.4); }
+  a:hover { color: var(--cream); }
+  a:focus-visible { outline: 2px solid var(--g); outline-offset: 2px; }
+  .dim { color: var(--g3); }
+  .scan {
+    position: fixed; inset: 0; pointer-events: none; z-index: 5;
+    background: repeating-linear-gradient(to bottom, transparent 0 2px, rgba(0, 0, 0, 0.18) 2px 3px);
+  }
+
+  .top, main, .foot { max-width: 760px; margin: 0 auto; padding-left: 16px; padding-right: 16px; }
+  .top { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding-top: 18px; flex-wrap: wrap; }
+  .mark { color: var(--g); display: block; }
+  .state { font-size: 12px; color: var(--g3); }
+
+  .hero { padding: 44px 0 20px; }
+  h1 {
+    margin: 0 0 14px; color: var(--g); font-weight: 700;
+    font-size: clamp(34px, 8.4vw, 64px); line-height: 1.04; letter-spacing: -0.035em;
+    text-shadow: 0 0 1px rgba(244, 183, 40, 0.6), 0 0 22px rgba(244, 183, 40, 0.28);
+  }
+  h1 span { display: block; }
+  h1 .hl { color: var(--cream); }
+  .sub { margin: 0 0 4px; color: var(--cream); font-size: 16px; }
+  .props { margin: 0; color: var(--g); font-weight: 700; font-size: 14px; }
+  .props span { white-space: nowrap; }
+
+  /* The terminal */
+  .tty { margin: 14px 0 0; }
+  .bar {
+    display: flex; justify-content: space-between; gap: 12px;
+    background: #1a150d; border: 1px solid var(--line); border-bottom: 0;
+    padding: 3px 12px; font-size: 12px; color: var(--g3);
+  }
+  .net { color: var(--ember); }
+  .net::before { content: '● '; }
+  .body {
+    margin: 0; padding: 12px 14px; min-height: 13.4em;
+    background: #110e09; border: 1px solid var(--line); border-left: 2px solid var(--g2);
+    font: 13.5px/1.6 var(--mono); color: var(--g2); white-space: pre; overflow: hidden;
+    text-shadow: 0 0 1px rgba(244, 183, 40, 0.4), 0 0 8px rgba(244, 183, 40, 0.16);
+  }
+  .ln { display: block; animation-duration: 16s; animation-iteration-count: infinite; animation-timing-function: ease-out; }
+  .ln.cmd, .ln.cur { color: var(--cream); }
+  .ln.note { color: var(--g3); text-shadow: none; }
+  .ln.log { color: var(--g3); }
+  .ln.mint { color: var(--g); font-weight: 700; }
+  .ps { color: var(--g3); }
+  .ty { display: inline-block; vertical-align: bottom; overflow: hidden; animation-duration: 16s; animation-iteration-count: infinite; }
+  .alt { display: inline-grid; }
+  .alt > span { grid-area: 1 / 1; animation-duration: 16s; animation-iteration-count: infinite; }
+  .w0 { color: var(--ember); }
+  .w1 { color: var(--g); }
+  .spin { display: inline-block; animation: spin 0.5s steps(4, end) infinite; }
+  @keyframes spin { to { transform: rotate(180deg); } }
+  .blk { color: var(--g); animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  figcaption { font-size: 12.5px; color: var(--g2); margin-top: 8px; }
+
+  /* The two chains */
+  .chain { margin: 26px 0 30px; }
+  .rows {
+    display: grid; grid-template-columns: auto repeat(10, minmax(0, 1fr)); grid-template-rows: auto auto;
+    gap: 14px 6px; align-items: center;
+  }
+  .lab { font-size: 11px; color: var(--g3); padding-right: 4px; }
+  .lab.z { grid-row: 1; grid-column: 1; color: var(--ember); }
+  .lab.s { grid-row: 2; grid-column: 1; color: var(--g); }
+  .col { display: contents; }
+  .b {
+    grid-row: 1; grid-column: calc(var(--i) + 2); position: relative;
+    display: block; text-align: center; font-size: 11px; line-height: 1; padding: 8px 0;
+    border: 1px solid var(--g3); color: var(--g2); white-space: nowrap;
+    animation-duration: 16s; animation-iteration-count: infinite; animation-timing-function: ease-out;
+  }
+  .zb { border-color: #6b3a22; color: #c98a64; }
+  .zb.burn { border-color: var(--ember); color: var(--cream); box-shadow: inset 0 -3px 0 var(--ember); }
+  .sb { grid-row: 2; color: var(--g3); }
+  .sb.mint { border-color: var(--g); color: var(--g); background: rgba(244, 183, 40, 0.07); }
+  /* the anchor: each Sova block points up at its Zcash block */
+  .sb::before {
+    content: ''; position: absolute; left: 50%; bottom: 100%; width: 1px; height: 14px;
+    background: var(--g3);
+  }
+  .sb.mint::before { background: var(--g); }
+
+  /* Doors */
+  .doors { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 30px 0 18px; }
+  .doors a {
+    display: flex; flex-direction: column; gap: 4px; padding: 12px;
+    border: 1px solid var(--g3); text-decoration: none; color: var(--g2);
+  }
+  .doors a:hover { border-color: var(--g); background: rgba(244, 183, 40, 0.05); }
+  .doors code { font: 12px var(--mono); color: var(--g3); }
+  .doors b { color: var(--g); font-size: 17px; }
+  .doors span { font-size: 13px; line-height: 1.5; }
+  .read { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 14px; margin: 0 0 40px; }
+
+  .foot { padding-bottom: 40px; font-size: 12.5px; }
+  .foot p { margin: 0 0 6px; }
+  .foot [data-placeholder] { color: var(--g3); }
+  .foot :global(.dirs) { margin-top: 18px; display: flex; flex-wrap: wrap; gap: 4px 10px; color: var(--g3); }
+  .foot :global(.dirs strong) { color: var(--cream); }
+  .foot :global(.dirs a) { color: var(--g2); }
+
+  @media (max-width: 600px) {
+    .hero { padding-top: 30px; }
+    .body { font-size: 10.6px; padding: 10px; }
+    .rows { grid-template-columns: auto repeat(6, minmax(0, 1fr)); gap: 12px 4px; }
+    .b { grid-column: calc(var(--i) - 2); font-size: 10px; padding: 7px 0; }
+    .col:nth-of-type(-n + 4) { display: none; }
+    .doors { grid-template-columns: 1fr; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ln, .ty, .alt > span, .b, .spin, .blk { animation: none !important; }
+    .w0 { visibility: hidden; }
+  }
+</style>

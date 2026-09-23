@@ -1,0 +1,127 @@
+---
+// /ecosystem: what's built on Sova, kept apart from the network itself.
+// Three groups: the network (the chain every node runs), apps built on it,
+// and products Sova Labs operates (wZcash, custodial). Facts: Ashwings
+// (contracts/src/Ashwings.sol, docs/WORKPLAN.md G2), Zcash pulse
+// (src/pages/pulse.astro, sips/sip-7-draft-zcash-events.md), the day-one kit
+// (box/deploy-dapps.sh, contracts/script/Deploy.s.sol, box/up/README.md,
+// docs/WORKPLAN.md G1), wZcash (docs/design/wz-cash.md: Rob's decisions
+// 2026-09-23, "Custody, stated first"). Sources: site/README.md.
+import Site from '../layouts/Site.astro';
+import Tag from '../components/Tag.astro';
+import { repo } from '../data/sova';
+
+const apps = [
+  {
+    name: 'Ashwings',
+    href: '/ashwings',
+    tag: 'launch' as const,
+    t: '10,000 pixel owls drawn entirely by their own contract. Mint with SOVA on Sova or with ZEC on Zcash.',
+    now: 'A mint page and a marketplace are being built.',
+    runs: 'its contract, which draws every owl',
+  },
+  {
+    name: 'Zcash pulse',
+    href: '/pulse',
+    tag: 'testnet' as const,
+    t: 'Zcash’s shielded pool totals, read live from Sova state every block (SIP-7).',
+    now: 'A demo: it runs against a local node today.',
+    runs: 'a demo page on sova.io, reading Sova state',
+  },
+  {
+    name: 'Day-one kit',
+    href: repo.blob('box/deploy-dapps.sh'),
+    tag: 'local' as const,
+    t: 'WSOVA, a Uniswap-v2-class exchange and Multicall3. Launch a token, pool it and swap it from the first block.',
+    now: 'One command on the box today: ./box/deploy-dapps.sh',
+    runs: 'its contracts, settings fixed at deploy',
+  },
+];
+---
+<Site
+  title="Sova: ecosystem"
+  description="What's built on Sova: Ashwings, Zcash pulse, the day-one kit, and wZcash, a custodial Sova Labs product at wz.cash. The network and the apps on it, side by side."
+  current="/ecosystem"
+  cmd="ls ecosystem/"
+  status="pre-release · testnet next"
+>
+  <h1>Ecosystem</h1>
+  <p class="lead">What people are building on Sova, and who runs each piece.</p>
+
+  <h2>the network</h2>
+  <div class="net">
+    <p><b>Sova</b>: the chain itself. Every node runs it, verifies every mint against its own Zcash node, and follows the rules in the <a href="/sips">SIPs</a>.</p>
+    <p class="props"><span>Permissionless.</span> <span>Oracle-less.</span> <span>Self-custody.</span></p>
+  </div>
+
+  <h2>built on it</h2>
+  <p class="dim">Apps on Sova. Each one is run by its builder; the network runs every contract by the same rules.</p>
+  <ul class="cards">
+    {apps.map((a) => (
+      <li>
+        <a href={a.href}>
+          <span class="nm">{a.name}</span> <Tag k={a.tag} />
+          <span class="t">{a.t}</span>
+          <span class="now">{a.now}</span>
+          <span class="runs"><span class="k">run by:</span> {a.runs}</span>
+        </a>
+      </li>
+    ))}
+  </ul>
+
+  <h2>by Sova Labs</h2>
+  <p class="dim">Products the company Sova Labs operates, apart from the network and its rules.</p>
+  <article class="card labs">
+    <p class="head"><span class="nm">wZcash</span> <span class="st st-soon">[soon]</span> <span class="cust">custodial, by Sova Labs</span></p>
+    <p class="t">Wrapped ZEC as a token on Sova, at <span data-placeholder="wz-cash" aria-disabled="true" class="ph">wz.cash (soon)</span>.</p>
+    <dl class="kv">
+      <dt>custody</dt><dd>The ZEC behind wZcash sits in a Zcash address whose key NEAR’s MPC network holds (NEAR Chain Signatures).</dd>
+      <dt>relayer</dt><dd>Sova Labs runs the relayer that tells that vault about withdrawals on Sova.</dd>
+      <dt>fee</dt><dd>Sova Labs takes a small fee on wraps and unwraps.</dd>
+      <dt>trust</dt><dd>Holding wZcash means trusting Sova Labs and NEAR’s MPC operators.</dd>
+    </dl>
+    <p class="dim">For ZEC that stays in your own wallet, pay from Zcash directly: Sova contracts verify ZEC payments on Zcash itself (<a href="/build">SIP-4</a>).</p>
+  </article>
+
+  <h2>build yours</h2>
+  <p>Contracts on Sova read Zcash (<span class="nw">SIP-4</span>) and its shielded pool totals (<span class="nw">SIP-7</span>). <Tag k="testnet" /></p>
+  <p>Start at <a href="/build">/build</a>. To list your project here, send a pull request to <a href={repo.blob('site/src/pages/ecosystem.astro')}><code>site/src/pages/ecosystem.astro</code></a>.</p>
+
+  <div class="next">
+    <a href="/build">Build →</a>
+    <a href="/ashwings">Ashwings →</a>
+    <a href="/pulse">Zcash pulse →</a>
+  </div>
+</Site>
+
+<style>
+  .net { border-left: 2px solid var(--g); padding: 2px 0 2px 14px; }
+  .net p { margin: 0 0 6px; }
+  .props { color: var(--g); font-weight: 700; }
+  .props span, .nw { white-space: nowrap; }
+
+  .cards { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  .cards li { max-width: none; }
+  .cards a {
+    display: flex; flex-direction: column; gap: 6px; height: 100%;
+    border: 1px solid var(--g3); padding: 12px 12px 14px; text-decoration: none; color: var(--text);
+  }
+  .cards a:hover { border-color: var(--g); background: rgba(244, 183, 40, 0.05); }
+  .nm { color: var(--g); font-weight: 700; font-size: 16px; }
+  .t { font-size: 14px; line-height: 1.5; }
+  .now { font-size: 12.5px; color: var(--g2); }
+  .runs { font-size: 12.5px; color: var(--g3); margin-top: auto; }
+  .runs .k, .kv dt { color: var(--g3); }
+
+  .labs { border: 1px dashed var(--ember); padding: 14px 16px 6px; }
+  .labs .head { margin: 0 0 6px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+  .labs .nm { color: var(--cream); }
+  .cust { border: 1px solid var(--ember); color: var(--ember); font-size: 12.5px; padding: 0 7px; }
+  .st-soon { color: var(--ember); }
+  .labs .t { margin: 0 0 10px; font-size: 15px; }
+  .labs .kv { font-size: 14px; }
+
+  @media (max-width: 760px) {
+    .cards { grid-template-columns: 1fr; }
+  }
+</style>

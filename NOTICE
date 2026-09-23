@@ -29,7 +29,8 @@ apply to them. contracts/src/vendor/README.md records provenance and the
 modification.
 
 The compiled AMM: the Uniswap V2 factory, pair and router contracts that
-contracts/script/Deploy.s.sol and box/deploy-dapps.sh compile and deploy
+contracts/script/deploy-kit.sh (run by box/deploy-dapps.sh and
+infra/testnet/deploy-contracts.sh) compiles and deploys
 are built from the GPL-3.0 source above (including the modified
 UniswapV2Library.sol); the MIT / Apache-2.0 grant does not cover that
 source. Sova's own contracts (contracts/src/WSOVA.sol,

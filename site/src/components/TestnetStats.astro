@@ -1,0 +1,61 @@
+---
+// Live testnet stats slot for the homepage directions: block height, burns,
+// SOVA minted. Until the public testnet runs, every value is a placeholder
+// (data-placeholder="testnet-stats"; site/README.md, "Still at launch").
+// Each value carries data-stat={key} so a later script can fill it from
+// Sova RPC. Colours and font come from the page through custom properties:
+// --ts-fg, --ts-dim, --ts-accent, --ts-line, --ts-font.
+import { testnetStats } from '../data/sova';
+
+interface Props {
+  /** Heading above the numbers, in the page's voice ("" for none). */
+  label?: string;
+  /** Note under the numbers while they are placeholders. */
+  note?: string;
+}
+const { label = 'testnet, live', note = 'Numbers appear here when the public testnet starts.' } = Astro.props;
+---
+<section class="ts" aria-label="Testnet stats" data-placeholder="testnet-stats">
+  {label && <p class="ts-h"><span class="ts-dot" aria-hidden="true"></span>{label}</p>}
+  <dl class="ts-grid">
+    {testnetStats.map((s) => (
+      <div class="ts-cell">
+        <dt>{s.label}</dt>
+        <dd data-stat={s.key}><span class="ts-ph" aria-hidden="true">------</span><span class="sr">waiting for the testnet</span></dd>
+      </div>
+    ))}
+  </dl>
+  <p class="ts-note">{note}</p>
+</section>
+
+<style>
+  .ts {
+    --fg: var(--ts-fg, #fbf3dc);
+    --dim: var(--ts-dim, #8a6a1f);
+    --accent: var(--ts-accent, #f4b728);
+    --line: var(--ts-line, #3a2f18);
+    font-family: var(--ts-font, 'Roboto Mono', ui-monospace, Menlo, Consolas, monospace);
+    color: var(--fg);
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    padding: 12px 0 10px;
+    margin: 0;
+  }
+  .ts-h { margin: 0 0 8px; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--dim); }
+  .ts-dot {
+    display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    border: 1px solid var(--dim); margin-right: 8px; vertical-align: 1px;
+  }
+  .ts-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 16px; margin: 0; }
+  .ts-cell { min-width: 0; }
+  .ts dt { font-size: 12px; color: var(--dim); margin: 0 0 2px; }
+  .ts dd { margin: 0; font-size: clamp(18px, 4.6vw, 26px); line-height: 1.2; font-variant-numeric: tabular-nums; color: var(--accent); }
+  .ts-ph { color: var(--dim); letter-spacing: 0.06em; animation: ts-wait 2.4s ease-in-out infinite; }
+  .ts-cell:nth-child(2) .ts-ph { animation-delay: 0.3s; }
+  .ts-cell:nth-child(3) .ts-ph { animation-delay: 0.6s; }
+  @keyframes ts-wait { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
+  .ts-note { margin: 8px 0 0; font-size: 12px; color: var(--dim); }
+  @media (prefers-reduced-motion: reduce) {
+    .ts-ph { animation: none; opacity: 0.8; }
+  }
+</style>

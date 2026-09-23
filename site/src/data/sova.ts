@@ -73,7 +73,7 @@ export const sips = [
   {
     n: 3, id: 'sip-3', file: 'sip-3.md', title: 'Emission schedule', st: 'accepted',
     sum: '6,250 SOVA per epoch after a 20,000-epoch slow start, halving every 1,680,000 epochs, Zcash’s own interval.',
-    note: 'Numbers locked; the schedule switches on with the public testnet.',
+    note: 'Numbers locked; the schedule starts at mainnet. The public testnet mints a flat 6,250 SOVA per epoch.',
   },
   {
     n: 4, id: 'sip-4', file: 'sip-4-draft-zcash-state-precompile.md', title: 'Zcash state precompile', st: 'draft',
@@ -105,8 +105,33 @@ export const sips = [
 // Ashwings rendered by the contract (contracts/samples/), all twelve samples.
 export const owls = [4, 1, 2, 0, 3, 5, 6, 7, 8, 9, 10, 11].map((n) => `/ashwings/onchain-${n}.svg`);
 
+// The homepage directions (/v/block, /v/fire, /v/cover): three ways in and
+// the reading links, shared so every direction carries the same doors.
+// The commands are the tools' own (box/README.md, the miner's README,
+// contracts/src/zcash/IZcash.sol).
+export const doors = [
+  { href: '/mine', h: 'Mine', cmd: 'sova-miner mine', t: 'Burn ZEC, earn SOVA.' },
+  { href: '/node', h: 'Run a node', cmd: './box/up.sh', t: 'Zcash and Sova side by side, on a laptop.' },
+  { href: '/build', h: 'Build', cmd: 'IZcash.txInfo()', t: 'Contracts that read Zcash.' },
+] as const;
+export const readLinks = [
+  { href: '/paper', label: 'The paper' },
+  { href: '/sips', label: 'SIPs' },
+  { href: REPO, label: 'GitHub' },
+  { href: repo.contributing, label: 'Contributing' },
+  { href: '/ecosystem', label: 'Ecosystem' },
+] as const;
+
+// Live testnet stats (components/TestnetStats.astro): placeholders until the
+// public testnet runs; `key` is the data-stat hook a later script fills.
+export const testnetStats = [
+  { key: 'height', label: 'height' },
+  { key: 'burns', label: 'burns' },
+  { key: 'minted', label: 'SOVA minted' },
+] as const;
+
 // Every indexable page besides the landing page at `/`, in reading order.
-// `nav` is the short label in the Site.astro header (eight items; /press is
+// `nav` is the short label in the Site.astro header (nine items; /press is
 // footer-only). The paper's title block and margin list, every footer and
 // the sitemap use the full list.
 export const sitePages = [
@@ -116,6 +141,7 @@ export const sitePages = [
   { href: '/sips', label: 'SIPs', nav: 'sips' },
   { href: '/mine', label: 'Mine', nav: 'mine' },
   { href: '/node', label: 'Run a node', nav: 'node' },
+  { href: '/ecosystem', label: 'Ecosystem', nav: 'ecosystem' },
   { href: '/ashwings', label: 'Ashwings', nav: 'ashwings' },
   { href: '/story', label: 'Story', nav: 'story' },
   { href: '/press', label: 'Press kit', nav: '' },

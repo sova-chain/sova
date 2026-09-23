@@ -1,6 +1,5 @@
 ---
-// The homepage (Rob picked direction C, "Cover", 2026-09-23; the preview
-// stays at /v/cover). The whole homepage is the
+// Homepage direction C, "Cover" (2026-09-23 round). The whole homepage is the
 // cover sheet of a paper: title, a two-sentence abstract, one figure that
 // draws itself (the two chains, one Sova block per Zcash block), a table for
 // the live testnet numbers, and the links set as a table of contents. Set in
@@ -13,9 +12,10 @@
 // Zcash node, contracts read Zcash through it), sips/sip-3.md (SOVA minted
 // only by burns), sips/sip-2.md (one Sova block per Zcash block; each block
 // commits to the Zcash block it settles). Sources: site/README.md.
-import Direction from '../layouts/Direction.astro';
-import TestnetStats from '../components/TestnetStats.astro';
-import { WORDMARK_PATHS, doors, readLinks, footerLinks } from '../data/sova';
+import Direction from '../../layouts/Direction.astro';
+import DirSwitch from '../../components/DirSwitch.astro';
+import TestnetStats from '../../components/TestnetStats.astro';
+import { WORDMARK_PATHS, doors, readLinks, footerLinks } from '../../data/sova';
 
 // Table of contents: the three doors, then the reading links.
 const toc = [
@@ -39,7 +39,6 @@ const pairs = Array.from({ length: N }, (_, i) => ({ x: X0 + i * STEP, i }));
   title="Sova: the EVM that can see Zcash"
   description="The EVM that can see Zcash. An EVM sidechain whose every node runs a Zcash node; its gas, SOVA, is issued only by burning ZEC. Permissionless, oracle-less, self-custody."
   theme="#d9d5cc"
-  indexable
 >
   <link slot="head" rel="preload" href="/fonts/paper-serif-roman.woff2" as="font" type="font/woff2" crossorigin />
 
@@ -102,6 +101,7 @@ const pairs = Array.from({ length: N }, (_, i) => ({ x: X0 + i * STEP, i }));
         {footerLinks.map((p, i) => <>{i > 0 && ' · '}{p.href ? <a href={p.href}>{p.label}</a> : <span aria-disabled="true" data-placeholder={p.key}>{p.label}</span>}</>)}
       </p>
       <p>MIT or Apache-2.0. Set in Computer Modern (a subset of CMU Serif, <a href="/fonts/LICENSE-CMU-Serif.txt">SIL OFL</a>).</p>
+      <DirSwitch current="cover" />
     </footer>
   </main>
 </Direction>

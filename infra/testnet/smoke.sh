@@ -14,7 +14,10 @@
 #   ./smoke.sh balance <0xEVM> [minutes]
 #                          the stranger test's last step: poll the public
 #                          RPC until <0xEVM> holds SOVA (a burn was minted)
-#   ./smoke.sh all         edge + hosts
+#   ./smoke.sh contracts   the day-one contracts answer through the public
+#                          RPC (deploy-contracts.sh verify: code matches the
+#                          build, getters return the recorded values)
+#   ./smoke.sh all         edge + hosts (+ contracts once recorded)
 # ok/bad always return 0, so `test && ok || bad` is a safe if/else here.
 # shellcheck disable=SC2015
 set -uo pipefail
@@ -135,11 +138,24 @@ cmd_balance() {
   bad "mint: ${addr} still has no SOVA after ${mins} min"
 }
 
+cmd_contracts() {
+  if "${KIT_DIR}/deploy-contracts.sh" verify --rpc "https://${RPC_HOST}"; then
+    ok "contracts: every recorded day-one contract verified via https://${RPC_HOST}"
+  else
+    bad "contracts: deploy-contracts.sh verify failed (output above)"
+  fi
+}
+
 case "${CMD}" in
   edge) cmd_edge ;;
+  contracts) cmd_contracts ;;
   hosts) cmd_hosts ;;
   balance) cmd_balance "$@" ;;
-  all) cmd_edge; cmd_hosts ;;
+  all)
+    cmd_edge
+    cmd_hosts
+    [[ ! -f "${KIT_DIR}/deployments/${DEPLOY_CHAIN_NAME:-sova-testnet}.json" ]] || cmd_contracts
+    ;;
   *) die "unknown command '${CMD}'" ;;
 esac
 echo "${PASS} passed, ${FAIL} failed"

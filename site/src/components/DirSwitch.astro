@@ -1,9 +1,14 @@
 ---
 // Small cross-link between the design directions, so the owner can
-// flip between them. Each page styles `.dirs` itself.
-interface Props { current: '2009' | 'terminal' | 'burn' | 'paper' }
+// flip between them. Each page styles `.dirs` itself. block, fire and cover
+// are the 2026-09-23 homepage round (docs/marketing/homepage-directions.md).
+type Id = '2009' | 'terminal' | 'burn' | 'paper' | 'block' | 'fire' | 'cover';
+interface Props { current: Id }
 const { current } = Astro.props;
-const dirs = [
+const dirs: { id: Id; href: string }[] = [
+  { id: 'block', href: '/v/block' },
+  { id: 'fire', href: '/v/fire' },
+  { id: 'cover', href: '/v/cover' },
   { id: '2009', href: '/v/2009' },
   { id: 'terminal', href: '/v/terminal' },
   { id: 'burn', href: '/v/burn' },

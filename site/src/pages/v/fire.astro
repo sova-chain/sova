@@ -1,0 +1,248 @@
+---
+// Homepage direction B, "Fire" (2026-09-23 round). One image: a ZEC coin
+// falls into a flame and a SOVA coin rises out of the embers. Inline SVG,
+// CSS keyframes only (no script); reduced motion shows one still frame, the
+// flame with the SOVA coin above it. The picture is an illustration of the
+// rule, not data.
+//
+// Facts: every SOVA is minted by burns (sips/sip-3.md: SOVA is minted only
+// by epoch rewards to burners; docs/ROADMAP.md: the genesis allocates
+// nothing); a burn pays at least 1,000 zatoshis to the unspendable script
+// 76a914 00…00 88ac and names an EVM address (sips/sip-1.md); one Sova block
+// per Zcash block (sips/sip-2.md). Sources: site/README.md.
+import Direction from '../../layouts/Direction.astro';
+import DirSwitch from '../../components/DirSwitch.astro';
+import TestnetStats from '../../components/TestnetStats.astro';
+import { WORDMARK_PATHS, MIN_BURN_ZAT, doors, readLinks, footerLinks } from '../../data/sova';
+
+const steps = [
+  { n: '1', t: 'Burn ZEC on Zcash.', d: `Any amount from ${MIN_BURN_ZAT} zatoshis.` },
+  { n: '2', t: 'Sova seals the matching block.', d: 'One Sova block per Zcash block.' },
+  { n: '3', t: 'SOVA mints to your address.', d: 'The address your burn names.' },
+];
+// Embers: x offset at the flame, drift, delay (s), size.
+const embers = [
+  [-10, -18, 0.0, 2.2], [6, 14, 0.35, 1.6], [-2, -6, 0.7, 2.6], [12, 22, 1.0, 1.4],
+  [-14, -26, 1.3, 1.8], [3, 8, 1.65, 2.0], [-6, 16, 2.0, 1.5], [9, -12, 2.4, 2.3],
+  [0, 26, 2.8, 1.3], [-11, 4, 3.2, 1.9], [14, -20, 3.6, 1.6], [-4, 10, 4.0, 2.1],
+];
+---
+<Direction
+  title="Sova: every SOVA began as burned ZEC"
+  description="Every SOVA began as burned ZEC. An EVM sidechain for Zcash, one block per Zcash block. Permissionless, oracle-less, self-custody."
+  preload={['mono']}
+  theme="#110c08"
+>
+  <header class="top">
+    <a href="/v/fire" class="mark" aria-label="Sova">
+      <svg viewBox="0 0 387 70" width="77" height="14" aria-hidden="true">
+        {WORDMARK_PATHS.map((d) => <path fill="currentColor" d={d} />)}
+      </svg>
+    </a>
+    <span class="state">pre-release</span>
+  </header>
+
+  <main id="main">
+    <section class="hero">
+      <div class="copy">
+        <h1>Every <span class="gold">SOVA</span> began as <span class="ember">burned ZEC.</span></h1>
+        <p class="sub">An EVM sidechain for Zcash.<br /><span>Permissionless.</span> <span>Oracle-less.</span> <span>Self-custody.</span></p>
+        <p class="eq" aria-label="ZEC is sent to an unspendable script, and SOVA is minted.">
+          <span class="ember">ZEC</span> <span class="ar">→</span> <code>76a914 00…00 88ac</code> <span class="ar">→</span> <span class="gold">SOVA</span>
+        </p>
+      </div>
+
+      <figure class="stage">
+        <svg viewBox="0 0 240 300" role="img" aria-labelledby="fire-t">
+          <title id="fire-t">A ZEC coin falls into a flame; a SOVA coin rises out of it.</title>
+          <defs>
+            <radialGradient id="glow" cx="50%" cy="85%" r="50%">
+              <stop offset="0" stop-color="#e0703f" stop-opacity="0.45" />
+              <stop offset="1" stop-color="#e0703f" stop-opacity="0" />
+            </radialGradient>
+            <linearGradient id="f1" x1="0" y1="1" x2="0" y2="0">
+              <stop offset="0" stop-color="#c2410c" />
+              <stop offset="1" stop-color="#e0703f" stop-opacity="0.2" />
+            </linearGradient>
+            <linearGradient id="f2" x1="0" y1="1" x2="0" y2="0">
+              <stop offset="0" stop-color="#f4b728" />
+              <stop offset="1" stop-color="#e0703f" stop-opacity="0.3" />
+            </linearGradient>
+            <linearGradient id="f3" x1="0" y1="1" x2="0" y2="0">
+              <stop offset="0" stop-color="#fbf3dc" />
+              <stop offset="1" stop-color="#f4b728" stop-opacity="0.4" />
+            </linearGradient>
+          </defs>
+          <rect class="halo" x="0" y="120" width="240" height="180" fill="url(#glow)" />
+
+          <g class="zec">
+            <circle cx="120" cy="46" r="24" fill="#1a130c" stroke="#e8dcbc" stroke-width="2" />
+            <circle cx="120" cy="46" r="19" fill="none" stroke="#e8dcbc" stroke-opacity="0.35" stroke-width="1" />
+            <text x="120" y="51" text-anchor="middle" class="coin-t">ZEC</text>
+          </g>
+
+          <g class="sova">
+            <circle cx="120" cy="46" r="24" fill="#f4b728" />
+            <circle cx="120" cy="46" r="19" fill="none" stroke="#1c1914" stroke-opacity="0.4" stroke-width="1" />
+            <path transform="translate(106.5 35) scale(0.32)" fill="#1c1914" d={WORDMARK_PATHS[0]} />
+          </g>
+
+          <g class="embers">
+            {embers.map(([x, dx, delay, r]) => (
+              <circle class="em" cx={120 + x} cy="236" r={r} style={`--dx:${dx}px;animation-delay:${delay}s`} />
+            ))}
+          </g>
+
+          <g class="flame">
+            <path class="fl f1" fill="url(#f1)" d="M120 150 C 150 190, 172 214, 164 248 C 158 272, 138 282, 120 282 C 102 282, 82 272, 76 248 C 68 214, 92 196, 104 172 C 108 190, 112 196, 116 200 C 114 182, 116 166, 120 150 Z" />
+            <path class="fl f2" fill="url(#f2)" d="M120 184 C 142 212, 154 230, 148 254 C 144 270, 132 278, 120 278 C 108 278, 96 270, 92 254 C 88 232, 102 216, 110 200 C 112 214, 116 220, 120 222 C 118 208, 118 196, 120 184 Z" />
+            <path class="fl f3" fill="url(#f3)" d="M120 218 C 132 234, 138 246, 134 260 C 131 270, 126 274, 120 274 C 114 274, 109 270, 106 260 C 103 248, 110 236, 120 218 Z" />
+          </g>
+          <line x1="70" y1="286" x2="170" y2="286" stroke="#3a2f18" stroke-width="2" />
+        </svg>
+      </figure>
+    </section>
+
+    <ol class="steps">
+      {steps.map((s) => <li><span class="n">{s.n}</span><b>{s.t}</b><span class="d">{s.d}</span></li>)}
+    </ol>
+
+    <TestnetStats label="testnet, live" note="Numbers go live with the public testnet." />
+
+    <nav class="doors" aria-label="Get started">
+      {doors.map((d) => <a href={d.href}><b>{d.h} →</b><span>{d.t}</span></a>)}
+    </nav>
+
+    <nav class="read" aria-label="Read">
+      {readLinks.map((r) => <a href={r.href}>{r.label}</a>)}
+    </nav>
+  </main>
+
+  <footer class="foot">
+    <p>
+      {footerLinks.map((p, i) => <>{i > 0 && ' · '}{p.href ? <a href={p.href}>{p.label}</a> : <span aria-disabled="true" data-placeholder={p.key}>{p.label}</span>}</>)}
+    </p>
+    <p class="dim">MIT or Apache-2.0.</p>
+    <DirSwitch current="fire" />
+  </footer>
+</Direction>
+
+<style>
+  :global(:root) {
+    --bg: #110c08;
+    --g: #f4b728;
+    --g3: #8a6a1f;
+    --cream: #fbf3dc;
+    --text: #e8dcbc;
+    --ember: #e0703f;
+    --line: #3a2a18;
+    --mono: 'Roboto Mono', ui-monospace, Menlo, Consolas, monospace;
+    --ts-line: #3a2a18;
+  }
+  :global(body) {
+    background: var(--bg) radial-gradient(ellipse 70% 50% at 70% 40%, #24160c 0%, var(--bg) 70%) no-repeat;
+    color: var(--text);
+    font: 15px/1.6 var(--mono);
+    overflow-x: hidden;
+  }
+  :global(::selection) { background: var(--g); color: var(--bg); }
+  a { color: var(--g); text-underline-offset: 3px; text-decoration-color: rgba(244, 183, 40, 0.4); }
+  a:hover { color: var(--cream); }
+  a:focus-visible { outline: 2px solid var(--g); outline-offset: 2px; }
+  .dim { color: var(--g3); }
+  .gold { color: var(--g); }
+  .ember { color: var(--ember); }
+
+  .top, main, .foot { max-width: 960px; margin: 0 auto; padding-left: 16px; padding-right: 16px; }
+  .top { display: flex; justify-content: space-between; align-items: center; padding-top: 18px; }
+  .mark { color: var(--g); display: block; }
+  .state { font-size: 12px; color: var(--g3); }
+
+  .hero { display: grid; grid-template-columns: 1.25fr 1fr; align-items: center; gap: 12px 32px; padding: 30px 0 10px; }
+  h1 {
+    margin: 0 0 18px; font-weight: 700; color: var(--cream);
+    font-size: clamp(36px, 7vw, 68px); line-height: 1.02; letter-spacing: -0.04em;
+  }
+  h1 .ember { text-shadow: 0 0 24px rgba(224, 112, 63, 0.45); }
+  h1 .gold { text-shadow: 0 0 24px rgba(244, 183, 40, 0.35); }
+  .sub { margin: 0 0 18px; color: var(--text); font-size: 15px; }
+  .sub span { white-space: nowrap; }
+  .eq { margin: 0; font-size: 13px; color: var(--g3); display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; }
+  .eq code { font: inherit; color: var(--g3); border: 1px solid var(--line); padding: 0 5px; }
+  .ar { color: var(--g3); }
+
+  .stage { margin: 0; }
+  .stage svg { width: 100%; max-width: 340px; height: auto; margin: 0 auto; overflow: visible; }
+  .coin-t { font: 700 13px var(--mono); fill: #e8dcbc; letter-spacing: 0.04em; }
+
+  /* One 5 s loop. ZEC falls in (0-38%), the flame flares (38-50%), SOVA rises
+     out and holds (50-92%). */
+  .zec, .sova, .fl, .em, .halo { transform-box: fill-box; transform-origin: center; }
+  .zec { animation: zec 5s cubic-bezier(0.5, 0, 0.9, 0.6) infinite; opacity: 0; }
+  @keyframes zec {
+    0% { transform: translateY(-30px) scale(1); opacity: 0; }
+    8% { opacity: 1; }
+    34% { transform: translateY(150px) scale(0.85); opacity: 1; }
+    42% { transform: translateY(185px) scale(0.2); opacity: 0; }
+    100% { transform: translateY(185px) scale(0.2); opacity: 0; }
+  }
+  .sova { animation: sova 5s cubic-bezier(0.2, 0.7, 0.3, 1) infinite; }
+  @keyframes sova {
+    0%, 44% { transform: translateY(170px) scale(0.2); opacity: 0; }
+    52% { opacity: 1; }
+    76% { transform: translateY(0) scale(1); opacity: 1; filter: drop-shadow(0 0 10px rgba(244, 183, 40, 0.7)); }
+    92% { transform: translateY(-6px) scale(1); opacity: 1; filter: drop-shadow(0 0 4px rgba(244, 183, 40, 0.4)); }
+    100% { transform: translateY(-12px) scale(1); opacity: 0; }
+  }
+  .fl { transform-origin: 50% 100%; }
+  .f1 { animation: flick1 1.3s ease-in-out infinite alternate, flare 5s ease-out infinite; }
+  .f2 { animation: flick2 0.9s ease-in-out infinite alternate; }
+  .f3 { animation: flick3 0.7s ease-in-out infinite alternate; }
+  @keyframes flick1 { 0% { transform: scaleY(0.94) skewX(-2deg); } 100% { transform: scaleY(1.05) skewX(2.5deg); } }
+  @keyframes flick2 { 0% { transform: scaleY(1.04) skewX(2deg); } 100% { transform: scaleY(0.93) skewX(-3deg); } }
+  @keyframes flick3 { 0% { transform: scale(0.95, 1.06); } 100% { transform: scale(1.04, 0.92); } }
+  @keyframes flare { 0%, 36% { opacity: 0.85; } 44% { opacity: 1; } 60%, 100% { opacity: 0.85; } }
+  .halo { animation: halo 5s ease-out infinite; }
+  @keyframes halo { 0%, 36% { opacity: 0.6; } 46% { opacity: 1; } 70%, 100% { opacity: 0.6; } }
+  .em { fill: #f4b728; opacity: 0; animation: rise 4.4s ease-out infinite; }
+  @keyframes rise {
+    0% { transform: translate(0, 0); opacity: 0; }
+    10% { opacity: 0.95; }
+    100% { transform: translate(var(--dx), -190px); opacity: 0; }
+  }
+
+  .steps { list-style: none; padding: 0; margin: 28px 0 30px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 24px; }
+  .steps li { display: grid; grid-template-columns: 2.2ch 1fr; column-gap: 8px; }
+  .steps .n { grid-row: span 2; color: var(--ember); font-weight: 700; }
+  .steps b { color: var(--cream); font-weight: 600; font-size: 14.5px; }
+  .steps .d { color: var(--g3); font-size: 13px; }
+
+  .doors { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 30px 0 16px; }
+  .doors a {
+    display: flex; flex-direction: column; gap: 2px; padding: 14px;
+    border: 1px solid var(--line); text-decoration: none; color: var(--text);
+    background: linear-gradient(to top, rgba(224, 112, 63, 0.07), transparent 70%);
+  }
+  .doors a:hover { border-color: var(--ember); }
+  .doors b { color: var(--g); font-size: 17px; }
+  .doors span { font-size: 13px; color: var(--text); }
+  .read { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 14px; margin: 0 0 40px; }
+
+  .foot { padding-bottom: 40px; font-size: 12.5px; }
+  .foot p { margin: 0 0 6px; }
+  .foot [data-placeholder] { color: var(--g3); }
+  .foot :global(.dirs) { margin-top: 18px; display: flex; flex-wrap: wrap; gap: 4px 10px; color: var(--g3); }
+  .foot :global(.dirs strong) { color: var(--cream); }
+  .foot :global(.dirs a) { color: var(--g); }
+
+  @media (max-width: 720px) {
+    .hero { grid-template-columns: 1fr; padding-top: 22px; }
+    .stage svg { max-width: 220px; }
+    .steps, .doors { grid-template-columns: 1fr; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .zec, .sova, .fl, .em, .halo { animation: none !important; }
+    .zec, .em { opacity: 0; }
+    .sova { opacity: 1; filter: drop-shadow(0 0 6px rgba(244, 183, 40, 0.5)); }
+  }
+</style>
