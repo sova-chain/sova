@@ -89,7 +89,7 @@ else
 fi
 echo ""
 echo "supply: $(cast call "${ASHW}" 'totalSupply()(uint256)' --rpc-url "${RPC}") / 10000 minted"
-echo "pages (npm run dev in site/, or any build; the RPC must allow the page's origin, CORS):"
+echo "pages (npm run dev in site/, or any build; the RPC must allow the page's origin -- box/up.sh's node sends CORS for any origin, SOVA_RPC_CORS=*):"
 echo "  /ashwings/mint?rpc=${RPC}&ashw=${ASHW}&market=${MARKET}"
 echo "  /ashwings/market?rpc=${RPC}&ashw=${ASHW}&market=${MARKET}"
 echo "  /ashwings/buy?rpc=${RPC}&co=${CO}&relayer=none"

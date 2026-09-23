@@ -163,8 +163,10 @@ unshielded coinbase spends by default. Fund the faucet with
    there. Only then do per-IP cooldowns see real client IPs. Without the
    header, every request shares cloudflared's IP and therefore one
    cooldown, which is safe but strict.
-3. At the edge, add a WAF rate-limit rule on `POST /drip` (for example 5
-   per minute per IP) and pass through only `/drip` and `/status`. Put
+3. At the edge, a WAF rate-limit rule on `/drip` (`cloudflare.sh
+   ratelimit`: the zone's one free-plan rule, 50 per 10 s per IP, blocked
+   for 10 s; the free plan has no per-minute period) and pass through only
+   `/drip` and `/status` (the tunnel's ingress rule). Put
    Cloudflare Turnstile on the web form. The faucet doesn't verify
    Turnstile tokens yet: doing that server-side means calling Cloudflare's
    `siteverify` from the faucet, and that is follow-up work.

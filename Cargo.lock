@@ -9709,11 +9709,15 @@ dependencies = [
  "engine",
  "eyre",
  "hex",
+ "jsonrpsee",
  "reth-ethereum",
  "reth-network-peers",
  "reth-rpc-layer",
  "reth-tracing",
+ "serde_json",
  "tokio",
+ "tower",
+ "ureq",
 ]
 
 [[package]]

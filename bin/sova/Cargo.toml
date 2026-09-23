@@ -20,5 +20,11 @@ reth-ethereum = { workspace = true, features = ["node", "network", "test-utils"]
 reth-network-peers.workspace = true
 reth-rpc-layer.workspace = true
 reth-tracing.workspace = true
+jsonrpsee = { workspace = true, features = ["server"] }
+serde_json = { workspace = true, features = ["raw_value"] }
+tower.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 eyre.workspace = true
+
+[dev-dependencies]
+ureq.workspace = true

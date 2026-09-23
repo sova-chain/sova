@@ -26,6 +26,16 @@
 //!
 //! The allowlist is the same list as the edge Worker's (infra-m1 §2, "Edge
 //! allowlist"): public RPC is read-and-broadcast only, enforced twice.
+//!
+//! Both profiles answer `eth_call`/`eth_estimateGas`/`eth_createAccessList`
+//! at block tag `pending` as at `latest` (an RPC middleware, see
+//! `pending_rpc.rs`); the profile only decides which methods exist.
+//!
+//! CORS is separate from the profile: `SOVA_RPC_CORS` (see [`RpcCors`])
+//! sets reth's `--http.corsdomain`, so browser pages can call the node
+//! directly. Unset, the node sends no CORS headers (reth's default). The
+//! box sets `*`; the testnet hosts leave it unset because their RPC is
+//! loopback-only and reached through the edge Worker, which answers CORS.
 
 use std::collections::HashSet;
 
@@ -114,6 +124,56 @@ impl RpcProfile {
         match self {
             Self::Local => None,
             Self::Public => Some(PUBLIC_RPC_METHODS),
+        }
+    }
+}
+
+/// Allowed browser origins for the HTTP RPC, from `SOVA_RPC_CORS`.
+///
+/// The value goes to reth's `http_corsdomain` unchanged (after trimming):
+/// `*` for any origin, or a comma-separated list of exact origins such as
+/// `https://sova.io,http://localhost:5173`. Unset or blank = no CORS layer,
+/// which is today's behaviour.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RpcCors(Option<String>);
+
+impl RpcCors {
+    /// Parse a `SOVA_RPC_CORS` value. Rejects what reth would only reject
+    /// later at server start (a `*` inside a list, an empty list entry), so
+    /// a typo fails with this variable's name in the message.
+    pub(crate) fn parse(raw: Option<&str>) -> eyre::Result<Self> {
+        let Some(value) = raw.map(str::trim).filter(|v| !v.is_empty()) else {
+            return Ok(Self(None));
+        };
+        if value != "*" {
+            for origin in value.split(',').map(str::trim) {
+                if origin.is_empty() || origin == "*" || origin.chars().any(char::is_whitespace) {
+                    return Err(eyre::eyre!(
+                        "SOVA_RPC_CORS must be \"*\" or a comma-separated list of origins (no \"*\" inside a list), got {value:?}"
+                    ));
+                }
+            }
+        }
+        Ok(Self(Some(value.to_owned())))
+    }
+
+    /// Read `SOVA_RPC_CORS` from the environment.
+    pub(crate) fn from_env() -> eyre::Result<Self> {
+        Self::parse(std::env::var("SOVA_RPC_CORS").ok().as_deref())
+    }
+
+    /// Set reth's HTTP CORS domains. Unset leaves the config untouched.
+    pub(crate) fn apply(&self, rpc: &mut RpcServerArgs) {
+        if let Some(domains) = &self.0 {
+            rpc.http_corsdomain = Some(domains.clone());
+        }
+    }
+
+    /// For the startup log.
+    pub(crate) fn describe(&self) -> String {
+        match &self.0 {
+            None => "rpc cors: off (SOVA_RPC_CORS unset)".to_owned(),
+            Some(d) => format!("rpc cors: HTTP allows origin(s) {d}"),
         }
     }
 }
@@ -286,5 +346,53 @@ mod tests {
             RpcProfile::Public
         );
         assert!(RpcProfile::parse(Some("open")).is_err());
+    }
+
+    #[test]
+    fn cors_unset_is_todays_config() {
+        for raw in [None, Some(""), Some("  ")] {
+            let cors = RpcCors::parse(raw).unwrap();
+            let mut rpc = base();
+            cors.apply(&mut rpc);
+            assert_eq!(rpc, base(), "{raw:?}");
+            assert!(rpc.http_corsdomain.is_none());
+        }
+    }
+
+    #[test]
+    fn cors_sets_reths_http_corsdomain() {
+        for (raw, want) in [
+            ("*", "*"),
+            (" * ", "*"),
+            ("https://sova.io", "https://sova.io"),
+            (
+                "https://sova.io, http://localhost:5173",
+                "https://sova.io, http://localhost:5173",
+            ),
+        ] {
+            let mut rpc = base();
+            RpcCors::parse(Some(raw)).unwrap().apply(&mut rpc);
+            assert_eq!(rpc.http_corsdomain.as_deref(), Some(want), "{raw:?}");
+        }
+        // Composes with the public profile: CORS doesn't touch the method
+        // or namespace restrictions, and the profile doesn't touch CORS.
+        let mut rpc = base();
+        RpcProfile::Public.apply(&mut rpc);
+        RpcCors::parse(Some("*")).unwrap().apply(&mut rpc);
+        assert_eq!(rpc.http_corsdomain.as_deref(), Some("*"));
+        assert!(!rpc.ws && rpc.ipcdisable);
+    }
+
+    #[test]
+    fn cors_rejects_what_reth_would_refuse_at_start() {
+        for bad in [
+            "*,https://sova.io",
+            "https://sova.io,*",
+            "https://a,,https://b",
+            "https://a b",
+        ] {
+            let err = RpcCors::parse(Some(bad)).unwrap_err().to_string();
+            assert!(err.contains("SOVA_RPC_CORS"), "{bad:?}: {err}");
+        }
     }
 }

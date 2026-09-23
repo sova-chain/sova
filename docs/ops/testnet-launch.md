@@ -102,10 +102,10 @@ R5 first, since this step uses the SSH key. The click-by-click steps are
    | Scope | Permission | Level | Used for |
    | --- | --- | --- | --- |
    | Account | Cloudflare Tunnel | Edit | the rpc and faucet tunnels |
-   | Account | Workers Scripts | Edit | the RPC firewall Worker |
+   | Account | Workers Scripts | Edit | the RPC firewall Worker and its rate-limit binding |
    | Account | Workers R2 Storage | Edit | the bucket's `dl.` custom domain |
    | Zone | DNS | Edit | the seed, rpc and faucet records |
-   | Zone | Zone WAF | Edit | the rate-limit rule |
+   | Zone | Zone WAF | Edit | the faucet's rate-limit rule |
    | Zone | Workers Routes | Edit | `rpc.testnet.sova.io/*` → the Worker |
 
    Set Account Resources to *Include → your account*, and Zone Resources
@@ -180,7 +180,7 @@ under the partner-outreach rule. The orchestrator doesn't post anything.
 | 1 check | `deploy.sh check`, and checks that the four cloud tokens are in the environment | config error, missing token |
 | 2 provision | `provision.sh up --my-ip`: on Hetzner, the SSH key, two firewalls, volumes and servers (SSH is allowed only from this machine's IP). The AWS keeper is **adopted**: the kit logs in as `ubuntu`, applies the same `cloud-init.yaml` base (`host/byo-bootstrap.py`), then uses `sova-admin` like everywhere else | the keeper's IP is still a placeholder, or SSH to it fails (its security group) |
 | 3 hosts | `deploy.sh`: node keys and enodes, zebrad (pinned image), `sova` from the tagged Release (SHA256SUMS checked), the faucet, the keeper, cloudflared, units, the health timer | — |
-| 4 edge | `cloudflare.sh all` (DNS, tunnels, Worker, rate limit, R2), then `deploy.sh alerts` if Telegram is set | — |
+| 4 edge | `cloudflare.sh all` (DNS, tunnels, Worker + RPC rate limit, faucet WAF rule, R2), then `deploy.sh alerts` if Telegram is set | — |
 | 5 sync | reads every host's zebrad | **any zebrad is still syncing** (about half a day from zero) |
 | 6 chain | `epoch-base.sh propose` → `pin B` → `deploy.sh` (the sova nodes start) → `bootnodes.sh` + `--verify` → `publish.sh join` | **without `--go`**: it prints B and stops. Pinning B starts this genesis |
 | 7 contracts | `deploy-contracts.sh keygen` (once), then `deploy --via sova-rpc-1` | **the deployer holds no SOVA yet** (fund it: B5c), or a constructor value is missing (R8) |
@@ -304,7 +304,7 @@ the gitleaks CI scan.
 | `host/byo-bootstrap.py` | Applies that same `cloud-init.yaml` over SSH to a byo host, so it matches a Hetzner one |
 | `test/byo-dry-run.sh` | Offline proof that a byo keeper validates, renders and appears in every launch stage |
 | `deploy.sh` → `host/setup-host.sh` | Per-role setup over SSH. `deploy.sh check` validates the config, `deploy.sh render` writes and lints every host's files locally |
-| `cloudflare.sh` | DNS, tunnels, the RPC firewall Worker, the rate-limit rule, R2 bucket + domain, teardown |
+| `cloudflare.sh` | DNS, tunnels, the RPC firewall Worker (with the RPC rate limit), the faucet's WAF rate-limit rule, R2 bucket + domain, teardown |
 | `epoch-base.sh` | Proposes, pins and records the epoch base B |
 | `bootnodes.sh` | The final bootnode list, `testnet.env`, `seeds.json`, the `chain.rs` constant, `--verify` |
 | `deploy-contracts.sh` | The day-one contracts: `keygen`, `plan`, `deploy`, `verify` (runs `contracts/script/deploy-kit.sh`, the same code as `box/deploy-dapps.sh`) |
@@ -424,5 +424,24 @@ Section 0 settled the schedule (`flat`) and the chain ID (82330) on
   tunnel to the node's own loopback RPC. `verify` works through the edge.
 - **`Runtime::test()`** still sizes `bin/sova`'s thread pools. That's fine
   for testnet load. Revisit before mainnet.
-- **The free-plan rate-limit rule matches paths only** (`/` and
-  `/drip`), zone-wide. On Pro it can match the hosts.
+- **Rate limits.** Both are per client IP and counted per Cloudflare
+  location.
+
+  | Endpoint | Where | Limit | Over it |
+  | --- | --- | --- | --- |
+  | `rpc.testnet.sova.io` | the RPC Worker's `RPC_RATELIMIT` binding (`RPC_RATELIMIT_REQUESTS` / `RPC_RATELIMIT_PERIOD`) | 50 per 10 s; `OPTIONS` preflights not counted | HTTP 429, JSON-RPC error -32005, CORS, `Retry-After: 10` (exposed to pages) |
+  | `faucet.testnet.sova.io/drip` | the zone's one free-plan WAF rule (`CF_RATELIMIT_REQUESTS_PER_10S`) | 50 per 10 s, then blocked 10 s | Cloudflare's own 429, no CORS: fine, no page calls the faucet cross-origin |
+
+  The RPC's limit moved into the Worker because the WAF rule runs first
+  and its 429 has no CORS headers, so `/pulse` and `/ashwings` saw a
+  network error instead of a 429. The free plan's single WAF rule can't
+  also hold a higher safety net on `/` (all matched paths share one
+  counter and one threshold), so there is none; on Pro (2 rules, host
+  matching) add one. If the Worker has no binding it **fails open** and
+  logs `no RPC_RATELIMIT binding` (`wrangler tail` or Workers Logs): the
+  allowlist and caps still apply, and a config slip shouldn't take the
+  public RPC down. `smoke.sh edge` bursts twice the limit and expects a
+  429 with CORS. If an account can't use the binding, set
+  `RPC_RATELIMIT_AT=waf` and re-run `./cloudflare.sh worker ratelimit`:
+  the WAF rule covers `/` again (the old behaviour, CORS-less 429s). The
+  WAF rule matches paths only, zone-wide; on Pro it can match hosts.

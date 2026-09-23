@@ -56,8 +56,25 @@ Caveats on the edge pieces:
   match request bodies or JSON fields [fact]. JSON-RPC methods live in the
   POST body, so the method allowlist has to run in a **Worker** or at the
   origin. We do both.
+- **The RPC's per-IP limit lives in the Worker, not the WAF.** A WAF rule
+  runs before the Worker and answers with Cloudflare's own 429, which has
+  no CORS headers: a browser page (sova.io's `/pulse`, `/ashwings/*`) sees
+  an opaque network error, not a 429 it can back off from, and CORS
+  preflights count against the rule. So the Worker enforces it with a
+  Workers Rate Limiting binding (`RPC_RATELIMIT`, keyed by
+  `CF-Connecting-IP`, 50 requests per 10 s: the numbers the WAF rule
+  used), answers over-limit requests with a JSON-RPC error (-32005,
+  HTTP 429) carrying CORS and `Retry-After`, and doesn't count `OPTIONS`.
+  The binding's counters are per Cloudflare location and eventually
+  consistent, like the WAF's (per colo + IP). If the binding is missing
+  the Worker fails open and logs a warning; the allowlist and caps still
+  apply. The zone's one free-plan WAF rule now covers only the faucet's
+  `/drip`, which no browser calls cross-origin.
 - **Workers quota.** The free tier allows 100k requests/day. Workers Paid
-  is $5/month for 10M requests/month [fact].
+  is $5/month for 10M requests/month [fact]. Requests the Worker's rate
+  limit refuses still count toward it (a WAF block didn't invoke the
+  Worker). One IP at the limit (5 req/s) is already 432k requests a day,
+  so on Free the daily quota, not the per-IP limit, is the real ceiling.
 - **P2P can't be proxied.** P2P ports are plain TCP, not HTTP, so
   Cloudflare's free proxy can't front them. Seed IPs are therefore public
   by necessity (see §4).
@@ -110,7 +127,7 @@ server auction; both can be cheaper while supply lasts.
                                    cloudflared tunnel (outbound) │
  ═══ Cloudflare ═════════════════════════════════════════════════╪══
   rpc.<d>       Worker: method allowlist, batch≤10, size cap,  ◄─┘
-                micro-cache  +  WAF IP rate rule
+                micro-cache, per-IP rate limit (binding)
   <d>, docs     Pages (static; canonical copy stays in the repo)
   explorer.<d>  Otterscan SPA on Pages → rate-limited ots_* hostname
   dl.<d>        R2: zebrad snapshot + manifest, seeds.json, binaries
@@ -364,6 +381,8 @@ $0 plus registration.
 - AWS 100 GB/month free egress: https://aws.amazon.com/ec2/pricing/on-demand/
 - Cloudflare rate-limiting rules by plan:
   https://developers.cloudflare.com/waf/rate-limiting-rules/
+- Workers Rate Limiting binding (periods 10 or 60 s, per-location
+  counters): https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/
 - Cloudflare Workers pricing: https://developers.cloudflare.com/workers/platform/pricing/
 - Cloudflare R2 pricing: https://developers.cloudflare.com/r2/pricing/
 - Zebra system requirements (300 GB mainnet; its "10 GB testnet" figure is

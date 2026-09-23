@@ -14,8 +14,10 @@
 #                (/etc/sova/cloudflared.env, root 0600) and cloudflared
 #                is restarted
 #     worker     the RPC firewall Worker (worker/rpc-firewall.mjs) on
-#                the route <RPC_HOST>/*
-#     ratelimit  the zone's one free-plan rate-limit rule
+#                the route <RPC_HOST>/*, with the per-IP RPC rate limit
+#                (a Workers Rate Limiting binding)
+#     ratelimit  the zone's one free-plan WAF rate-limit rule: the
+#                faucet's /drip (and "/" too if RPC_RATELIMIT_AT=waf)
 #     r2         bucket R2_BUCKET + custom domain DL_HOST
 #     all        dns tunnels worker ratelimit r2
 #     teardown   delete this kit's DNS records, tunnels, Worker + route and
@@ -28,7 +30,7 @@ set -euo pipefail
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-usage() { sed -n '2,27p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,28p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 STEPS=()
 while [[ $# -gt 0 ]]; do
@@ -54,11 +56,24 @@ API=https://api.cloudflare.com/client/v4
 ACCT="${CLOUDFLARE_ACCOUNT_ID:-<account-id>}"
 ZONE="${CLOUDFLARE_ZONE_ID:-<zone-id>}"
 WORKER_NAME="${HC_PROJECT_LABEL}-rpc-firewall"
-RL_DESCRIPTION="${HC_PROJECT_LABEL}: per-IP limit on RPC + faucet"
-# Free plan: rule expressions may only use URI path fields (no host), one
-# rule, 10 s period, 10 s mitigation, characteristics colo + IP. "/" is
-# the JSON-RPC path, "/drip" the faucet's. On Pro+, narrow it to the hosts.
-CF_RATELIMIT_EXPRESSION="${CF_RATELIMIT_EXPRESSION:-(http.request.uri.path eq \"/\") or (http.request.uri.path eq \"/drip\")}"
+# The description is how step_ratelimit recognises the kit's own rule.
+RL_DESCRIPTION="${HC_PROJECT_LABEL}: per-IP edge rate limit (infra/testnet)"
+# Where the public RPC's per-IP limit lives: RPC_RATELIMIT_AT, see
+# validate_edge_config in lib.sh and config.env.example, "Edge".
+validate_edge_config
+# Free plan WAF: ONE rate-limit rule, path fields only (no host), 10 s
+# period, 10 s mitigation, characteristics colo + IP. It runs before the
+# Worker. "/drip" is the faucet's path: the faucet is called by curl and
+# scripts, not cross-origin from a browser (it sends no CORS headers at
+# all), so Cloudflare's CORS-less 429 costs nothing there. The one rule
+# can't also hold a higher safety-net limit on "/": every matched path
+# shares one counter and one threshold. On Pro+ (2 rules, host field),
+# add that safety net as a second rule on the RPC host.
+if [[ "${RPC_RATELIMIT_AT}" == waf ]]; then
+  CF_RATELIMIT_EXPRESSION="${CF_RATELIMIT_EXPRESSION:-(http.request.uri.path eq \"/\") or (http.request.uri.path eq \"/drip\")}"
+else
+  CF_RATELIMIT_EXPRESSION="${CF_RATELIMIT_EXPRESSION:-(http.request.uri.path eq \"/drip\")}"
+fi
 
 # cf METHOD PATH [JSON-BODY-FILE] -> response JSON on stdout; dies on
 # success=false. Dry run: prints the call, returns an empty success.
@@ -109,6 +124,7 @@ ip_of() { # server field(ipv4|ipv6)
 
 step_dns() {
   local i=0 name ip6
+  mkdir -p "${OUT_DIR}/servers" # a fresh checkout has no out/ yet
   while read -r name; do
     [[ -n "${name}" ]] || continue
     i=$((i + 1))
@@ -164,7 +180,20 @@ step_tunnels() {
 
 step_worker() {
   local src="${KIT_DIR}/worker/rpc-firewall.mjs" meta
-  meta="$(jq -nc '{main_module:"rpc-firewall.mjs",compatibility_date:"2026-09-01"}')"
+  # The Worker's deploy config (there is no wrangler.toml: the kit uploads
+  # through the API). RPC_RATELIMIT is the Workers Rate Limiting binding
+  # ("ratelimits" in wrangler terms; type "ratelimit" in upload metadata);
+  # its counters are per Cloudflare location, keyed by client IP in the
+  # Worker. The plain-text vars feed the 429's message and Retry-After.
+  meta="$(jq -nc --arg at "${RPC_RATELIMIT_AT}" --arg ns "${RPC_RATELIMIT_NAMESPACE_ID}" \
+    --argjson n "${RPC_RATELIMIT_REQUESTS}" --argjson p "${RPC_RATELIMIT_PERIOD}" '
+    {main_module:"rpc-firewall.mjs",compatibility_date:"2026-09-01",
+     bindings:([{type:"plain_text",name:"RPC_RATELIMIT_AT",text:$at}] +
+       if $at == "worker" then
+         [{type:"ratelimit",name:"RPC_RATELIMIT",namespace_id:$ns,simple:{limit:$n,period:$p}},
+          {type:"plain_text",name:"RPC_RATELIMIT_REQUESTS",text:($n|tostring)},
+          {type:"plain_text",name:"RPC_RATELIMIT_PERIOD",text:($p|tostring)}]
+       else [] end)}')"
   if [[ "${DRY_RUN}" == 1 ]]; then
     echo "+ curl -X PUT ${API}/accounts/${ACCT}/workers/scripts/${WORKER_NAME} -F metadata=${meta} -F rpc-firewall.mjs=@worker/rpc-firewall.mjs" >&2
   else
@@ -175,6 +204,11 @@ step_worker() {
         -F "rpc-firewall.mjs=@${src};type=application/javascript+module")"
     [[ "$(jq -r '.success' <<<"${resp}")" == true ]] || die "worker upload: $(jq -c '.errors' <<<"${resp}")"
     log "worker ${WORKER_NAME} uploaded"
+  fi
+  if [[ "${RPC_RATELIMIT_AT}" == worker ]]; then
+    log "RPC rate limit (Worker): ${RPC_RATELIMIT_REQUESTS} req / ${RPC_RATELIMIT_PERIOD} s per client IP, namespace ${RPC_RATELIMIT_NAMESPACE_ID}; OPTIONS not counted"
+  else
+    log "RPC rate limit: in the WAF rule (RPC_RATELIMIT_AT=waf); the Worker has no binding"
   fi
   local pattern="${RPC_HOST}/*" rid
   rid="$(cf GET "/zones/${ZONE}/workers/routes" | jq -r --arg p "${pattern}" '.result // [] | .[] | select(.pattern == $p) | .id')"
@@ -204,7 +238,7 @@ step_ratelimit() {
     --argjson n "${CF_RATELIMIT_REQUESTS_PER_10S}" \
     '{rules:[{description:$d,expression:$e,action:"block",ratelimit:{characteristics:["cf.colo.id","ip.src"],period:10,requests_per_period:$n,mitigation_timeout:10}}]}')")"
   cf PUT "${path}" "${body}" >/dev/null
-  log "rate limit: ${CF_RATELIMIT_REQUESTS_PER_10S} req / 10 s per IP on: ${CF_RATELIMIT_EXPRESSION}"
+  log "WAF rate limit: ${CF_RATELIMIT_REQUESTS_PER_10S} req / 10 s per IP on: ${CF_RATELIMIT_EXPRESSION}"
 }
 
 step_r2() {

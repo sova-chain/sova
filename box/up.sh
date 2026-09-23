@@ -61,6 +61,11 @@
 #                               (default 3, same default as auto-mine.sh)
 #   SOVA_BOX_ZEBRAD_PORT        host port for zebrad's RPC (default 18232)
 #   SOVA_BOX_RPC_PORT           Sova HTTP JSON-RPC port (default 8545)
+#   SOVA_BOX_RPC_CORS           browser origins the Sova RPC allows, passed
+#                               to bin/sova as SOVA_RPC_CORS (default "*",
+#                               so sova.io's /pulse and /ashwings pages work
+#                               against the box with ?rpc=; set it empty to
+#                               send no CORS headers)
 #   SOVA_BOX_AUTH_PORT          Sova authrpc (Engine API) port (default 8551)
 #   SOVA_BOX_P2P_PORT           Sova p2p port (default 30303)
 #   SOVA_BOX_ZEBRAD_CONTAINER   zebrad container name
@@ -130,6 +135,8 @@ AUTO_MINE_INTERVAL="${SOVA_BOX_AUTO_MINE_INTERVAL:-3}"
 DEFAULT_ZEBRAD_CONTAINER="sova-zebrad-regtest"
 ZEBRAD_PORT="${SOVA_BOX_ZEBRAD_PORT:-18232}"
 RPC_PORT="${SOVA_BOX_RPC_PORT:-8545}"
+# `-` not `:-`: an explicitly empty value turns CORS off.
+RPC_CORS="${SOVA_BOX_RPC_CORS-*}"
 AUTH_PORT="${SOVA_BOX_AUTH_PORT:-8551}"
 P2P_PORT="${SOVA_BOX_P2P_PORT:-30303}"
 ZEBRAD_CONTAINER="${SOVA_BOX_ZEBRAD_CONTAINER:-${DEFAULT_ZEBRAD_CONTAINER}}"
@@ -797,6 +804,7 @@ start_background_processes() {
     SOVA_MINER_EVM_ADDRESS="${EVM_ADDR}" \
     SOVA_EPOCH_BASE=1 \
     SOVA_HTTP_PORT="${RPC_PORT}" \
+    SOVA_RPC_CORS="${RPC_CORS}" \
     SOVA_AUTH_PORT="${AUTH_PORT}" \
     SOVA_P2P_PORT="${P2P_PORT}" \
     nohup "${SOVA_BIN}" >"${LOG_DIR}/sova-node.log" 2>&1 &

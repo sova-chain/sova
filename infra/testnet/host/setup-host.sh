@@ -291,6 +291,9 @@ node_key_and_enode() {
   out enode "${enode}"
 }
 
+# No SOVA_RPC_CORS here on purpose: every host's RPC binds 127.0.0.1, and
+# the only browser-facing path is rpc.<domain> through the edge Worker
+# (worker/rpc-firewall.mjs), which answers CORS itself.
 node_env_text() { # mode-lines rpc-profile
   cat <<EOF
 # Written by setup-host.sh (${ROLE}); re-run deploy.sh to change it.

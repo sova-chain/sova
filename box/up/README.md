@@ -296,6 +296,7 @@ All optional env vars, read by `box/up.sh`:
 | `SOVA_BOX_AUTO_MINE_INTERVAL` | `3` | Seconds between auto-mined Zcash blocks. |
 | `SOVA_BOX_ZEBRAD_PORT` | `18232` | Host port zebrad's RPC is published on (loopback only). |
 | `SOVA_BOX_RPC_PORT` | `8545` | Sova HTTP JSON-RPC port. Pass the new URL to `./box/deploy-dapps.sh http://127.0.0.1:<port>` if you change it. |
+| `SOVA_BOX_RPC_CORS` | `*` | Browser origins the Sova RPC allows (passed to `bin/sova` as `SOVA_RPC_CORS`), so the site's `/pulse` and `/ashwings/*` pages work against `http://localhost:8545` via `?rpc=` with no proxy. A comma-separated origin list narrows it; empty turns CORS off. |
 | `SOVA_BOX_AUTH_PORT` | `8551` | Sova authrpc (Engine API) port. |
 | `SOVA_BOX_P2P_PORT` | `30303` | Sova p2p port. |
 | `SOVA_BOX_ZEBRAD_CONTAINER` | `sova-zebrad-regtest` | zebrad container name. |

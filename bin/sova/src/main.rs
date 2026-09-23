@@ -69,10 +69,21 @@
 //! reth's standard `eth`/`net`/`web3` over HTTP on 127.0.0.1, unfiltered)
 //! or `public` (read-and-broadcast only: `http.api` pinned to
 //! `eth,net,web3`, then every HTTP method outside the allowlist removed).
+//! `SOVA_RPC_CORS` (unset = no CORS headers, today's behaviour; `*` or a
+//! comma-separated origin list) sets reth's `--http.corsdomain` so browser
+//! pages can call the node directly; the box sets `*`.
+//!
+//! Block tag `pending` (see [`pending_rpc`]): in both profiles, over HTTP
+//! and WS, `eth_call`, `eth_estimateGas` and `eth_createAccessList` at
+//! `pending` are answered as at `latest`. reth's pending env is head+1,
+//! whose Zcash epoch doesn't exist yet, so any call reaching the SIP-4
+//! precompile would fail there. Every other method keeps reth's pending
+//! semantics.
 
 mod chain;
 mod discovery;
 mod gossip;
+mod pending_rpc;
 mod rpc;
 
 use std::{path::PathBuf, time::Duration};
@@ -108,6 +119,7 @@ async fn main() -> eyre::Result<()> {
     let runtime = Runtime::test();
     let chain_profile = chain::ChainProfile::from_env()?;
     let rpc_profile = rpc::RpcProfile::from_env()?;
+    let rpc_cors = rpc::RpcCors::from_env()?;
     let follow_only = env_flag("SOVA_FOLLOW_ONLY");
     let gossip = gossip::Gossip::from_env()?;
     let p2p_peers = match gossip {
@@ -183,6 +195,7 @@ async fn main() -> eyre::Result<()> {
     discovery::apply(&mut node_config.network, discovery_on, &addr_overrides)?;
     let discovery_line = discovery::describe(&node_config.network);
     rpc_profile.apply(&mut node_config.rpc);
+    rpc_cors.apply(&mut node_config.rpc);
     let jwt = apply_shared_jwt(&mut node_config)?;
     let (http_port, auth_port) = (node_config.rpc.http_port, node_config.rpc.auth_port);
 
@@ -204,7 +217,13 @@ async fn main() -> eyre::Result<()> {
         .with_launch_context(runtime)
         .with_types::<SovaNode>()
         .with_components(sova_node.components_builder().network(network_builder))
-        .with_add_ons(sova_node.add_ons())
+        // Every RPC server reth starts (HTTP, WS), in every profile:
+        // `pending` → `latest` for the three call-simulation methods.
+        .with_add_ons(
+            sova_node
+                .add_ons()
+                .layer_rpc_middleware(pending_rpc::PendingAsLatestLayer),
+        )
         .extend_rpc_modules(move |ctx| {
             // `public` only: strip every HTTP method outside the
             // allowlist. `local` installs no filter (today's behaviour).
@@ -230,6 +249,7 @@ async fn main() -> eyre::Result<()> {
         env!("CARGO_PKG_VERSION")
     );
     println!("{datadir_line}");
+    println!("{}", rpc_cors.describe());
     // Branch rule (audit 2026-09-23 F1): fork choice only considers
     // candidates attached to our own chain, which needs our canonical hashes.
     // SIP-4 §7: after a Zcash reorg, blocks above the rollback floor are

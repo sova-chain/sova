@@ -154,8 +154,34 @@ cfg_warn() {
   CONFIG_WARNINGS=$((CONFIG_WARNINGS + 1))
   warn "config: $*"
 }
+# The edge's rate limits (config.env.example, "Edge"). Defaults keep an
+# older config.env working. RPC_RATELIMIT_AT says where the public RPC's
+# per-IP limit lives:
+#   worker (default)  the RPC Worker's RPC_RATELIMIT binding (Workers Rate
+#                     Limiting). Its 429 is a JSON-RPC error with CORS and
+#                     Retry-After, so browser pages can back off; OPTIONS
+#                     preflights don't count. The zone's one WAF rule then
+#                     covers only the faucet's /drip.
+#   waf               the zone's WAF rule covers "/" as well (the old
+#                     setup; its 429 has no CORS headers). Only for an
+#                     account where the binding can't be used.
+validate_edge_config() {
+  RPC_RATELIMIT_AT="${RPC_RATELIMIT_AT:-worker}"
+  RPC_RATELIMIT_REQUESTS="${RPC_RATELIMIT_REQUESTS:-50}"
+  RPC_RATELIMIT_PERIOD="${RPC_RATELIMIT_PERIOD:-10}"
+  RPC_RATELIMIT_NAMESPACE_ID="${RPC_RATELIMIT_NAMESPACE_ID:-82330}"
+  CF_RATELIMIT_REQUESTS_PER_10S="${CF_RATELIMIT_REQUESTS_PER_10S:-50}"
+  case "${RPC_RATELIMIT_AT}" in worker | waf) ;; *) die "config: RPC_RATELIMIT_AT must be worker or waf" ;; esac
+  [[ "${RPC_RATELIMIT_REQUESTS}" =~ ^[1-9][0-9]*$ ]] || die "config: RPC_RATELIMIT_REQUESTS must be a positive integer"
+  [[ "${RPC_RATELIMIT_PERIOD}" == 10 || "${RPC_RATELIMIT_PERIOD}" == 60 ]] ||
+    die "config: RPC_RATELIMIT_PERIOD must be 10 or 60 (the binding's only periods)"
+  [[ "${RPC_RATELIMIT_NAMESPACE_ID}" =~ ^[1-9][0-9]*$ ]] || die "config: RPC_RATELIMIT_NAMESPACE_ID must be a positive integer"
+  [[ "${CF_RATELIMIT_REQUESTS_PER_10S}" =~ ^[1-9][0-9]*$ ]] || die "config: CF_RATELIMIT_REQUESTS_PER_10S must be a positive integer"
+}
+
 validate_config() {
   validate_servers
+  validate_edge_config
   local v h p ports=" " n s
   [[ "${SOVA_RELEASE_TAG:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] ||
     die "config: SOVA_RELEASE_TAG '${SOVA_RELEASE_TAG:-}' is not a vX.Y.Z tag"

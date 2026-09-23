@@ -4,7 +4,9 @@
 #   ./smoke.sh edge        from THIS machine, as a stranger would: public
 #                          RPC answers chain 82330 and a moving head; the
 #                          denylist is enforced (admin/debug/trace/txpool/
-#                          engine/personal/sign/filters); batch cap; faucet
+#                          engine/personal/sign/filters); batch cap; the
+#                          per-IP limit answers a burst with a 429 a
+#                          browser can read (CORS + Retry-After); faucet
 #                          /status up and other faucet paths 404; seed P2P
 #                          ports open; P2P closed on every non-seed host
 #                          (incl. byo ones); every private port (authrpc,
@@ -29,6 +31,7 @@ CMD="${1:-all}"
 shift || true
 load_config
 validate_servers
+validate_edge_config
 need_cmd jq
 need_cmd curl
 PASS=0
@@ -68,6 +71,27 @@ cmd_edge() {
     --data "[$(for i in $(seq 1 11); do printf '%s{"jsonrpc":"2.0","id":%d,"method":"eth_blockNumber","params":[]}' "$([[ $i -gt 1 ]] && echo ,)" "$i"; done)]" \
     "https://${RPC_HOST}/")"
   [[ "${r}" == 400 ]] && ok "rpc: batch of 11 refused" || bad "rpc: batch of 11 gave HTTP ${r} (Worker missing?)"
+  # Per-IP limit: twice the limit, in parallel, from this machine's IP.
+  # Counters are eventually consistent, so one readable 429 is the bar.
+  # eth_chainId is answered at the edge: the burst never reaches rpc-1.
+  # (%header{} in -w needs curl 7.84+.)
+  local burst limited
+  if [[ "${RPC_RATELIMIT_AT}" == waf ]]; then
+    ok "rpc: rate limit is the WAF rule (RPC_RATELIMIT_AT=waf; its 429 has no CORS), burst not checked"
+  else
+    burst=$((RPC_RATELIMIT_REQUESTS * 2))
+    limited="$(seq 1 "${burst}" | xargs -P 16 -I{} curl -sS -o /dev/null --max-time 15 \
+      -H 'Content-Type: application/json' -H 'Origin: https://sova.io' \
+      -w '%{http_code} %header{access-control-allow-origin} %header{retry-after}\n' \
+      --data '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' "https://${RPC_HOST}/" 2>/dev/null |
+      grep -c '^429 \* [0-9]' || true)"
+    if [[ "${limited}" -gt 0 ]]; then
+      ok "rpc: burst of ${burst}: ${limited} x 429 with CORS + Retry-After"
+    else
+      bad "rpc: burst of ${burst} gave no 429 with CORS + Retry-After (RPC_RATELIMIT binding missing? the Worker logs a warning)"
+    fi
+    sleep $((RPC_RATELIMIT_PERIOD + 1)) # let this IP's window pass
+  fi
 
   r="$(curl -fsS --max-time 15 "https://${FAUCET_HOST}/status")"
   if [[ "$(jq -r .network <<<"${r}" 2>/dev/null)" == test ]]; then

@@ -62,6 +62,13 @@ reth-rpc-layer = { git = "https://github.com/paradigmxyz/reth", tag = "v2.6.0" }
 # (`SOVA_P2P_PEERS`, bin/sova) -- reth's facade does not re-export
 # `reth-network-peers`. Same v2.6.0 tag, one resolved graph.
 reth-network-peers = { git = "https://github.com/paradigmxyz/reth", tag = "v2.6.0" }
+# jsonrpsee/tower for bin/sova's RPC middleware (`pending_rpc.rs`: block
+# tag "pending" answered as "latest" for eth_call/estimateGas/
+# createAccessList), installed through reth's `layer_rpc_middleware`.
+# Versions are the ones reth v2.6.0 itself resolves (jsonrpsee 0.26,
+# tower 0.5), so the layer's traits are reth's own.
+jsonrpsee = { version = "0.26.0", default-features = false }
+tower = { version = "0.5", default-features = false }
 # alloy crates used directly for engine-API wire types (`ExecutionData`,
 # engine payload envelopes, RPC block type for `DebugNode`). Versions match
 # what reth v2.6.0's own workspace pins them to, so Cargo resolves a single
