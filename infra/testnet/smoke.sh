@@ -6,8 +6,9 @@
 #                          denylist is enforced (admin/debug/trace/txpool/
 #                          engine/personal/sign/filters); batch cap; faucet
 #                          /status up and other faucet paths 404; seed P2P
-#                          ports open; every private port (authrpc, RPC,
-#                          zebrad RPC, faucet) closed on every host
+#                          ports open; P2P closed on every non-seed host
+#                          (incl. byo ones); every private port (authrpc,
+#                          RPC, zebrad RPC, faucet) closed on every host
 #   ./smoke.sh hosts       over SSH: services active, "enforcing
 #                          settlements" logged, zebrad synced, epoch lag,
 #                          zero C5 rejections, no-keys check on public boxes
@@ -87,7 +88,11 @@ cmd_edge() {
         port_open "${ip}" "${port}" && ok "${name}: tcp/${port} open (P2P)" || bad "${name}: tcp/${port} closed"
       done
     else
-      port_open "${ip}" "${SOVA_P2P_PORT}" && bad "${name}: tcp/${SOVA_P2P_PORT} open on a no-inbound host" || ok "${name}: no inbound P2P"
+      # Covers byo hosts too: their security group is the operator's, so
+      # this is the only check that it matches the kit's no-inbound rule.
+      for port in "${SOVA_P2P_PORT}" "${ZEBRA_P2P_PORT}"; do
+        port_open "${ip}" "${port}" && bad "${name}: tcp/${port} open on a no-inbound host" || ok "${name}: tcp/${port} closed (no inbound P2P)"
+      done
     fi
     for port in "${SOVA_AUTH_PORT}" "${SOVA_HTTP_PORT}" "${ZEBRA_RPC_PORT}" "${FAUCET_PORT}"; do
       port_open "${ip}" "${port}" && bad "${name}: tcp/${port} is reachable from the internet" || ok "${name}: tcp/${port} closed"

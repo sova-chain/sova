@@ -867,7 +867,7 @@ Check the miner's balance (climbs as epochs settle):
     -H 'Content-Type: application/json' ${SOVA_RPC}
 
 Optional, with Foundry installed: deploy the day-one dapp kit (WSOVA, an
-AMM, Multicall3, the Ashwings mint) and run its demo loop (~20s):
+AMM, Multicall3, the Ashwings mint and market) and run its demo loop (~30s):
 
   ./box/deploy-dapps.sh ${SOVA_RPC}
 

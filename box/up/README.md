@@ -129,8 +129,12 @@ Tear it all down cleanly:
 
 With the box up (and Foundry installed), one more command deploys the
 day-one kit (WSOVA, a Uniswap-v2-class factory/router, Multicall3, the
-Ashwings owl mint) and runs the demo loop -- launch a token, seed a pool,
-swap, mint an Ashwing:
+Ashwings owl mint with its ZEC checkout, and the Ashwings market) and runs
+the demo loop -- launch a token, seed a pool, swap, mint an Ashwing for
+SOVA, list it, sell it to a second account (1% to the treasury), and
+reserve a ZEC order where the node answers SIP-4. The Ashwings prices and
+ZEC payee are placeholders here; `ASHWINGS_*` variables set them
+(`contracts/script/deploy-kit.sh`, `box/deploy-dapps.sh`):
 
 ```bash
 ./box/deploy-dapps.sh                            # default RPC port 8545

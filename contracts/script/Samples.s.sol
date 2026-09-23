@@ -13,7 +13,7 @@ import {Ashwings} from "../src/Ashwings.sol";
 /// The site copies these into site/public/ashwings/.
 contract Samples is Script {
     function run() external {
-        Ashwings r = new Ashwings();
+        Ashwings r = new Ashwings(address(1), "tmJymvcUCn1ctbghvTJpXBwHiMEB8P6wxNV", 0, 25_000_000);
         for (uint256 n = 0;; n++) {
             string memory line = vm.readLine("samples/seeds.txt");
             if (bytes(line).length == 0) break;

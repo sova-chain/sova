@@ -4,12 +4,13 @@
 // docs/design/ashwing-zec-checkout.md. Logic: src/scripts/checkout/.
 import Site from '../../layouts/Site.astro';
 
-// Defaults target a local anvil devnet deployed by
-// tools/checkout-relayer/e2e (account 0 deploys Ashwings, then the checkout).
+// Defaults target the local box after box/deploy-dapps.sh: the checkout is
+// the one the Ashwings constructor creates (Ashwings.zecCheckout(), listing
+// #1, terms fixed at deploy). /ashwings/mint links here with ?rpc=&co= set.
 // Override per visit: ?rpc=&co=&listing=&relayer=<url|none>&net=test|main
 const config = {
   rpc: 'http://127.0.0.1:8545',
-  checkout: '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512',
+  checkout: '0x856e4424f806D16E8CBC702B3c0F2ede5468eae5',
   listing: 1,
   relayer: 'http://127.0.0.1:8787',
   net: 'test',

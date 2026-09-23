@@ -75,12 +75,39 @@ need_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "'$1' is required but not installed${2:+ ($2)}"
 }
 
-# SERVERS entries are name:type:location:volume_gb:role.
+# SERVERS entries are name:type:location:volume_gb:role (a Hetzner server
+# provision.sh creates), or, for a host the kit does not create ("bring
+# your own", e.g. the AWS keeper):
+#   name:byo:<ipv4-or-hostname>:<disk_gb>:role[:<first-login-user>]
+# A byo host is adopted over SSH (provision.sh up) and from then on is
+# configured exactly like a Hetzner one. Its firewall is the operator's
+# job (docs/ops/keeper-aws.md). An address still written as <...> is
+# pending: dry runs use a placeholder, real runs refuse it.
 srv_name() { cut -d: -f1 <<<"$1"; }
 srv_type() { cut -d: -f2 <<<"$1"; }
 srv_location() { cut -d: -f3 <<<"$1"; }
 srv_volume_gb() { cut -d: -f4 <<<"$1"; }
 srv_role() { cut -d: -f5 <<<"$1"; }
+srv_is_byo() { [[ "$(srv_type "$1")" == byo ]]; }
+srv_address() { srv_location "$1"; } # byo only
+srv_first_login_user() { cut -s -d: -f6 <<<"$1"; }
+srv_address_pending() { [[ "$(srv_address "$1")" == \<*\> ]]; }
+
+# The SERVERS entry named $1.
+server_entry() {
+  local s
+  for s in "${SERVERS[@]}"; do
+    [[ "$(srv_name "${s}")" == "$1" ]] && { printf '%s' "${s}"; return 0; }
+  done
+  return 1
+}
+
+# Does any entry need Hetzner (i.e. is not byo)?
+has_hetzner_servers() {
+  local s
+  for s in "${SERVERS[@]}"; do srv_is_byo "${s}" || return 0; done
+  return 1
+}
 
 # Names of the servers with role $1, one per line.
 servers_with_role() {
@@ -92,13 +119,27 @@ servers_with_role() {
 }
 
 validate_servers() {
-  local s role name seen=" "
+  local s role name fields addr seen=" "
   for s in "${SERVERS[@]}"; do
     name="$(srv_name "${s}")"
     role="$(srv_role "${s}")"
     [[ "${name}" =~ ^[a-z0-9-]+$ ]] || die "config: bad server name '${name}'"
     [[ "${seen}" != *" ${name} "* ]] || die "config: duplicate server '${name}'"
     seen+="${name} "
+    fields="$(awk -F: '{ print NF }' <<<"${s}")"
+    if srv_is_byo "${s}"; then
+      [[ "${fields}" == 5 || "${fields}" == 6 ]] ||
+        die "config: ${name}: a byo entry is name:byo:<ipv4-or-hostname>:<disk_gb>:role[:<first-login-user>] (an IPv6 literal can't be used: give an IPv4 or a hostname)"
+      addr="$(srv_address "${s}")"
+      if ! srv_address_pending "${s}"; then
+        [[ "${addr}" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ || "${addr}" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] ||
+          die "config: ${name}: '${addr}' is not an IPv4 address or a hostname"
+      fi
+      [[ -z "$(srv_first_login_user "${s}")" || "$(srv_first_login_user "${s}")" =~ ^[a-z_][a-z0-9_-]*$ ]] ||
+        die "config: ${name}: bad first-login user '$(srv_first_login_user "${s}")'"
+    else
+      [[ "${fields}" == 5 ]] || die "config: ${name}: a Hetzner entry is name:type:location:volume_gb:role (5 fields)"
+    fi
     case "${role}" in seed | rpc | faucet | keeper) ;; *) die "config: ${name}: unknown role '${role}'" ;; esac
     [[ "$(srv_volume_gb "${s}")" =~ ^[0-9]+$ ]] || die "config: ${name}: volume_gb must be a number (0 = none)"
   done
@@ -115,7 +156,7 @@ cfg_warn() {
 }
 validate_config() {
   validate_servers
-  local v h p ports=" " n
+  local v h p ports=" " n s
   [[ "${SOVA_RELEASE_TAG:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] ||
     die "config: SOVA_RELEASE_TAG '${SOVA_RELEASE_TAG:-}' is not a vX.Y.Z tag"
   [[ "${SOVA_RELEASE_REPO:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "config: SOVA_RELEASE_REPO must be owner/name"
@@ -152,7 +193,13 @@ validate_config() {
   [[ "${n}" -le 1 ]] || die "config: at most one faucet server (one hot key), found ${n}"
   [[ "${n}" == 1 ]] || cfg_warn "no faucet server: strangers get no TAZ from us"
   [[ -n "$(servers_with_role keeper)" ]] ||
-    cfg_warn "no keeper server: some mine-mode node outside this kit must run or the chain does not advance (open decision: keeper host)"
+    cfg_warn "no keeper server: some mine-mode node outside this kit must run or the chain does not advance"
+  for s in "${SERVERS[@]}"; do
+    srv_is_byo "${s}" || continue
+    if srv_address_pending "${s}"; then
+      cfg_warn "$(srv_name "${s}"): address $(srv_address "${s}") is pending (bring-your-own host; for the keeper: docs/ops/keeper-aws.md, hand back the Elastic IP)"
+    fi
+  done
   [[ "${SOVA_CHAIN_ID:-82330}" == 82330 ]] || cfg_warn "SOVA_CHAIN_ID is ${SOVA_CHAIN_ID}, not the testnet's 82330"
   # Day-one contract values: public, and only needed at the contracts step.
   if [[ -n "${ASHWINGS_TREASURY:-}" ]]; then
@@ -173,13 +220,38 @@ validate_config() {
       cfg_warn "${v} is empty (Rob's decision, if the contracts take it)"
     fi
   done
-  if ! [[ "${MARKET_FEE_BPS:-100}" =~ ^[0-9]+$ ]] || ((${MARKET_FEE_BPS:-100} > 10000)); then
-    die "config: MARKET_FEE_BPS must be 0..10000"
+  if ! [[ "${MARKET_FEE_BPS:-100}" =~ ^[0-9]+$ ]] || ((${MARKET_FEE_BPS:-100} > 1000)); then
+    die "config: MARKET_FEE_BPS must be 0..1000 (AshwingsMarket caps it at 10%)"
   fi
 }
 
-# Public IPv4 of a provisioned server, from the record provision.sh wrote.
+# IPv4 of a hostname (or the address itself if it already is one).
+resolve_ipv4() {
+  local a="$1" ip=""
+  if [[ "${a}" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+    printf '%s\n' "${a}"
+    return 0
+  fi
+  if command -v dig >/dev/null 2>&1; then
+    ip="$(dig +short A "${a}" 2>/dev/null | grep -E '^[0-9]+(\.[0-9]+){3}$' | head -1 || true)"
+  fi
+  if [[ -z "${ip}" ]] && command -v python3 >/dev/null 2>&1; then
+    ip="$(python3 -c 'import socket, sys; print(socket.gethostbyname(sys.argv[1]))' "${a}" 2>/dev/null || true)"
+  fi
+  [[ -n "${ip}" ]] || return 1
+  printf '%s\n' "${ip}"
+}
+
+# Public IPv4 of a server: a byo host's comes from config.env (the source
+# of truth: a new Elastic IP is one edit), a Hetzner server's from the
+# record provision.sh wrote.
 server_ip() {
+  local s
+  if s="$(server_entry "$1")" && srv_is_byo "${s}"; then
+    srv_address_pending "${s}" && die "$1: address $(srv_address "${s}") is still pending in config.env"
+    resolve_ipv4 "$(srv_address "${s}")" || die "$1: cannot resolve $(srv_address "${s}")"
+    return 0
+  fi
   local f="${OUT_DIR}/servers/$1.ipv4"
   [[ -s "${f}" ]] || die "no recorded IP for $1 (run provision.sh first)"
   cat "${f}"
@@ -194,7 +266,8 @@ set_ssh_opts() {
     -i "${SSH_PRIVATE_KEY_FILE}")
 }
 
-# ssh as the admin user (created by cloud-init) to server $1.
+# ssh as the admin user (created by cloud-init, or on a byo host by
+# provision.sh's adoption) to server $1.
 kit_ssh() {
   local name="$1" ip
   shift

@@ -53,6 +53,11 @@ import {ZcashLib} from "./ZcashLib.sol";
 /// - Tag exhaustion. TAG_SPACE - 1 reservations per (payee, price). Free
 ///   reservations let a spammer burn them for gas; the seller then moves
 ///   the price by 0.001 ZEC or rotates the address.
+///
+/// Subclasses deliver the item ({_deliver}) and may refuse a reservation
+/// ({_beforeReserve}) or change tag allocation ({_nextTag}). The Ashwings
+/// ZEC mint (src/AshwingsZecCheckout.sol) is one: a single listing fixed at
+/// deploy, no {list} or {update}.
 abstract contract ZecCheckout {
     /// @notice Price granularity and tag range, in zatoshis (0.001 ZEC).
     uint64 public constant TAG_SPACE = 100_000;
@@ -150,12 +155,10 @@ abstract contract ZecCheckout {
     /// @param minConf Payment depth (>= 1). Testnet 3, mainnet 10.
     function list(uint64 priceZat, bytes20 payeeHash, bool payeeP2sh, uint32 window, uint16 minConf)
         external
+        virtual
         returns (uint256 id)
     {
-        id = ++listingCount;
-        listings[id].seller = msg.sender;
-        emit Listed(id, msg.sender);
-        _set(id, priceZat, payeeHash, payeeP2sh, window, minConf, true);
+        id = _open(msg.sender, priceZat, payeeHash, payeeP2sh, window, minConf);
     }
 
     /// @notice Change any term of your listing, or pause it (active = false).
@@ -168,7 +171,7 @@ abstract contract ZecCheckout {
         uint32 window,
         uint16 minConf,
         bool active
-    ) external {
+    ) external virtual {
         if (listings[id].seller != msg.sender) revert NotSeller();
         _set(id, priceZat, payeeHash, payeeP2sh, window, minConf, active);
     }
@@ -191,12 +194,10 @@ abstract contract ZecCheckout {
         bool p2sh = l.payeeP2sh;
         uint32 window = l.window;
 
-        bytes32 tagKey = keccak256(abi.encode(p2sh, payeeHash, price));
-        uint64 tag = lastTag[tagKey] + 1;
-        if (tag >= TAG_SPACE) revert TagsExhausted();
-        lastTag[tagKey] = tag;
+        uint64 tag = _nextTag(keccak256(abi.encode(p2sh, payeeHash, price)));
 
         uint64 nowAnchor = ZcashLib.anchorHeight();
+        _beforeReserve(listingId, nowAnchor);
         uint64 quoteZat = price + tag;
         id = ++reservationCount;
         reservations[id] = Reservation({
@@ -239,7 +240,7 @@ abstract contract ZecCheckout {
 
         r.filled = true;
         paymentUsed[key] = id;
-        itemId = _deliver(recipient);
+        itemId = _deliver(id, recipient);
         emit Claimed(id, recipient, txid, vout, p.height, itemId);
     }
 
@@ -268,14 +269,38 @@ abstract contract ZecCheckout {
     // Delivery
     // ------------------------------------------------------------------
 
-    /// @dev Hand one item to `recipient` and return its id. Called once per
-    /// filled reservation, after all state is written. Must not revert for
+    /// @dev Hand one item to `recipient` for filled reservation
+    /// `reservationId` and return its id. Called once per filled
+    /// reservation, after all state is written. Must not revert for
     /// recipient-side reasons: the buyer has already paid.
-    function _deliver(address recipient) internal virtual returns (uint256 itemId);
+    function _deliver(uint256 reservationId, address recipient) internal virtual returns (uint256 itemId);
+
+    /// @dev Hook: runs inside {reserve} before the reservation is written,
+    /// at Zcash anchor `nowAnchor`. Revert to refuse it (e.g. sold out).
+    function _beforeReserve(uint256 listingId, uint64 nowAnchor) internal virtual {}
+
+    /// @dev Next amount tag for (payee script, price) key `tagKey`, in
+    /// [1, TAG_SPACE). Default: a counter that never repeats a tag, and
+    /// reverts {TagsExhausted} after TAG_SPACE - 1.
+    function _nextTag(bytes32 tagKey) internal virtual returns (uint64 tag) {
+        tag = lastTag[tagKey] + 1;
+        if (tag >= TAG_SPACE) revert TagsExhausted();
+        lastTag[tagKey] = tag;
+    }
 
     // ------------------------------------------------------------------
     // Internals
     // ------------------------------------------------------------------
+
+    function _open(address seller, uint64 priceZat, bytes20 payeeHash, bool payeeP2sh, uint32 window, uint16 minConf)
+        internal
+        returns (uint256 id)
+    {
+        id = ++listingCount;
+        listings[id].seller = seller;
+        emit Listed(id, seller);
+        _set(id, priceZat, payeeHash, payeeP2sh, window, minConf, true);
+    }
 
     function _set(
         uint256 id,
@@ -302,29 +327,5 @@ abstract contract ZecCheckout {
 
     function _script(bytes20 h, bool p2sh) private pure returns (bytes memory) {
         return p2sh ? ZcashLib.p2sh(h) : ZcashLib.p2pkh(h);
-    }
-}
-
-interface IAshwingsMint {
-    function mint() external returns (uint256 id);
-    function transferFrom(address from, address to, uint256 id) external;
-}
-
-/// @title AshwingsZecCheckout: mint an Ashwing by paying ZEC
-/// @notice Delivery uses Ashwings' own public, free `mint()` (the checkout
-/// mints to itself, then transfers), so Ashwings needs no minter role and
-/// no change: this works against the deployed collection as-is. Plain
-/// transferFrom, not safeTransferFrom: a paid claim must never fail on the
-/// recipient side.
-contract AshwingsZecCheckout is ZecCheckout {
-    IAshwingsMint public immutable ashwings;
-
-    constructor(address ashwings_) {
-        ashwings = IAshwingsMint(ashwings_);
-    }
-
-    function _deliver(address recipient) internal override returns (uint256 id) {
-        id = ashwings.mint();
-        ashwings.transferFrom(address(this), recipient, id);
     }
 }

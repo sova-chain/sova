@@ -13,6 +13,9 @@
 //   B  injected wallet reserves -> watcher finds the payment on "zebrad"
 //      (payee output at vout 1) and claims -> page shows the owl untouched
 //   C  phone width; wrong amount paid -> page says so
+//   D  /ashwings/mint: injected wallet mints for SOVA; gallery shows owls
+//   E  /ashwings/market: wallet D lists (approve + list), wallet E buys
+//      (1% fee booked for the treasury), D lists and cancels another
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import http from 'node:http';
@@ -38,7 +41,9 @@ const SHOTS = process.env.SHOTS || join(HERE, 'shots');
 const ZCASH = '0x0000000000000000000000000000000000005a00';
 const MNEMONIC = 'test test test test test test test test test test test junk'; // anvil's public dev mnemonic
 const acct = (i) => mnemonicToAccount(MNEMONIC, { addressIndex: i });
-const [deployer, seller, relayer, buyerA, buyerB, buyerC] = [0, 1, 2, 5, 6, 7].map(acct);
+const [deployer, treasury, relayer, buyerA, buyerB, buyerC, buyerD, buyerE] = [0, 1, 2, 5, 6, 7, 8, 9].map(acct);
+const PRICE_WEI = 10n ** 19n; // 10 SOVA
+const PRICE_ZAT = 25_000_000n; // 0.25 ZEC
 
 const children = [];
 const servers = [];
@@ -110,7 +115,7 @@ function staticServer(root, port) {
 // ---------------------------------------------------------------------------
 
 async function main() {
-  if (!existsSync(join(OUT, 'ZecCheckout.sol'))) throw new Error('run `forge build` in contracts/ first');
+  if (!existsSync(join(OUT, 'AshwingsZecCheckout.sol'))) throw new Error('run `forge build` in contracts/ first');
   if (!existsSync(join(DIST, 'ashwings/buy/index.html'))) throw new Error('run `npm run build` in site/ first');
   mkdirSync(SHOTS, { recursive: true });
 
@@ -131,13 +136,22 @@ async function main() {
   };
   console.log(`   anvil ${RPC}`);
 
-  step('deploy Ashwings + AshwingsZecCheckout, etch MockZcash at 0x…5a00');
+  step('deploy Ashwings (creates its ZEC checkout) + AshwingsMarket, etch MockZcash at 0x…5a00');
   const ashw = artifact('Ashwings.sol', 'Ashwings');
-  const co = artifact('ZecCheckout.sol', 'AshwingsZecCheckout');
+  const co = artifact('AshwingsZecCheckout.sol', 'AshwingsZecCheckout');
+  const mkt = artifact('AshwingsMarket.sol', 'AshwingsMarket');
   const mock = artifact('MockZcash.sol', 'MockZcash');
-  const ashwAddr = (await mined(await dep.deployContract({ abi: ashw.abi, bytecode: ashw.bytecode.object }))).contractAddress;
-  const coAddr = (await mined(await dep.deployContract({ abi: co.abi, bytecode: co.bytecode.object, args: [ashwAddr] }))).contractAddress;
-  assert(coAddr.toLowerCase() === getContractAddress({ from: deployer.address, nonce: 1n }).toLowerCase(), `checkout at ${coAddr} (the page default)`);
+  // The ZEC payee: a t-address of "the project" (any P2PKH hash will do here).
+  const pkh = keccak256(toHex('sova demo seller')).slice(0, 42);
+  const script = payeeScript(pkh, false);
+  const sellerT = tAddr(pkh, false, 'test');
+  const ashwAddr = (await mined(await dep.deployContract({
+    abi: ashw.abi, bytecode: ashw.bytecode.object, args: [treasury.address, sellerT, PRICE_WEI, PRICE_ZAT],
+  }))).contractAddress;
+  const coAddr = await pub.readContract({ address: ashwAddr, abi: ashw.abi, functionName: 'zecCheckout' });
+  assert(coAddr.toLowerCase() === getContractAddress({ from: ashwAddr, nonce: 1n }).toLowerCase(), `checkout at ${coAddr}, created by Ashwings`);
+  const mktAddr = (await mined(await dep.deployContract({ abi: mkt.abi, bytecode: mkt.bytecode.object, args: [ashwAddr, treasury.address, 100] }))).contractAddress;
+  console.log(`   ashwings ${ashwAddr} · market ${mktAddr} · zec payee ${sellerT}`);
   await pub.request({ method: 'anvil_setCode', params: [ZCASH, mock.deployedBytecode.object] });
   const Z = { address: ZCASH, abi: mock.abi };
   const zsend = async (functionName, args) => mined(await dep.writeContract({ ...Z, functionName, args }));
@@ -154,13 +168,6 @@ async function main() {
     await zsend('mine', [BigInt(n)]);
     fz.state.tip += n;
   };
-
-  step('seller lists: 0.25 ZEC, window 40, minConf 3');
-  const pkh = keccak256(toHex('sova demo seller')).slice(0, 42);
-  const script = payeeScript(pkh, false);
-  const sellerT = tAddr(pkh, false, 'test');
-  await mined(await wallet(seller).writeContract({ address: coAddr, abi: co.abi, functionName: 'list', args: [25_000_000n, pkh, false, 40, 3] }));
-  console.log(`   seller ${sellerT}`);
 
   /** A Zcash tx mined in the next block, visible to Sova's precompile and (optionally) to zebrad. */
   async function zcashPay(outputs, { zebrad = false } = {}) {
@@ -324,6 +331,88 @@ async function main() {
 
   const bad = await fetch(`${RELAYER}/reserve`, { method: 'POST', body: JSON.stringify({ listingId: 1, recipient: '0x' + '0'.repeat(40) }) });
   assert(bad.status === 400, 'relayer rejects a zero recipient');
+
+  // ---- Flow D ------------------------------------------------------------
+  step('D: /ashwings/mint — injected wallet mints for SOVA');
+  const Q = `rpc=${encodeURIComponent(RPC)}&ashw=${ashwAddr}&market=${mktAddr}`;
+  const MINT = `http://127.0.0.1:${sitePort}/ashwings/mint/?${Q}`;
+  const MKT = `http://127.0.0.1:${sitePort}/ashwings/market/?${Q}`;
+  const walletOf = (account) => ({ fn: shim.fn, arg: { rpc: RPC, account: account.address } });
+  const stHas = (p, t, ms) =>
+    p.waitForFunction((x) => document.querySelector('#status .st').textContent.includes(x), t, { timeout: ms ?? 20000 });
+  const ashwRead = (functionName, args = []) => pub.readContract({ address: ashwAddr, abi: ashw.abi, functionName, args });
+  const mktRead = (functionName, args = []) => pub.readContract({ address: mktAddr, abi: mkt.abi, functionName, args });
+
+  const d = await newPage({}, walletOf(buyerD));
+  await d.goto(MINT);
+  await stHas(d, 'ready');
+  assert((await d.textContent('#n')) === '2', 'supply 2 (the two ZEC owls)');
+  assert((await d.textContent('#p-sova')) === '10' && (await d.textContent('#p-zec')) === '0.25', 'prices 10 SOVA / 0.25 ZEC from the contract');
+  assert((await d.getAttribute('#go-zec', 'href')).toLowerCase().includes(`co=${coAddr}`.toLowerCase()), 'ZEC button hands off to /ashwings/buy with the checkout');
+  await d.waitForSelector('#grid li:nth-child(2) img[src^="data:image/svg+xml"]');
+  await d.waitForTimeout(600);
+  await shot(d, '10-mint-page');
+  await d.click('#go-sova');
+  await stHas(d, 'minted');
+  await d.waitForSelector('#new-img[src^="data:image/svg+xml"]');
+  assert((await owner(3n)).toLowerCase() === buyerD.address.toLowerCase(), 'Ashwing #3 minted to wallet D for SOVA');
+  assert((await pub.getBalance({ address: ashwAddr })) === PRICE_WEI, 'exactly 10 SOVA collected by Ashwings');
+  assert((await d.textContent('#n')) === '3', 'supply 3');
+  await d.waitForSelector('#grid li:nth-child(3)');
+  await d.waitForTimeout(700);
+  await shot(d, '11-minted-sova');
+
+  // ---- Flow E ------------------------------------------------------------
+  step('E: /ashwings/market — list (approve + list), buy (1% fee), cancel');
+  const e1 = await newPage({}, walletOf(buyerD));
+  await e1.goto(MKT);
+  await stHas(e1, 'connect a wallet');
+  await e1.click('#connect');
+  await e1.waitForSelector('#mine li[data-id="3"] input');
+  await e1.fill('#mine li[data-id="3"] input', '25');
+  await e1.click('#mine li[data-id="3"] button');
+  await stHas(e1, 'done');
+  assert(await mktRead('isLive', [3n]), 'owl #3 listed and live');
+  const [, listed] = await mktRead('listings', [3n]);
+  assert(listed === 25n * 10n ** 18n, 'listed at 25 SOVA');
+  await e1.waitForSelector('#sale li[data-id="3"]');
+  await e1.waitForTimeout(600);
+  await shot(e1, '12-listed');
+
+  const e2 = await newPage({}, walletOf(buyerE));
+  await e2.goto(MKT);
+  await e2.waitForSelector('#sale li[data-id="3"] button.go');
+  const dBefore = await pub.getBalance({ address: buyerD.address });
+  await e2.click('#sale li[data-id="3"] button.go');
+  await stHas(e2, 'done');
+  assert((await owner(3n)).toLowerCase() === buyerE.address.toLowerCase(), 'wallet E owns #3');
+  assert((await pub.getBalance({ address: buyerD.address })) - dBefore === 2475n * 10n ** 16n, 'seller got exactly 24.75 SOVA');
+  assert((await mktRead('feesOwed')) === 25n * 10n ** 16n, '0.25 SOVA (1%) booked for the treasury');
+  await e2.click('#connect');
+  await e2.waitForSelector('#mine li[data-id="3"]');
+  await e2.waitForTimeout(600);
+  await shot(e2, '13-bought');
+
+  await mined(await wallet(buyerD).writeContract({ address: ashwAddr, abi: ashw.abi, functionName: 'mint', value: PRICE_WEI }));
+  await e1.reload();
+  await e1.click('#connect');
+  await e1.waitForSelector('#mine li[data-id="4"] input');
+  await e1.fill('#mine li[data-id="4"] input', '5');
+  await e1.click('#mine li[data-id="4"] button');
+  await stHas(e1, 'done');
+  assert(await mktRead('isLive', [4n]), 'owl #4 listed');
+  await e1.waitForSelector('#mine li[data-id="4"] .price');
+  await e1.click('#mine li[data-id="4"] button');
+  await stHas(e1, 'canceling #4 · done');
+  assert(!(await mktRead('isLive', [4n])), 'owl #4 canceled');
+
+  const f = await newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true });
+  await f.goto(MINT);
+  await f.waitForSelector('#grid li:nth-child(4) img[src^="data:image/svg+xml"]');
+  await f.waitForTimeout(600);
+  await shot(f, '14-mobile-mint');
+  assert((await f.evaluate(() => document.documentElement.scrollWidth)) <= 390, 'no horizontal scroll at 390px');
+  assert((await ashwRead('totalSupply')) === 4n, 'supply 4');
 
   await browser.close();
   const real = errors.filter((e) => !/favicon/.test(e));

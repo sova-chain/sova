@@ -6,7 +6,7 @@ import {Ashwings} from "../src/Ashwings.sol";
 
 contract SampleAshwing is Script {
     function run() external {
-        Ashwings r = new Ashwings();
+        Ashwings r = new Ashwings(address(1), "tmJymvcUCn1ctbghvTJpXBwHiMEB8P6wxNV", 0, 25_000_000);
         for (uint256 i = 0; i < 4; i++) {
             vm.prank(address(uint160(0xA11CE + i)));
             uint256 id = r.mint();

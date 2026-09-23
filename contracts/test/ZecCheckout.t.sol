@@ -3,12 +3,38 @@ pragma solidity ^0.8.24;
 
 import {Test, console2} from "forge-std/Test.sol";
 import {stdStorage, StdStorage} from "forge-std/StdStorage.sol";
-import {Ashwings} from "../src/Ashwings.sol";
 import {ZcashLib} from "../src/zcash/ZcashLib.sol";
-import {ZecCheckout, AshwingsZecCheckout} from "../src/zcash/ZecCheckout.sol";
+import {ZecCheckout} from "../src/zcash/ZecCheckout.sol";
 import {ZCASH_PRECOMPILE} from "../src/zcash/IZcash.sol";
 import {MockZcash, installMockZcash} from "./mocks/MockZcash.sol";
 import {ZecFmt} from "../script/AshwingZecCheckoutDemo.s.sol";
+
+/// A minimal item ledger for the generic checkout (the Ashwings ZEC mint
+/// has its own tests: AshwingsV2.t.sol).
+contract TestItems {
+    uint256 public totalSupply;
+    mapping(uint256 => address) public ownerOf;
+    mapping(address => uint256) public balanceOf;
+
+    function mint(address to) external returns (uint256 id) {
+        id = ++totalSupply;
+        ownerOf[id] = to;
+        balanceOf[to]++;
+    }
+}
+
+/// The generic, seller-listed checkout, delivering TestItems.
+contract ItemCheckout is ZecCheckout {
+    TestItems public immutable items;
+
+    constructor(TestItems items_) {
+        items = items_;
+    }
+
+    function _deliver(uint256, address recipient) internal override returns (uint256) {
+        return items.mint(recipient);
+    }
+}
 
 contract ZecCheckoutTest is Test {
     using stdStorage for StdStorage;
@@ -27,8 +53,8 @@ contract ZecCheckoutTest is Test {
     bytes32 constant TX2 = keccak256("payment-2");
 
     MockZcash z;
-    Ashwings ash;
-    AshwingsZecCheckout co;
+    TestItems ash;
+    ItemCheckout co;
     address seller = makeAddr("seller");
     address buyer = makeAddr("buyer");
     address buyer2 = makeAddr("buyer2");
@@ -36,8 +62,8 @@ contract ZecCheckoutTest is Test {
 
     function setUp() public {
         z = installMockZcash(vm, BASE, START);
-        ash = new Ashwings();
-        co = new AshwingsZecCheckout(address(ash));
+        ash = new TestItems();
+        co = new ItemCheckout(ash);
         assertEq(co.TAG_SPACE(), TAGS);
     }
 
@@ -425,7 +451,7 @@ contract ZecCheckoutTest is Test {
     /// precompile is always warm). Excludes the 21,000 base and calldata.
     function testGasClaim() public {
         uint256 lid = _list();
-        uint256 r0 = _reserve(lid, buyer); // warm the Ashwings supply slot like a live chain
+        uint256 r0 = _reserve(lid, buyer); // warm the item supply slot like a live chain
         z.pay(TX2, _s(PKH), PRICE + 1);
         z.mine(MINCONF);
         _claim(r0, TX2, 0);

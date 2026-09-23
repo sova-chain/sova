@@ -17,7 +17,7 @@ Environment variables only. Put them in a local `.env` (gitignored) and run
 
 | Variable | Required | Meaning |
 |---|---|---|
-| `CHECKOUT` | yes | `AshwingsZecCheckout` address |
+| `CHECKOUT` | yes | `AshwingsZecCheckout` address (`Ashwings.zecCheckout()`; listing 1) |
 | `RELAYER_KEY` | yes | Funded private key that pays reserve/claim gas. Keep it out of the repo. |
 | `SOVA_RPC_URL` | | Sova JSON-RPC (default `http://127.0.0.1:8545`) |
 | `LISTINGS` | | Only serve these listing ids (default: any) |

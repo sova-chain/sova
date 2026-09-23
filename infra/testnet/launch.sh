@@ -5,7 +5,9 @@
 # each point that needs time or a person:
 #
 #   1 check      config.env is valid; the cloud tokens are present
-#   2 provision  provision.sh up --my-ip          (Hetzner)
+#   2 provision  provision.sh up --my-ip          (Hetzner; byo hosts such
+#                                                  as the AWS keeper are
+#                                                  adopted over SSH)
 #   3 hosts      deploy.sh                        (zebrad starts syncing)
 #   4 edge       cloudflare.sh all [+ deploy.sh alerts]
 #   5 sync       STOP until every host's zebrad is at the Zcash tip
@@ -55,7 +57,7 @@ step "1 check"
 ./deploy.sh check
 load_config
 if [[ "${DRY_RUN}" != 1 ]]; then
-  need_env HCLOUD_TOKEN
+  if has_hetzner_servers; then need_env HCLOUD_TOKEN; fi
   need_env CLOUDFLARE_API_TOKEN
   need_env CLOUDFLARE_ACCOUNT_ID
   need_env CLOUDFLARE_ZONE_ID
@@ -74,8 +76,14 @@ if [[ -n "${TELEGRAM_BOT_TOKEN:-}" ]]; then
 fi
 
 step "5 sync"
+# "name" or "name[byo address]", for the dry-run plan.
+host_label() {
+  if srv_is_byo "$1"; then echo "$(srv_name "$1")[byo $(srv_address "$1")]"; else srv_name "$1"; fi
+}
 if [[ "${DRY_RUN}" == 1 ]]; then
-  echo "+ every host: zebrad getblockchaininfo, blocks within 5 of estimatedheight"
+  for s in "${SERVERS[@]}"; do
+    echo "+ ssh sova-admin@$(host_label "${s}"): zebrad getblockchaininfo, blocks within 5 of estimatedheight"
+  done
 else
   behind=""
   for s in "${SERVERS[@]}"; do
@@ -114,6 +122,9 @@ fi
 ./deploy.sh "${DRY[@]+"${DRY[@]}"}"
 if [[ "${DRY_RUN}" == 1 ]]; then
   echo "+ ./bootnodes.sh && ./bootnodes.sh --verify && ./publish.sh join"
+  for s in "${SERVERS[@]}"; do
+    case "$(srv_role "${s}")" in seed | rpc | keeper) echo "+   bootnodes --verify: $(host_label "${s}") logged enode == recorded" ;; esac
+  done
 else
   ./bootnodes.sh
   ./bootnodes.sh --verify || stop "bootnode check failed (nodes may still be starting; output above)"
@@ -135,6 +146,9 @@ fi
 step "8 smoke"
 if [[ "${DRY_RUN}" == 1 ]]; then
   echo "+ ./smoke.sh all"
+  for s in "${SERVERS[@]}"; do
+    echo "+   smoke: $(host_label "${s}") ($(srv_role "${s}")): edge ports from here + services/C5/health over SSH"
+  done
 else
   ./smoke.sh all
 fi

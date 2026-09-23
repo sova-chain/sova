@@ -6,6 +6,11 @@
 # faucet, keeper, cloudflared) is setup-host.sh, pushed by deploy.sh, so it
 # can be re-run for upgrades. The admin public key is filled in by
 # provision.sh; nothing secret is ever in this file.
+#
+# A bring-your-own host (SERVERS "byo", e.g. the AWS keeper) gets this
+# same file applied over SSH by host/byo-bootstrap.py, which understands
+# only the keys used here: adding a new top-level key means teaching it
+# too (it refuses unknown keys rather than skip them).
 
 package_update: true
 package_upgrade: true

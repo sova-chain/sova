@@ -1,0 +1,54 @@
+---
+// /ashwings/market: buy, list and cancel Ashwings for SOVA
+// (contracts/src/AshwingsMarket.sol: no owner, 1% to the treasury).
+// Unlisted until launch: noindex, not in sitePages (nav, footer, sitemap).
+// Logic: src/scripts/ashwings/.
+import Site from '../../layouts/Site.astro';
+import '../../styles/owls.css';
+
+// Defaults target the local box after box/deploy-dapps.sh. Override per
+// visit: ?rpc=&ashw=&market=
+const config = {
+  rpc: 'http://127.0.0.1:8545',
+  ashw: '0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9',
+  market: '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707',
+  relayer: '',
+};
+---
+<Site
+  title="Ashwings market"
+  description="Buy and sell on-chain owls for SOVA. 1% to the treasury."
+  current="/ashwings"
+  cmd="./owls --market"
+  status="market · unlisted"
+  indexable={false}
+>
+  <div id="market" class="owls-ui" data-config={JSON.stringify(config)}>
+    <h1>Owl market.</h1>
+    <p class="lead">SOVA only. 1% to the treasury. No owner.</p>
+
+    <p class="bar2">
+      <button id="connect" type="button" hidden>connect wallet</button>
+      <a id="to-mint" href="/ashwings/mint">mint →</a>
+    </p>
+
+    <p id="status" class="status" data-k="wait" role="status" aria-live="polite"><span class="st">loading</span><span class="cur" aria-hidden="true"></span></p>
+
+    <h2>for sale <span class="dim">(<span id="n-sale">…</span>) <span id="floor"></span></span></h2>
+    <ul id="sale" class="grid" data-empty="# nothing listed. yet." aria-live="polite"></ul>
+
+    <h2 id="mine-h" hidden>yours</h2>
+    <ul id="mine" class="grid" data-empty="# no owls in this wallet." hidden></ul>
+
+    <p id="cfg" class="dim cfg"></p>
+  </div>
+</Site>
+
+<script>
+  import '../../scripts/ashwings/market';
+</script>
+
+<style>
+  .bar2 { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin: 0 0 12px; }
+  h2 .dim { font-weight: 400; font-size: 13px; }
+</style>

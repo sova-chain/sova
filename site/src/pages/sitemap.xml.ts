@@ -1,6 +1,6 @@
 // sitemap.xml for the indexable pages: the landing page at / and every page
 // in sitePages (the paper at /paper included). The /v/* design explorations
-// and the unlisted /ashwings/buy and /pulse demos are noindex and stay out.
+// and the unlisted /ashwings/{buy,mint,market} and /pulse pages are noindex and stay out.
 import type { APIRoute } from 'astro';
 import { sitePages } from '../data/sova';
 

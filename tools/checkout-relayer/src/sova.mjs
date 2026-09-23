@@ -19,6 +19,7 @@ export const CHECKOUT_ABI = parseAbi([
   'error ListingInactive()',
   'error ZeroRecipient()',
   'error TagsExhausted()',
+  'error Immutable()',
   'error PaymentAlreadyUsed(uint256 filledReservation)',
   'error WrongAmount(uint64 valueZat, uint64 quoteZat)',
   'error PaidBeforeReservation(uint64 paymentHeight, uint64 reservedAt)',

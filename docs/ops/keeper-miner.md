@@ -28,6 +28,24 @@ public.
   machines go dark for the M1 gate, the keeper goes dark too. Otherwise
   the drill proves nothing about strangers' liveness.
 
+## Where it runs (M1 testnet)
+
+On the M1 public testnet the keeper is `sova-keeper-1`, an **AWS EC2**
+instance (Rob, 2026-09-23). The seed and RPC servers stay on Hetzner, so
+the keeper doesn't share a provider with them. Rob creates it by hand
+(`docs/ops/keeper-aws.md`), and the launch kit adopts it over SSH and sets
+it up like every other host (`infra/testnet`, role `keeper`). Its
+security group admits only SSH from the operator's IP, so it takes part in
+Zcash and Sova P2P through outbound connections only.
+
+The kit's layout differs from the generic commands below. The keystore is
+`/var/lib/sova/keeper`, the burner is the `sova-keeper` systemd unit (its
+budgets are in `/etc/sova/keeper.env`), and `sova` runs in mine mode as
+`sova-node`. zebrad's RPC is `127.0.0.1:18232` with cookie auth off (a
+documented deviation, `docs/ops/testnet-launch.md`), so `--rpc-cookie-file`
+isn't needed there. `setup-host.sh` runs `init` itself and prints both
+addresses (`out/servers/sova-keeper-1.keeper_*`).
+
 ## Set up
 
 ```bash

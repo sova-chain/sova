@@ -9,7 +9,7 @@ import { species, owlSamples } from '../data/sova';
 ---
 <Site
   title="Ashwings: on-chain owls"
-  description="Ashwings: pixel owls drawn entirely by their contract on Sova. No owner, no admin, no metadata server; free to mint, gas paid in SOVA. Day-one mint at launch."
+  description="Ashwings: 10,000 pixel owls drawn entirely by their contract on Sova. No owner, no admin, no metadata server; one fixed price, in SOVA or ZEC. Day-one mint at launch."
   current="/ashwings"
   cmd="cat ashwings.txt"
   status="pre-release · no public network yet"
@@ -31,12 +31,12 @@ import { species, owlSamples } from '../data/sova';
   <h2>fully on-chain</h2>
   <ul class="bul">
     <li>The contract builds each owl’s SVG and metadata itself, from a seed fixed at mint.</li>
-    <li>No owner, no admin, no mint fee, no metadata server. An owl lasts exactly as long as the chain.</li>
-    <li>Free to mint: you pay only gas, in SOVA. Symbol <code>ASHW</code>; each token is “Ashwing #N”.</li>
+    <li>No owner, no admin, no metadata server. An owl lasts exactly as long as the chain.</li>
+    <li>10,000 ever, at one fixed price set at deploy: pay in SOVA on Sova, or in ZEC from any Zcash wallet. Symbol <code>ASHW</code>; each token is “Ashwing #N”.</li>
   </ul>
 
   <h2>minted with destroyed money</h2>
-  <p>Gas is paid in SOVA, and every SOVA traces back to burned ZEC. Every Ashwing is paid for with ZEC that no longer exists.</p>
+  <p>Gas is paid in SOVA, and every SOVA traces back to burned ZEC. Mint with SOVA and the owl is paid for with ZEC that no longer exists.</p>
 
   <h2>traits</h2>
   <p>A 24 × 24 pixel grid. The left half is drawn and mirrored; the pupils go in after the mirror, so both eyes look the same way. Owls can’t cross their eyes.</p>

@@ -27,7 +27,9 @@ contract AshwingsParityTest is Test {
     bytes32 constant WORST = 0x0000be002600f6d000aa000000000fffffffffffffffffffffffffffffffffff;
 
     function setUp() public {
-        r = new Ashwings();
+        // Free SOVA price (0) so mint() is the plain call; the paid paths
+        // are covered in AshwingsV2.t.sol.
+        r = new Ashwings(address(0x7EA5), "tmJymvcUCn1ctbghvTJpXBwHiMEB8P6wxNV", 0, 25_000_000);
     }
 
     function _mintWithSeed(bytes32 seed) internal returns (uint256 id) {

@@ -24,8 +24,10 @@
 #       --systemd-verify also runs `systemd-analyze verify` on them in a
 #       throwaway ubuntu:24.04 container (needs Docker). Nothing remote.
 #
-# Needs: provision.sh up has run (out/servers/*.ipv4), the SSH key from
-# config.env. No cloud API token is used here.
+# Needs: provision.sh up has run (out/servers/*.ipv4; a byo host is
+# adopted there, and its address comes from config.env), the SSH key from
+# config.env. No cloud API token is used here. Hetzner and byo hosts are
+# configured identically, as sova-admin over SSH.
 set -euo pipefail
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -74,7 +76,11 @@ host_env() { # server-entry bootnodes
   name="$(srv_name "${s}")"
   role="$(srv_role "${s}")"
   local ip="203.0.113.1"
-  [[ "${DRY_RUN}" == 1 ]] || ip="$(server_ip "${name}")"
+  if [[ "${DRY_RUN}" != 1 ]]; then
+    ip="$(server_ip "${name}")"
+  elif srv_is_byo "${s}" && [[ "$(srv_address "${s}")" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+    ip="$(srv_address "${s}")"
+  fi
   local ref_rpc=""
   # A seed can compare its head with the public RPC (rpc-1) to tell "we
   # lag" from "the network stalled".
@@ -113,8 +119,10 @@ remote_setup() { # server-entry bootnodes [--enode-only]
   envf="${OUT_DIR}/servers/${name}.host.env"
   host_env "${s}" "$2" >"${envf}"
   if [[ "${DRY_RUN}" == 1 ]]; then
-    echo "+ rsync host/ + ${envf##*/} -> sova-admin@${name}:${REMOTE_DIR}/"
-    echo "+ ssh sova-admin@${name} sudo bash ${REMOTE_DIR}/setup-host.sh ${REMOTE_DIR}/host.env ${3:-}"
+    local at="${name}"
+    srv_is_byo "${s}" && at="${name}[byo $(srv_address "${s}")]"
+    echo "+ rsync host/ + ${envf##*/} -> sova-admin@${at}:${REMOTE_DIR}/"
+    echo "+ ssh sova-admin@${at} sudo bash ${REMOTE_DIR}/setup-host.sh ${REMOTE_DIR}/host.env ${3:-}"
     return 0
   fi
   local ip

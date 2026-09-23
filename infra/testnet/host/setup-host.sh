@@ -77,6 +77,8 @@ mount_volume() {
   for d in /dev/disk/by-id/scsi-0HC_Volume_*; do [[ -e "${d}" ]] && devs+=("${d}"); done
   mkdir -p "${DATA}"
   if [[ ${#devs[@]} -eq 0 ]]; then
+    # Also the normal case on a byo host (the AWS keeper: one 40 GB gp3
+    # root volume).
     log "no Hetzner volume attached; state lives on the root disk"
     return 0
   fi
@@ -120,7 +122,8 @@ setup_dirs() {
   fi
 }
 
-# ---- host firewall (mirrors the Hetzner one; defence in depth) --------------------
+# ---- host firewall (mirrors the Hetzner firewall / a byo host's security group;
+# defence in depth) -----------------------------------------------------------------
 setup_ufw() {
   ufw default deny incoming >/dev/null
   ufw default allow outgoing >/dev/null

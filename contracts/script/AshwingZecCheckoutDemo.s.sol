@@ -9,27 +9,31 @@ pragma solidity ^0.8.24;
 //
 // Buy an Ashwing with ZEC (docs/design/ashwing-zec-checkout.md).
 // Signing follows the other scripts: pass --private-key / --account.
+// The checkout is created by the Ashwings constructor with the ZEC terms
+// fixed (listing #1, no list/update): read its address from
+// `cast call $ASHWINGS "zecCheckout()(address)"` (ashwings from deployments.json).
+//
+// CAVEAT: forge runs a script in its own EVM over forked node state, and
+// that EVM has no SIP-4 precompile, so these functions stop at "SIP-4 ...
+// not live" even against a node that has it. Against a live node use cast
+// (box/deploy-dapps.sh reserves an order that way) or the /ashwings/buy
+// page; this script documents the calls and runs under a mock precompile.
 //
 //   export RPC=http://127.0.0.1:8545  S=script/AshwingZecCheckoutDemo.s.sol:AshwingZecCheckoutDemo
 //
-//   0. deploy (once), pointing at the Ashwings collection:
-//      forge script $S --sig "deploy(address)" $ASHWINGS --rpc-url $RPC --broadcast --private-key $KEY
-//   1. SELLER: list at 0.25 ZEC to your own t-address, window 40 (~50 min), minConf 3:
-//      forge script $S --sig "list(address,string,uint64,uint32,uint16)" $CO tmXXXX... 25000000 40 3 \
-//        --rpc-url $RPC --broadcast --private-key $SELLER_KEY
-//   2. BUYER (or a relayer for them): reserve; prints the exact amount and a ZIP-321 URI:
+//   1. BUYER (or a relayer for them): reserve; prints the exact amount and a ZIP-321 URI:
 //      forge script $S --sig "reserve(address,uint256,address)" $CO 1 $BUYER --rpc-url $RPC --broadcast --private-key $KEY
-//   3. BUYER: pay that exact amount to that address from any Zcash wallet (shielded balance is fine).
-//   4. anyone: status (depth, deadline):
+//   2. BUYER: pay that exact amount to that address from any Zcash wallet (shielded balance is fine).
+//   3. anyone: status (depth, deadline):
 //      forge script $S --sig "status(address,uint256)" $CO <reservationId> --rpc-url $RPC
-//   5. anyone: claim once deep enough; the owl goes to the buyer:
+//   4. anyone: claim once deep enough; the owl goes to the buyer:
 //      forge script $S --sig "claim(address,uint256,bytes32,uint32)" $CO <reservationId> 0x<txid> <vout> \
 //        --rpc-url $RPC --broadcast --private-key $KEY
 
 import {Script, console} from "forge-std/Script.sol";
 import {IZcash, ZCASH_PRECOMPILE} from "../src/zcash/IZcash.sol";
 import {ZcashLib} from "../src/zcash/ZcashLib.sol";
-import {AshwingsZecCheckout} from "../src/zcash/ZecCheckout.sol";
+import {AshwingsZecCheckout} from "../src/AshwingsZecCheckout.sol";
 import {TAddr} from "./ZecEscrowDemo.s.sol";
 
 library ZecFmt {
@@ -67,30 +71,11 @@ library ZecFmt {
 
 contract AshwingZecCheckoutDemo is Script {
     function run() external pure {
-        revert("use --sig: deploy|list|reserve|status|claim (see header)");
+        revert("use --sig: reserve|status|claim (see header)");
     }
 
     function _requireSip4() internal view {
         require(ZcashLib.available(), "SIP-4 precompile not live at 0x...5a00: this demo needs it");
-    }
-
-    function deploy(address ashwings) external returns (AshwingsZecCheckout co) {
-        vm.startBroadcast();
-        co = new AshwingsZecCheckout(ashwings);
-        vm.stopBroadcast();
-        console.log("AshwingsZecCheckout:", address(co));
-    }
-
-    /// P2PKH t-address only (t1... / tm...), the kind every wallet shows.
-    function list(AshwingsZecCheckout co, string calldata sellerTAddr, uint64 priceZat, uint32 window, uint16 minConf)
-        external
-        returns (uint256 id)
-    {
-        (bytes20 pkh,) = TAddr.decodeP2pkh(sellerTAddr);
-        vm.startBroadcast();
-        id = co.list(priceZat, pkh, false, window, minConf);
-        vm.stopBroadcast();
-        console.log("listing id:", id);
     }
 
     function reserve(AshwingsZecCheckout co, uint256 listingId, address recipient) external returns (uint256 id) {

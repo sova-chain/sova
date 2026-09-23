@@ -118,7 +118,7 @@ Protocol changes go through SIPs, in [`sips/`](sips/).
 | `bin/sova` | Sova node binary |
 | `bin/sova-miner` | Sova miner CLI binary |
 | `box` | sova-in-a-box: one-command local devnet ([`box/README.md`](box/README.md)) |
-| `contracts` | Day-one dapp kit (Foundry): WSOVA, Uniswap-V2-class AMM, Multicall3, Ashwings |
+| `contracts` | Day-one dapp kit (Foundry): WSOVA, Uniswap-V2-class AMM, Multicall3, Ashwings (10,000 owls, SOVA or ZEC) and its market |
 | `mcp` | MCP server wrapping the miner CLI |
 | `sips` | Sova Improvement Proposals (protocol specs) |
 | `docs` | Roadmap, design notes, operator runbooks |

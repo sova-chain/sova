@@ -1,0 +1,60 @@
+---
+// /ashwings/mint: mint an Ashwing for SOVA (injected wallet) or ZEC (hands
+// off to /ashwings/buy), and the gallery of minted owls. Unlisted until
+// launch: noindex, not in sitePages (nav, footer, sitemap).
+// Logic: src/scripts/ashwings/. Contracts: contracts/src/Ashwings.sol.
+import Site from '../../layouts/Site.astro';
+import '../../styles/owls.css';
+
+// Defaults target the local box after box/deploy-dapps.sh (dev account #0
+// deploys; addresses are deterministic). Override per visit:
+// ?rpc=&ashw=&market=&relayer=
+const config = {
+  rpc: 'http://127.0.0.1:8545',
+  ashw: '0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9',
+  market: '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707',
+  relayer: '',
+};
+---
+<Site
+  title="Mint an Ashwing"
+  description="10,000 on-chain owls. Pay in SOVA or ZEC."
+  current="/ashwings"
+  cmd="./mint-owl"
+  status="mint · unlisted"
+  indexable={false}
+>
+  <div id="mint" class="owls-ui" data-config={JSON.stringify(config)}>
+    <h1>Mint an owl.</h1>
+    <p class="lead">10,000 ever. Pay in SOVA or ZEC.</p>
+
+    <section class="supply" aria-label="Supply">
+      <p><span id="n" class="num">…</span> <span class="of">/ <span id="max">10,000</span> minted</span></p>
+      <div class="meter" aria-hidden="true"><i id="fill"></i></div>
+      <p class="dim"><span id="held"></span></p>
+    </section>
+
+    <div class="pay2">
+      <button id="go-sova" type="button" class="go">mint · <b id="p-sova">…</b> SOVA</button>
+      <a id="go-zec" class="btn" href="/ashwings/buy">pay <b id="p-zec">…</b> ZEC →</a>
+    </div>
+
+    <p id="status" class="status" data-k="wait" role="status" aria-live="polite"><span class="st">loading</span><span class="cur" aria-hidden="true"></span></p>
+
+    <figure id="new" class="new" hidden>
+      <img id="new-img" width="192" height="192" alt="" />
+      <figcaption><span id="new-name"></span> · yours</figcaption>
+    </figure>
+
+    <h2>owls</h2>
+    <p id="empty" class="dim" hidden># none yet. be the first.</p>
+    <ul id="grid" class="grid" aria-live="polite"></ul>
+    <p><button id="more" type="button" hidden>older ↓</button> <a id="to-market" href="/ashwings/market">market →</a></p>
+
+    <p id="cfg" class="dim cfg"></p>
+  </div>
+</Site>
+
+<script>
+  import '../../scripts/ashwings/mint';
+</script>

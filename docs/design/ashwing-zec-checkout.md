@@ -3,9 +3,36 @@
 Pay ZEC from any normal Zcash wallet, get an owl on Sova. There is no
 bridge and no wrapped token. The ZEC goes straight to the seller on Zcash
 and never leaves it. Sova reads the payment through the SIP-4 precompile.
-Code: `contracts/src/zcash/ZecCheckout.sol` (`AshwingsZecCheckout`).
-Tests: `contracts/test/ZecCheckout.t.sol` (mock precompile). Script:
+Code: `contracts/src/zcash/ZecCheckout.sol` (the generic checkout) and
+`contracts/src/AshwingsZecCheckout.sol` (the Ashwings ZEC mint, created by
+the `Ashwings` constructor). Tests: `contracts/test/ZecCheckout.t.sol` and
+`contracts/test/AshwingsV2.t.sol` (mock precompile). Script:
 `contracts/script/AshwingZecCheckoutDemo.s.sol`. **Needs SIP-4 live.**
+
+**Ashwings v2 (2026-09-23).** Ashwings is capped at 10,000 and has one
+fixed price, payable in SOVA (`Ashwings.mint`, `priceWei` to `treasury`)
+or in ZEC through this checkout. The terms are constructor arguments
+with no setters, `Ashwings(treasury, zecPayee, priceWei, priceZat)`, each
+readable through a same-named getter (what `contracts/script/deploy-kit.sh`
+matches and verifies). `zecPayee` is the t-address string, decoded
+on-chain; its network sets minConf (t1/t3: 10, tm/t2: 3). The window is
+40 blocks. The treasury only receives. The constructor creates `AshwingsZecCheckout`, a
+`ZecCheckout` with one listing (#1) fixed at deploy (`list`/`update`
+always revert), so the buyer ABI below, the page and the relayer are
+unchanged: point them at `Ashwings.zecCheckout()` with listing 1. Two
+additions, both in the subclass:
+
+- **Supply holds.** A reservation holds one unit of the 10,000 until it
+  is claimed, or until `reservedAt + window + minConf + 96` Zcash blocks
+  (~2 h of grace after confirmations). A buyer who pays in the window and
+  claims in the grace cannot be sold out by SOVA mints. Expired holds are
+  released lazily (`sweep()`, called by `reserve` and by a sold-out SOVA
+  mint; anyone may call it). A claim after its hold was released still
+  mints while supply is left.
+- **Tags wrap** instead of running out, since the terms can never move to
+  fresh ones. Safe because at most 10,000 reservations can be live or
+  minted within any one hold period (< 99,999 tags), so a tag only comes
+  round again after its earlier order's window closed.
 
 ## The user story (Zashi / Zingo style wallet)
 
@@ -29,11 +56,13 @@ Prices are multiples of 0.001 ZEC. Each reservation gets a tag
 exactly `price + tag`. A (seller address, amount) pair therefore belongs
 to one reservation, ever. Many buyers can share one seller address. A
 late payment can't be claimed by the next buyer, which fixes the
-ZecEscrow reuse hazard. A reservation locks nothing scarce, so it is
-**free: no bond**. The `(txid, vout)` set stays in as a second
-one-payment-one-fill guard. Delivery calls Ashwings' public `mint()`
-and then transfers the owl, so **Ashwings.sol is unchanged** (parity
-155/155). Claim gas is about 140k at SIP-4 prices (151k with the mock).
+ZecEscrow reuse hazard. A reservation locks no address, so it is
+**free: no bond** (in Ashwings v2 it does hold one unit of supply for a
+bounded time; see above). The `(txid, vout)` set stays in as a second
+one-payment-one-fill guard. Delivery calls `Ashwings.mintForZec`, which
+only the checkout may call; the art is untouched (parity 155/155). Claim
+gas is about 128k with the mock precompile (`AshwingsV2.t.sol`,
+`testGasMintPaths`).
 
 We considered one fresh address per order (the ZecEscrow approach) and
 chose tags. Fresh addresses allow any amount ≥ price and give unlinkable
@@ -55,9 +84,13 @@ pool size, and a reused address carries the late-payment hazard.
   reorg deeper than `minConf` rolls Sova back too, but not anything done
   off Sova. The seller's address and sale amounts are public, so the
   seller should sweep them to shielded.
-- **Note:** Ashwings minting is free. Anyone can still mint one for gas.
-  This demo shows the payment rail, not scarcity. A ZEC-only edition
-  needs its own collection or a minter hook, which is Rob's call.
+- **Supply is shared.** SOVA mints and ZEC orders draw on the same
+  10,000. A reservation holds its unit only for its hold period; an
+  order paid in time but claimed after the hold, once the collection is
+  sold out, cannot mint (the ZEC reached the payee; a refund is
+  off-chain). Free reservations can hold the last units for a hold period
+  at a time (gas only). Open question: accept that, or add a small bond
+  or a cap on open holds.
 
 ## To run it live
 
@@ -67,8 +100,9 @@ pool size, and a reused address carries the late-payment hazard.
    (`new_stateful`), and a real Zcash-reorg rollback (§7). Without the
    rollback, the reorg guarantee above doesn't hold.
 2. A Sova testnet with the anchor rule and a Zcash-testnet follower.
-3. `deploy($ASHWINGS)`, then the seller runs `list(tm…, 25000000, 40, 3)`
-   (the script header has the commands).
+3. Deploy Ashwings with the real terms (`box/deploy-dapps.sh` /
+   `contracts/script/deploy-kit.sh`, `ASHWINGS_*` env); the checkout comes
+   with it. There is no listing step.
 4. The page and relayer: *built* (below). Point them at the testnet RPC,
    the deployed checkout and a zebrad; see "Page and relayer".
 5. One wallet dry run each for Zashi and Zingo: exact 8-decimal amount,
@@ -133,24 +167,29 @@ cd tools/checkout-relayer && npm ci
 npm run e2e        # SHOTS=/some/dir to keep the screenshots
 ```
 
-`e2e/run.mjs` starts anvil on a free port and deploys Ashwings and the
-checkout. It etches `MockZcash` at `0x…5a00` in place of the precompile,
-lists at 0.25 ZEC (window 40, minConf 3), and starts a fake zebrad and
-the relayer. It then drives headless Chromium through three flows:
+`e2e/run.mjs` starts anvil on a free port and deploys Ashwings (10 SOVA /
+0.25 ZEC, window 40, minConf 3; the checkout comes with it) and the
+market. It etches `MockZcash` at `0x…5a00` in place of the precompile, and
+starts a fake zebrad and the relayer. It then drives headless Chromium
+through five flows:
 
 - **A.** Relayer reserve → QR (decoded with jsQR and checked against the
   contract) → paste txid → 1/3 → claimable → claim → owl.
 - **B.** Injected wallet reserve → the watcher finds the payment at
   vout 1 and claims it on its own.
 - **C.** Phone width → wrong amount rejected.
+- **D.** `/ashwings/mint`: injected wallet mints for SOVA; supply, prices
+  and the ZEC hand-off link come from the contract.
+- **E.** `/ashwings/market`: list (approve + list), a second wallet buys
+  (seller +99%, 1% booked for the treasury), list and cancel another.
 
 Everything it starts, it kills. To click through it by hand instead:
-run `anvil` on 8545, deploy from account 0 (the page defaults to the
-checkout at `0xe7f1…0512`), etch and `init` the mock, and `list`. Then
-start the relayer and `npm run dev` in `site/`:
+run `anvil` on 8545 and `box/deploy-dapps.sh` (the pages default to the
+addresses it deploys: checkout `0x856e…eae5`), then etch and `init` the
+mock. Then start the relayer and `npm run dev` in `site/`:
 
 ```bash
-CHECKOUT=0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512 RELAYER_KEY=<anvil key #2> \
+CHECKOUT=0x856e4424f806D16E8CBC702B3c0F2ede5468eae5 RELAYER_KEY=<anvil key #2> \
   node tools/checkout-relayer/src/server.mjs
 # http://localhost:4321/ashwings/buy
 ```
@@ -164,8 +203,8 @@ To "pay", call `MockZcash(0x…5a00).pay(txid, script, quote)` and then
    `IZcash.sol`. The page and relayer call the same selectors the mock
    answers. `anchor()` alone isn't enough. This is the blocker from "To
    run it live" (§5 tx index, §7 reorg rollback).
-2. The checkout deployed and listed with the seller's real `tm…`
-   address. Serve the page with `?rpc=<testnet rpc>&co=<checkout>`
+2. Ashwings deployed with the real `tm…` payee (the checkout comes with
+   it). Serve the page with `?rpc=<testnet rpc>&co=<checkout>`
    (or edit the config block), and set `net=main` for `t1…` URIs later.
 3. The relayer with a funded key and `CORS_ORIGIN` set to the page's
    origin. Put it behind a proxy with `TRUST_PROXY=1`. For the watcher,

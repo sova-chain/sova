@@ -2,7 +2,9 @@
 
 M1 is a public Sova testnet anchored to Zcash testnet that strangers can
 mine. The infrastructure is the one Rob signed off in
-`docs/design/infra-m1.md` (infra-2: Hetzner + Cloudflare). All of it is
+`docs/design/infra-m1.md` (infra-2: Hetzner + Cloudflare), except the
+keeper miner, which runs on AWS (Rob, 2026-09-23; `docs/ops/keeper-aws.md`).
+All of it is
 **courtesy infra, never load-bearing**: bootnodes, a public RPC, a TAZ
 faucet and snapshot downloads. Consensus doesn't depend on any of it.
 
@@ -18,18 +20,19 @@ Everything else is a command, run from `infra/testnet/`.
 
 ---
 
-## 0. Open decisions [Rob]
+## 0. Decisions [Rob]
 
-The kit runs with the defaults below. Change any of them before step 1.
-Each one is a single line in `config.env`.
+The kit runs with the values below. Each one is a single line in
+`config.env`. Rows marked **Decided** are settled. Change an open one
+before step 1.
 
-| Decision | Options | Kit default | Where |
+| Decision | Options | Kit value | Where |
 | --- | --- | --- | --- |
-| **Emission schedule** | `sip3` (the public schedule) or `flat` (box/regtest's constant 6,250 SOVA) | `sip3` | `SOVA_EMISSION_SCHEDULE` |
-| **Chain ID at the reset** | Keep **82330**: the new genesis already gets a new fork ID, and chainlist doesn't change. Or take a fresh ID (e.g. 82331), so wallets don't mix up the old chain's nonces and history with the new one's. | keep 82330 | `SOVA_CHAIN_ID`, plus `chain.rs` at the reset |
-| **Keeper host** | A Hetzner CX33 (≈ €12/month, runs 24/7, off-limits to the public) or the laptop (free, but only when it's on). Without a mine-mode node somewhere, the chain doesn't advance (see B6). | CX33, commented out: **uncomment it to launch** | `SERVERS` |
-| **Volume sizes** | 150/100/60 GB (≈ €18/month). Or smaller: testnet zebrad state is 12 GB today, so 60/40/40 GB (≈ €8) still leaves room for a year. Or 0 (local disk; a rebuilt server then has to re-sync). | 150/100/60 | `SERVERS` (4th field) |
-| **Ashwings prices** | Mint price in SOVA (wei) and in ZEC (zatoshis) | **pending** | `ASHWINGS_PRICE_WEI`, `ASHWINGS_PRICE_ZAT` |
+| **Emission schedule** | `flat` (a constant 6,250 SOVA per epoch) or `sip3` (SIP-3's schedule) | **Decided 2026-09-23: `flat`.** SIP-3's schedule is for mainnet. | `SOVA_EMISSION_SCHEDULE` |
+| **Chain ID at the reset** | Keep **82330**: the new genesis already gets a new fork ID, and chainlist doesn't change. Or take a fresh ID (e.g. 82331), so wallets don't mix up the old chain's nonces and history with the new one's. | **Decided 2026-09-23: keep 82330.** | `SOVA_CHAIN_ID`, plus `chain.rs` at the reset |
+| **Keeper host** | Without a mine-mode node somewhere, the chain doesn't advance (see B5b). | **Decided 2026-09-23: AWS EC2** (`t3a.large`, Frankfurt, ≈ $70/month [est]), a bring-your-own host the kit adopts over SSH. Rob's step R3b, `docs/ops/keeper-aws.md`. The seed and RPC stay on Hetzner. | `SERVERS` (`sova-keeper-1:byo:<Elastic IP>:40:keeper:ubuntu`) |
+| **Volume sizes** | Testnet zebrad state is 12 GB today, so small volumes still leave room for a year. | **Decided 2026-09-23: seed 60 GB, RPC 40 GB, keeper 40 GB** (the keeper's is its AWS gp3 root disk). The faucet wasn't part of the decision: it's set to **40 GB** to match. | `SERVERS` (4th field) |
+| **Ashwings prices** | Mint price in SOVA (wei) and in ZEC (zatoshis) | **Decided 2026-09-23:** 625 SOVA, 0.05 ZEC; payee = a project testnet key (`tmQKm7CN5LaVg83YNRzXPLNy1qBMs8qcqNz`, keystore on the orchestrator's SSD), Rob's own t-address before mainnet | `ASHWINGS_PRICE_WEI`, `ASHWINGS_PRICE_ZAT`, `ASHWINGS_ZEC_PAYEE` |
 | **Market fee** | basis points | 100 (1%) | `MARKET_FEE_BPS` |
 | **Release tag** | The `vX.Y.Z` that goes live | `v0.1.0` | `SOVA_RELEASE_TAG` |
 
@@ -38,12 +41,14 @@ the chain starts (step 6).
 
 ---
 
-## A. Rob's steps (one sitting, about 45 minutes)
+## A. Rob's steps (one sitting, about 75 minutes with the AWS keeper)
 
 Only Rob creates accounts or spends money.
 
-**R1. Decisions.** Answer the table in section 0.
-*Hand back:* your choice for each row, or "defaults".
+**R1. Decisions.** Answer the open rows of the table in section 0. The
+emission schedule, chain ID, keeper host and volume sizes were decided on
+2026-09-23.
+*Hand back:* your choice for each open row, or "defaults".
 
 **R2. Domain (the ops-1 gate).** In Cloudflare → Websites, check that
 **sova.io** is listed as *Active*. If it isn't, click *Add a site*, then
@@ -55,14 +60,34 @@ there, and any `*` wildcard record: the kit creates its own names (see
 you'd rather use a different domain, give its name; the orchestrator
 changes five lines in `config.env`.
 
-**R3. Hetzner Cloud.** Set it up with hardware 2FA and the project email,
-with you as sole owner (D4).
+**R3. Hetzner Cloud** (the seed and RPC servers, and the faucet; the keeper
+is on AWS, R3b). Set it up with hardware 2FA and the project email, with
+you as sole owner (D4).
 1. Create the account and add a payment method.
 2. Create a Cloud project named `sova-testnet`.
 3. In the project, open Security → API Tokens → Generate API token.
    Choose **Read & Write**, name it `sova-testnet-kit`, and save it in the
    password manager.
 *Hand back:* nothing in chat. The token goes into `secrets.env` (R6).
+
+**R3b. AWS: the keeper instance** (Rob, 2026-09-23; about 30 minutes). Do
+R5 first, since this step uses the SSH key. The click-by-click steps are
+`docs/ops/keeper-aws.md`, section A. In short, in the AWS console, region
+**Europe (Frankfurt) eu-central-1**:
+1. Account hygiene: MFA on the root user, a **$100 monthly budget**
+   alert, and no access keys (the kit never calls AWS).
+2. *EC2 → Key Pairs → Import key pair* `sova-testnet-admin`: paste
+   `~/.ssh/sova_testnet_ed25519.pub` (the public key only).
+3. *EC2 → Security Groups → Create* `sova-testnet-keeper`. Inbound:
+   **SSH tcp/22 from My IP** and ICMP echo from anywhere, nothing else.
+   Outbound: the default (all).
+4. *EC2 → Launch instance* `sova-keeper-1`: **Ubuntu Server 24.04 LTS,
+   64-bit (x86)**, **t3a.large**, key pair `sova-testnet-admin`, security
+   group `sova-testnet-keeper`, **40 GiB gp3** (encrypted), termination
+   protection on, credit specification *Unlimited*, user data empty.
+5. *EC2 → Elastic IPs → Allocate*, then *Associate* it with
+   `sova-keeper-1`.
+*Hand back:* **the Elastic IP** (public, so chat is fine). Nothing else.
 
 **R4. Cloudflare.**
 1. **R2:** open R2 in the sidebar, enable it and accept the terms (the
@@ -112,9 +137,10 @@ open -e ~/.config/sova-testnet/secrets.env   # fill in the values, save
 addresses and numbers, so they're fine to give in chat and to commit:
 - Treasury: **done**, `0x8d0123637062f8c15FD6AFDe6F834C85f4AfeEDE`
   (your wallet; a multisig later).
-- ZEC payee: in your Zcash wallet, make a **testnet** transparent address
-  (it starts with `tm`). *Hand back:* the address.
-- Prices: *hand back* the mint price in SOVA and in ZEC (R1).
+- ZEC payee: **done for testnet**, a project testnet key
+  (`tmQKm7CN5LaVg83YNRzXPLNy1qBMs8qcqNz`). Before mainnet, give your own
+  mainnet t-address (`t1…`).
+- Prices: **done**, 625 SOVA and 0.05 ZEC.
 
 **R9. Announcement.** It's your call, after the "done" proof (step 9),
 under the partner-outreach rule. The orchestrator doesn't post anything.
@@ -139,6 +165,7 @@ under the partner-outreach rule. The orchestrator doesn't post anything.
    ./deploy.sh check                     # config.env: errors stop, open items are listed
    ./deploy.sh render --systemd-verify   # every host's files, linted and systemd-verified
    ./launch.sh --dry-run                 # the whole launch, printed, nothing touched
+   ./test/byo-dry-run.sh --systemd-verify  # the AWS keeper renders and is in every launch stage
    ```
 
 ### B1–B8. Launch: `./launch.sh`, re-run until it finishes
@@ -151,7 +178,7 @@ under the partner-outreach rule. The orchestrator doesn't post anything.
 | Step | What `launch.sh` runs | Stops when |
 | --- | --- | --- |
 | 1 check | `deploy.sh check`, and checks that the four cloud tokens are in the environment | config error, missing token |
-| 2 provision | `provision.sh up --my-ip`: the SSH key, two firewalls, volumes and servers (SSH is allowed only from this machine's IP) | — |
+| 2 provision | `provision.sh up --my-ip`: on Hetzner, the SSH key, two firewalls, volumes and servers (SSH is allowed only from this machine's IP). The AWS keeper is **adopted**: the kit logs in as `ubuntu`, applies the same `cloud-init.yaml` base (`host/byo-bootstrap.py`), then uses `sova-admin` like everywhere else | the keeper's IP is still a placeholder, or SSH to it fails (its security group) |
 | 3 hosts | `deploy.sh`: node keys and enodes, zebrad (pinned image), `sova` from the tagged Release (SHA256SUMS checked), the faucet, the keeper, cloudflared, units, the health timer | — |
 | 4 edge | `cloudflare.sh all` (DNS, tunnels, Worker, rate limit, R2), then `deploy.sh alerts` if Telegram is set | — |
 | 5 sync | reads every host's zebrad | **any zebrad is still syncing** (about half a day from zero) |
@@ -264,16 +291,18 @@ the gitleaks CI scan.
 
 | Server | Type / location [est] | Runs | Inbound |
 | --- | --- | --- | --- |
-| `sova-seed-1` | CX43, fsn1, 150 GB volume | zebrad, sova (follow-only, C5-enforcing) | SSH (admin IPs), Sova P2P 30303 tcp+udp, Zcash P2P 18233 |
-| `sova-rpc-1` | CX43, nbg1, 100 GB volume | zebrad, sova (follow-only, `SOVA_RPC_PROFILE=public`), cloudflared → `rpc.testnet.sova.io` | SSH only |
-| `sova-faucet-1` | CX33, hel1, 60 GB volume | zebrad, `sova-faucet` (its own hot key, D5), cloudflared → `faucet.testnet.sova.io` | SSH only |
-| `sova-keeper-1` | CX33, fsn1, 60 GB volume | zebrad, sova in **mine** mode, `sova-keeper` (disclosed, D8) | SSH only |
+| `sova-seed-1` | Hetzner CX43, fsn1, 60 GB volume | zebrad, sova (follow-only, C5-enforcing) | SSH (admin IPs), Sova P2P 30303 tcp+udp, Zcash P2P 18233 |
+| `sova-rpc-1` | Hetzner CX43, nbg1, 40 GB volume | zebrad, sova (follow-only, `SOVA_RPC_PROFILE=public`), cloudflared → `rpc.testnet.sova.io` | SSH only |
+| `sova-faucet-1` | Hetzner CX33, hel1, 40 GB volume | zebrad, `sova-faucet` (its own hot key, D5), cloudflared → `faucet.testnet.sova.io` | SSH only |
+| `sova-keeper-1` | **AWS EC2** t3a.large, eu-central-1, 40 GB gp3 root disk, Elastic IP (byo: Rob creates it, the kit adopts it) | zebrad, sova in **mine** mode, `sova-keeper` (disclosed, D8) | SSH only (admin IP), via its security group `sova-testnet-keeper` |
 
 | Script | What it does |
 | --- | --- |
 | `launch.sh` | The launch-day sequence below, re-runnable, `--dry-run`, `--go` |
-| `provision.sh` | Hetzner: SSH key, two firewalls, volumes and servers (`hcloud`), idempotent, `--dry-run` |
+| `provision.sh` | Hetzner: SSH key, two firewalls, volumes and servers (`hcloud`). Byo hosts (the AWS keeper): adopted over SSH. Idempotent, `--dry-run` |
 | `host/cloud-init.yaml` | First boot: admin user, SSH hardening, ufw, unattended upgrades, journald caps, Docker |
+| `host/byo-bootstrap.py` | Applies that same `cloud-init.yaml` over SSH to a byo host, so it matches a Hetzner one |
+| `test/byo-dry-run.sh` | Offline proof that a byo keeper validates, renders and appears in every launch stage |
 | `deploy.sh` → `host/setup-host.sh` | Per-role setup over SSH. `deploy.sh check` validates the config, `deploy.sh render` writes and lints every host's files locally |
 | `cloudflare.sh` | DNS, tunnels, the RPC firewall Worker, the rate-limit rule, R2 bucket + domain, teardown |
 | `epoch-base.sh` | Proposes, pins and records the epoch base B |
@@ -282,14 +311,17 @@ the gitleaks CI scan.
 | `publish.sh` | Join files and zebrad snapshots to R2 |
 | `smoke.sh` | Edge, host, mint and contract checks |
 
-**Budget** [est, 2026-09-22 prices; re-check at order time, because
+**Budget** [est, 2026-09-22/23 prices; re-check at order time, because
 Hetzner repriced three times in 2026]: 2 × CX43 ≈ €33, the CX33 faucet
-≈ €8–10, the volumes (150 + 100 + 60 GB at €0.0572/GB) ≈ €18, the keeper
-(CX33 + 60 GB) ≈ €12. Cloudflare is $0 ($5 if the RPC exceeds 100k
-requests a day), and R2 is under $1. **Total ≈ €72/month with the
-keeper.** Traffic: 20 TB per server is included in the EU. Hetzner has
-no hard spend cap, so the project's server limit is the practical
-ceiling.
+≈ €8–10, the volumes (60 + 40 + 40 GB at €0.0572/GB) ≈ €8, so Hetzner
+≈ €50/month. The AWS keeper (t3a.large + 40 GB gp3 + Elastic IP) is
+≈ $70/month, plus ~$3 once for the initial sync
+(`docs/ops/keeper-aws.md`, "Cost"). Cloudflare is $0 ($5 if the RPC
+exceeds 100k requests a day), and R2 is under $1. **Total ≈ €50 + $70 a
+month.** Traffic: 20 TB per server is included on Hetzner in the EU. On
+AWS, the first 100 GB out per month is free. Neither has a hard spend cap:
+the project's server limit is the ceiling on Hetzner, and the $100 budget
+alert (R3b) on AWS.
 
 ### Monitoring and alerts
 
@@ -300,7 +332,7 @@ alert.
 
 | Alert | Fires when | Meaning |
 | --- | --- | --- |
-| `disk_*` | `/` or `/var/lib/sova` ≥ 80% | Grow the volume (`hcloud volume resize`, then `resize2fs`) |
+| `disk_*` | `/` or `/var/lib/sova` ≥ 80% | Grow the volume (`hcloud volume resize`, then `resize2fs`; the AWS keeper: `docs/ops/keeper-aws.md`, "Operating it") |
 | `zebrad_down`, `zebrad_lag` | RPC dead, or more than 20 blocks behind `estimatedheight` | Our Zcash view is stale, so C5 stalls |
 | `sova_down` | Unit or RPC down | |
 | `epoch_lag` | (zebrad tip − B + 1) − sova head > 10 epochs (~12 min) | **"WE LAG (infra)"**: the reference node (public RPC) is ahead of us, so it's our problem. **"NETWORK STALLED (miner matter)"**: the reference is stuck too, and nobody is sealing. That's not an infra failure; check the keeper. On `rpc-1` itself there is no reference, so the alert says it can't tell. |
@@ -316,13 +348,18 @@ alert.
 - **One bad host:** `hcloud server delete <name>`, then
   `./provision.sh up` (the volume re-attaches, so zebrad state and the
   node key survive and the enode doesn't change), then
-  `./deploy.sh --only <name>`.
+  `./deploy.sh --only <name>`. For the AWS keeper: Rob rebuilds it with
+  the same Elastic IP (`docs/ops/keeper-aws.md`, "Rebuild"), then
+  `ssh-keygen -R <ip> -f out/known_hosts`, `./provision.sh up` and
+  `./deploy.sh --only sova-keeper-1`. That's a new keeper key, so it also
+  needs a new disclosure.
 - **Edge off:** `./cloudflare.sh teardown`. This removes the DNS records,
   tunnels, Worker, route and rate-limit rule. It keeps the R2 bucket.
 - **Everything off:** `./cloudflare.sh teardown`, then
   `./provision.sh teardown` (add `--keep-volumes` to keep the zebrad
   state). Both ask you to type the label, and they only touch resources
-  labelled `project=sova-testnet`.
+  labelled `project=sova-testnet`. Neither touches the AWS keeper: Rob
+  terminates it and **releases its Elastic IP** in the console.
 - **Emergency "project goes dark":** `systemctl stop sova-node` on our
   hosts. The network is unaffected by design; this is the drill.
 
@@ -330,21 +367,23 @@ alert.
 
 The M1 chain (genesis `sova-testnet-v0`) is abandoned at the reset. SIP-4
 §1, SIP-6 and SIP-7 activate from the new genesis, with no fork logic.
-Decide the open items in section 0 first (schedule, chain ID).
+Section 0 settled the schedule (`flat`) and the chain ID (82330) on
+2026-09-23.
 
 1. **Code on release:** SIP-4 §1, SIP-6 and SIP-7 merged;
    `SOVA_TESTNET_GENESIS_EXTRA_DATA` bumped to `sova-testnet-v1` (a new
    genesis hash and fork ID, so old nodes are filtered out by the ENR
    fork-ID check and the Status handshake); the pinned genesis-hash and
    fork-ID tests updated; SIP-7's `ZcashBlocks` predeploy added (code
-   only, zero balance); `SOVA_TESTNET_BOOTNODES` refreshed; the chain ID
-   changed too if R1 said so.
+   only, zero balance); `SOVA_TESTNET_BOOTNODES` refreshed. The chain ID
+   stays 82330 (Rob, 2026-09-23).
 2. **Tag** `vX+1` (B0).
 3. **Announce** at least 48 h ahead: the new tag, the new genesis hash,
    and (SIP-6 §1.3) that miners must re-`init` their keystores.
 4. **Roll out:** clear `SOVA_EPOCH_BASE` in `config.env`, set
-   `SOVA_RELEASE_TAG`, and set `SOVA_EMISSION_SCHEDULE=sip3` if M1 ran
-   `flat`. On each node host, wipe the Sova chain but **keep the node
+   `SOVA_RELEASE_TAG`, and keep `SOVA_EMISSION_SCHEDULE=flat` (Rob,
+   2026-09-23: SIP-3's schedule is for mainnet). On each node host,
+   including the AWS keeper, wipe the Sova chain but **keep the node
    key**:
    ```bash
    ssh … 'sudo systemctl stop sova-node && sudo find /var/lib/sova/node -mindepth 1 -maxdepth 1 ! -name discovery-secret -exec rm -rf {} +'

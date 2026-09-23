@@ -1,15 +1,29 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {AshwingsZecCheckout} from "./AshwingsZecCheckout.sol";
+import {ZcashAddress} from "./zcash/ZcashAddress.sol";
+
 /// @title Ashwings
 /// @notice Day-one native mint: fully on-chain generative pixel owls
-/// (Sova = owl), free to mint — you pay only gas, and on Sova every wei
-/// of gas traces back to destroyed ZEC. "Minted with destroyed money"
-/// is literal.
+/// (Sova = owl). 10,000 ever, at one fixed price, payable two ways:
+/// - in SOVA on Sova: {mint}, exactly `priceWei`, to `treasury`;
+/// - in ZEC on Zcash: the {zecCheckout} this contract creates (a
+///   ZecCheckout with one fixed listing). Reserve, pay the exact quote to
+///   the ZEC payee from any Zcash wallet, then claim with the txid; Sova
+///   reads the payment through the SIP-4 precompile. No bridge.
+/// Every wei of SOVA traces back to destroyed ZEC. "Minted with destroyed
+/// money" is literal.
 ///
-/// No owner, no admin, no mint fee, no metadata server: the SVG is
-/// generated and stored by the EVM itself, so the artifact lives
-/// exactly as long as the chain does.
+/// No owner, no admin, no setters, no metadata server: both prices, both
+/// payees and the cap are fixed at deploy (the treasury only receives), and the SVG is generated and
+/// stored by the EVM itself, so the artifact lives exactly as long as the
+/// chain does. SOVA paid for mints collects here; anyone may {withdraw} it,
+/// and it can only go to `treasury`.
+///
+/// Supply: totalSupply + zecHeld <= MAX_SUPPLY. `zecHeld` counts open ZEC
+/// reservations, so a buyer who has reserved and paid in time always gets
+/// an owl (see AshwingsZecCheckout for how holds expire).
 ///
 /// Art spec (design lab: contracts/design/ashwing24.py, the approved
 /// 24x24 redraw): a 24-row x 12-column left half is drawn and mirrored;
@@ -23,26 +37,137 @@ pragma solidity ^0.8.24;
 contract Ashwings {
     string public constant name = "Ashwings";
     string public constant symbol = "ASHW";
+    uint256 public constant MAX_SUPPLY = 10_000;
 
     event Transfer(address indexed from, address indexed to, uint256 indexed id);
     event Approval(address indexed owner, address indexed spender, uint256 indexed id);
     event ApprovalForAll(address indexed owner, address indexed operator, bool approved);
+    event Withdrawn(address indexed treasury, uint256 amount);
 
+    // Storage layout: slots 0..5 are the original collection's, in order
+    // (the parity test plants seeds at slot 5). New state goes after.
     uint256 public totalSupply;
     mapping(uint256 => address) public ownerOf;
     mapping(address => uint256) public balanceOf;
     mapping(uint256 => address) public getApproved;
     mapping(address => mapping(address => bool)) public isApprovedForAll;
     mapping(uint256 => bytes32) public seedOf;
+    /// @notice Supply held for open ZEC reservations (not yet claimed or expired).
+    uint256 public zecHeld;
+    /// @notice The Zcash t-address ZEC is paid to, as given at deploy.
+    string public zecPayee;
 
-    function mint() external returns (uint256 id) {
-        id = ++totalSupply;
-        seedOf[id] = keccak256(abi.encodePacked(msg.sender, id, block.prevrandao, blockhash(block.number - 1)));
-        ownerOf[id] = msg.sender;
-        unchecked {
-            balanceOf[msg.sender]++;
+    /// @notice Zcash blocks a ZEC quote holds: 40 = ~50 min.
+    uint32 public constant ZEC_WINDOW = 40;
+    /// @notice Payment depth before a ZEC claim, by the payee's network:
+    /// 10 on mainnet (~12.5 min), 3 on testnet / regtest.
+    uint16 public constant ZEC_MINCONF_MAINNET = 10;
+    uint16 public constant ZEC_MINCONF_TESTNET = 3;
+
+    // Getters below are functions (not public immutables) so the
+    // constructor parameters can carry the getter names: the deploy kit
+    // (contracts/script/deploy-kit.sh) matches args by name and reads each
+    // one back through its same-named getter.
+    uint256 private immutable _priceWei;
+    uint256 private immutable _priceZat;
+    address private immutable _treasury;
+    AshwingsZecCheckout private immutable _zecCheckout;
+
+    /// @param treasury Sova address that receives the SOVA (only receives:
+    /// it has no power over this contract).
+    /// @param zecPayee_ Zcash transparent address the ZEC is paid to: t1/t3
+    /// (mainnet, minConf 10) or tm/t2 (testnet and regtest, minConf 3).
+    /// @param priceWei SOVA price per owl, in wei.
+    /// @param priceZat ZEC price per owl, in zatoshis: a positive multiple
+    /// of 100,000 (0.001 ZEC); each order pays it plus a 1..99,999 zat tag.
+    constructor(address treasury, string memory zecPayee_, uint256 priceWei, uint256 priceZat) {
+        require(treasury != address(0), "ASHW: zero treasury");
+        require(priceZat <= type(uint64).max, "ASHW: priceZat too large");
+        (bytes20 payeeHash, bool p2sh, bool mainnet) = ZcashAddress.decode(zecPayee_);
+        _treasury = treasury;
+        _priceWei = priceWei;
+        _priceZat = priceZat;
+        zecPayee = zecPayee_;
+        _zecCheckout = new AshwingsZecCheckout(
+            uint64(priceZat), payeeHash, p2sh, ZEC_WINDOW, mainnet ? ZEC_MINCONF_MAINNET : ZEC_MINCONF_TESTNET
+        );
+    }
+
+    /// @notice SOVA price of one mint, in wei.
+    function priceWei() public view returns (uint256) {
+        return _priceWei;
+    }
+
+    /// @notice ZEC price of one mint, in zatoshis (plus a per-order tag).
+    function priceZat() external view returns (uint256) {
+        return _priceZat;
+    }
+
+    /// @notice Receives SOVA mint payments (via {withdraw}). Nothing else.
+    function treasury() public view returns (address) {
+        return _treasury;
+    }
+
+    /// @notice The ZEC mint: reserve(1, you), pay, claim.
+    function zecCheckout() public view returns (AshwingsZecCheckout) {
+        return _zecCheckout;
+    }
+
+    /// @notice Mint one owl to yourself for exactly `priceWei` SOVA.
+    function mint() external payable returns (uint256 id) {
+        require(msg.value == _priceWei, "ASHW: wrong price");
+        if (totalSupply + zecHeld >= MAX_SUPPLY) {
+            // Expired ZEC holds may be all that is left: free them first.
+            if (zecHeld != 0) _zecCheckout.sweep();
+            require(totalSupply + zecHeld < MAX_SUPPLY, "ASHW: sold out");
         }
-        emit Transfer(address(0), msg.sender, id);
+        id = _mint(msg.sender);
+    }
+
+    /// @notice Send all collected SOVA to `treasury`. Anyone may call.
+    function withdraw() external {
+        uint256 amount = address(this).balance;
+        (bool ok,) = _treasury.call{value: amount}("");
+        require(ok, "ASHW: withdraw failed");
+        emit Withdrawn(_treasury, amount);
+    }
+
+    // ---------------------------------------------------------------
+    // ZEC checkout hooks (callable by zecCheckout only)
+    // ---------------------------------------------------------------
+
+    modifier onlyZecCheckout() {
+        require(msg.sender == address(_zecCheckout), "ASHW: not the checkout");
+        _;
+    }
+
+    /// @notice Hold one unit of supply for a new ZEC reservation.
+    function holdForZec() external onlyZecCheckout {
+        require(totalSupply + zecHeld < MAX_SUPPLY, "ASHW: sold out");
+        zecHeld++;
+    }
+
+    /// @notice Release `n` holds of expired, unclaimed reservations.
+    function releaseZecHolds(uint256 n) external onlyZecCheckout {
+        zecHeld -= n;
+    }
+
+    /// @notice Mint for a paid ZEC reservation, from its hold if it still
+    /// has one, else from free supply.
+    function mintForZec(address to, bool fromHold) external onlyZecCheckout returns (uint256) {
+        if (fromHold) zecHeld--;
+        else require(totalSupply + zecHeld < MAX_SUPPLY, "ASHW: sold out");
+        return _mint(to);
+    }
+
+    function _mint(address to) internal returns (uint256 id) {
+        id = ++totalSupply;
+        seedOf[id] = keccak256(abi.encodePacked(to, id, block.prevrandao, blockhash(block.number - 1)));
+        ownerOf[id] = to;
+        unchecked {
+            balanceOf[to]++;
+        }
+        emit Transfer(address(0), to, id);
     }
 
     // ---------------------------------------------------------------

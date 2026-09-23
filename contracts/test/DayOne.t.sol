@@ -58,7 +58,9 @@ contract AshwingsTest is Test {
     address bob = address(0xB0B);
 
     function setUp() public {
-        r = new Ashwings();
+        // Free SOVA price (0) so mint() is the plain call; the paid paths
+        // are covered in AshwingsV2.t.sol.
+        r = new Ashwings(address(0x7EA5), "tmJymvcUCn1ctbghvTJpXBwHiMEB8P6wxNV", 0, 25_000_000);
     }
 
     function testMintAssignsOwnershipAndSeed() public {
