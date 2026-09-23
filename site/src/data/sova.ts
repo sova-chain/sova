@@ -32,7 +32,7 @@ export const notClaims = [
   ['Not a privacy chain', 'Execution is public. Privacy is how you fund your way in.'],
   ['No private smart contracts', 'Every call and state change is visible.'],
   ['Not a Zcash L2', 'A sidechain with its own consensus, anchored by burns.'],
-  ['No peg today', 'ZEC stays on Zcash. Wrapped ZEC is planned (SIP-5), custodied by NEAR, and always called custody.'],
+  ['No peg in the protocol', 'ZEC stays on Zcash. Wrapped ZEC is a separate, custodial Sova Labs product (wz.cash), not part of the network.'],
   ['SOVA is gas', 'Not governance, not staking, not a claim on anything.'],
 ] as const;
 
@@ -81,14 +81,19 @@ export const sips = [
     note: 'Build approved. Code in review; ships with the public testnet.',
   },
   {
-    n: 5, id: 'sip-5', file: null, title: 'Wrapped ZEC via NEAR', st: 'planned',
-    sum: 'ZEC held by NEAR’s MPC network and minted as wZEC on Sova. Custody, labelled as custody, with the vault monitored from Zcash.',
-    note: 'Number reserved; text comes after SIP-4.',
+    n: 5, id: 'sip-5', file: 'sip-5-withdrawn.md', title: 'Wrapped ZEC', st: 'withdrawn',
+    sum: 'Wrapped ZEC is a custodial product operated by Sova Labs at wz.cash, not a rule every node runs.',
+    note: 'Withdrawn: moved out of the protocol.',
   },
   {
-    n: 6, id: 'sip-6', file: 'sip-6-draft-sealer-signatures.md', title: 'Sealer signatures', st: 'draft',
+    n: 6, id: 'sip-6', file: 'sip-6-draft-sealer-signatures.md', title: 'Sealer signatures', st: 'accepted',
     sum: 'The sealer signs its block with the key its burn credits, so every block names its sealer and light clients get a signature to verify.',
-    note: 'Design only, decisions open. Planned for the testnet reset, with SIP-4.',
+    note: 'Accepted. Implementation pending; ships at the testnet reset, with SIP-4.',
+  },
+  {
+    n: 7, id: 'sip-7', file: 'sip-7-draft-zcash-events.md', title: 'Zcash pool state and events', st: 'accepted',
+    sum: 'Contracts read the value in each shielded pool and every change to it; each Sova block records a summary of its Zcash block in state.',
+    note: 'Accepted. Implementation pending; targets the testnet reset.',
   },
 ] as const;
 

@@ -14,11 +14,12 @@ const flow = [
   { k: 'draft', t: 'A pull request adding a file to sips/.' },
   { k: 'accepted', t: 'Signed off. The rules or numbers are locked.' },
   { k: 'frozen', t: 'Final. Changing a rule takes a new SIP.' },
+  { k: 'withdrawn', t: 'Taken out of the protocol; the number is not reused.' },
 ];
 ---
 <Site
   title="SIPs: Sova Improvement Proposals"
-  description="The Sova Improvement Proposals: burn format, epochs and settlement, emission, the Zcash state precompile, wrapped ZEC via NEAR, sealer signatures. Status and one line each."
+  description="The Sova Improvement Proposals: burn format, epochs and settlement, emission, the Zcash state precompile, sealer signatures, Zcash pool state and events. Status and one line each."
   current="/sips"
   cmd="ls sips/"
   status="pre-release · the SIP texts are in the repository"
@@ -35,7 +36,7 @@ const flow = [
       </li>
     ))}
   </ol>
-  <p class="dim"># the texts: <a href={repo.sips}>sips/ in the repository</a> · the paper cites SIP-1 to SIP-4: <a href="/paper#refs">references</a></p>
+  <p class="dim"># the texts: <a href={repo.sips}>sips/ in the repository</a> · the paper cites SIP-1 to SIP-4, SIP-6 and SIP-7: <a href="/paper#refs">references</a></p>
 
   <h2>how a SIP moves</h2>
   <ol class="flow">

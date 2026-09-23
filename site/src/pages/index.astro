@@ -9,7 +9,8 @@
 // own keyframes (generated below) on one 16 s loop, and every line is in the
 // DOM from the start, so nothing reflows. Reduced motion shows the finished
 // transcript. The only script is a one-line inline redirect that sends old
-// paper links (/#s4, /#refs, ...) to /paper.
+// paper links (/#s4, /#refs, ...) to /paper, where the v4 ids still exist as
+// spans beside the v5 sections (see components/Paper.astro).
 import Site from '../layouts/Site.astro';
 import Tag from '../components/Tag.astro';
 import { EDGE_LINE, sips, repo } from '../data/sova';

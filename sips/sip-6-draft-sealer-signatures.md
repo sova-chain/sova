@@ -1,6 +1,6 @@
 # SIP-6: Sealer Signatures
 
-- Status: **Draft, design only** (2026-09-23). No code yet. Needs Rob's
+- Status: **Accepted** (Rob, 2026-09-23: recommended defaults in §10); implementation pending, ships at the testnet reset. Earlier: **Draft, design only**. Needs Rob's
   calls in "Decisions for Rob" (§10) before a build is dispatched.
 - Numbering: **SIP-6, not SIP-5.** `sips/` holds SIP-1 to SIP-4, but
   SIP-5 is already reserved for the wZEC peg (`docs/WORKPLAN.md` row z-2,

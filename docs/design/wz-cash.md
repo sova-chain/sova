@@ -1,3 +1,27 @@
+# wz.cash — wrapped ZEC, a Sova Labs product
+
+> **Decided by Rob, 2026-09-23.** Wrapped ZEC is **not part of the Sova
+> protocol** and is not a SIP. It ships as **wZcash, a Sova Labs product at
+> wz.cash**, explicitly custodial: the network makes no guarantees about it.
+> sova.io links to it from an ecosystem page, so "the network everyone owns"
+> and "a product Sova Labs operates" stay clearly separate.
+>
+> Decisions that override the draft below:
+> - **Channel (§4.2):** a **Sova Labs relayer** tells the NEAR vault about
+>   burns on Sova. This makes Sova Labs a trusted party in the custody chain,
+>   and that is disclosed. NEAR foreign-chain verification or a Sova light
+>   client on NEAR (after SIP-6) remain the path to reduce that trust later.
+> - **Fees (§4.6, §10.6):** Sova Labs takes **a small operating fee** on
+>   wraps and unwraps (amount to be set in the product), on top of cost.
+> - **Monitoring:** Sova watches the vault from Zcash only (SIP-4); no
+>   NEAR-reading precompile.
+> - All other §10 recommendations are accepted as drafted (tagged-P2SH
+>   deposits, Sova plans each payout, pro-rata after a proven theft,
+>   immutable vault, testnet caps, no re-mint of unpaid withdrawals).
+>
+> The text below is the design as drafted (it was written as "SIP-5"); read
+> "SIP-5" as "this product spec".
+
 # SIP-5: Wrapped ZEC (wZEC), custodied by NEAR Chain Signatures
 
 - Status: **Draft, design only** (2026-09-23). No peg code exists. Needs

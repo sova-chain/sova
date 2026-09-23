@@ -2,24 +2,27 @@
 // Direction 4, "Paper": /v/2009 refined into an actual 2008-era cryptography
 // paper. Letter-size sheets on a grey surround, Computer Modern (CMU Serif,
 // subset to this page's glyphs and renamed "Sova Paper Serif" as the OFL's
-// reserved-name clause asks of modified versions), justified and hyphenated, numbered
-// sections, display equations and references. The figures borrow /v/terminal's
-// treatment: small gold-on-black terminal panels, and they are the only motion.
+// reserved-name clause asks of modified versions), justified and hyphenated,
+// numbered sections, display equations, line-drawn figures and references.
 // On wide screens a sticky table of contents sits in the left margin, outside
 // the sheets; narrower screens get a "Contents" disclosure on the first sheet.
-// Every fact is sourced in site/README.md ("Where each claim comes from").
-// The subset font covers printable ASCII plus  · × Σ — ’ “ ” … → − (and
-// no-break space): prose outside the terminal panels must stay inside that set.
-// Section ids are stable anchors, not numbers: s1 … s10 keep the content they
-// always had, and the section added in site v4 (6, contracts that see Zcash)
-// is s-zcash, so s6 … s10 now read as sections 7 … 11.
+//
+// The copy is paper v5 (docs/paper/sova-paper-v5.md), set as written; the
+// section map, figure specs and the source of every claim are in
+// docs/paper/v5-notes.md and site/README.md ("Where each claim comes from").
+//
+// Glyphs: the subset font covers printable ASCII plus · × Σ — ’ “ ” … → −
+// (and no-break space). Every rendered character on this page, figure text
+// included, must stay inside that set. There is no U+230A/B, so floor
+// brackets are drawn with borders.
+//
+// Anchors: section ids are names, not numbers (#intro … #conclusion, #refs).
+// The ids of the v4 paper (#s1 … #s10, #s3-1 … #s5-2, #s-zcash, #fig4) are
+// kept as empty spans at the equivalent place, so old links still land;
+// #fig1 … #fig3 are the v5 figures, which show the same ideas as v4's.
 import Direction from '../layouts/Direction.astro';
 import DirSwitch from './DirSwitch.astro';
-import { owlAscii } from '../data/owl-ascii';
-import {
-  EDGE_LINE, REWARD_SOVA, HALVING_EPOCHS, SLOW_START_EPOCHS, MIN_BURN_ZAT,
-  transcript, footerLinks, repo, sips, WORDMARK_PATHS, twoBurnerSplit as split, sitePages as allPages,
-} from '../data/sova';
+import { EDGE_LINE, footerLinks, repo, sips, WORDMARK_PATHS, sitePages as allPages } from '../data/sova';
 
 interface Props {
   /** The public homepage: indexable, no design-direction switcher. */
@@ -29,65 +32,39 @@ const { home = false } = Astro.props;
 const TITLE = 'Sova: An EVM Chain That Can See Zcash';
 // Links out of the paper: home first, then every page but this one.
 const sitePages = [{ href: '/', label: 'Home' }, ...allPages.filter((p) => p.href !== '/paper')];
-const owl = owlAscii('onchain-4.svg');
 // Reference URL of a SIP's text on GitHub (data/sova.ts `sips[].file`).
+// SIP-7 is not in that list yet, so its file is named here.
 const sipUrl = (n: number) => repo.blob(`sips/${sips.find((s) => s.n === n)!.file}`);
+const sip7Url = repo.blob('sips/sip-7-draft-zcash-events.md');
 
 // Table of contents: every numbered heading on the page, in order.
-const toc: { id: string; n: string; t: string; sub?: { id: string; n: string; t: string }[] }[] = [
-  { id: 's1', n: '1', t: 'Introduction' },
-  { id: 's2', n: '2', t: 'Burns' },
-  { id: 's3', n: '3', t: 'Epochs and Sealing', sub: [
-    { id: 's3-1', n: '3.1', t: 'Settlement as Withdrawals' },
-    { id: 's3-2', n: '3.2', t: 'The Sealing Ladder' },
-    { id: 's3-3', n: '3.3', t: 'Finality' },
-  ] },
-  { id: 's4', n: '4', t: 'Issuance' },
-  { id: 's5', n: '5', t: 'Verification', sub: [
-    { id: 's5-1', n: '5.1', t: 'Every Import Path' },
-    { id: 's5-2', n: '5.2', t: 'The Tip and Late Joiners' },
-  ] },
-  { id: 's-zcash', n: '6', t: 'Contracts That See Zcash' },
-  { id: 's6', n: '7', t: 'Networking' },
-  { id: 's7', n: '8', t: 'Privacy at the Edges' },
-  { id: 's8', n: '9', t: 'What Sova Is Not' },
-  { id: 's9', n: '10', t: 'Running a Node' },
-  { id: 's10', n: '11', t: 'Lineage' },
+const toc: { id: string; n: string; t: string }[] = [
+  { id: 'intro', n: '1', t: 'Introduction' },
+  { id: 'burns', n: '2', t: 'Burns' },
+  { id: 'epochs', n: '3', t: 'Epochs' },
+  { id: 'issuance', n: '4', t: 'Issuance' },
+  { id: 'sealing', n: '5', t: 'Sealing' },
+  { id: 'network', n: '6', t: 'Network' },
+  { id: 'verification', n: '7', t: 'Verification' },
+  { id: 'reading-zcash', n: '8', t: 'Reading Zcash' },
+  { id: 'privacy', n: '9', t: 'Privacy' },
+  { id: 'calculations', n: '10', t: 'Calculations' },
+  { id: 'conclusion', n: '11', t: 'Conclusion' },
   { id: 'refs', n: '', t: 'References' },
 ];
 
-// Figure 2 starts from a fixed, clearly simulated state so it renders without
-// JS; the script then keeps it going with random burns. Zcash #103 is Sova #1,
-// as in the regtest transcript (base height 103).
-const demo = [
-  { burns: 2, zec: '0.0213' },
-  { burns: 0, zec: '0' },
-  { burns: 1, zec: '0.0042' },
-  { burns: 3, zec: '0.0371' },
-  { burns: 1, zec: '0.0108' },
-].map((d, i) => ({ ...d, z: 103 + i, s: 1 + i, k: 4 - i }));
-const demoLog = [
-  'zcash #106 <i>3 burns</i> 0.0371 ZEC destroyed',
-  'sova  #4   sealed by rank 0  +6,250 SOVA to 3 burners',
-  'zcash #107 <i>1 burn</i> 0.0108 ZEC destroyed',
-  'sova  #5   sealed by rank 0  +6,250 SOVA to 1 burner',
-];
-
-// Figure 3: the two-node ladder scenario (docs/WORKPLAN.md C3,
-// docs/design/gossip-v1.md "v2 as built"), as a timeline.
-const ladder = [
-  ['epoch E', 'ranked  r0 (w=5)  r1 (w=2)', 'rung of rank r = r x step'],
-  ['t = 0', 'r0 may seal', 'r0 is frozen (SIGSTOP)'],
-  ['t = step', 'r1 may seal', 'r1 seals B1, head -> B1'],
-  ['later', 'r0 resumes', 'r0 seals B0 on B1’s parent'],
-  ['arbiter', 'prefer (rank, hash)', 'B0 wins, head -> B0'],
-  ['result', '1-block reorg, tip only', 'heights and balances converge'],
-];
-
-// Figure 4's withdrawal list: the paid amounts of Figure 4 in gwei.
-const wds = [
-  { i: '0', who: 'addr(r0)', gwei: '4,642,857,142,858' },
-  { i: '1', who: 'addr(r1)', gwei: '1,607,142,857,142' },
+// References [1]-[10], as in the paper.
+const refs: { a: string; t: string; href: string; extra?: string }[] = [
+  { a: 'D. Hopwood, S. Bowe, T. Hornby, N. Wilcox', t: 'Zcash Protocol Specification', href: 'https://zips.z.cash/protocol/protocol.pdf' },
+  { a: 'Sova', t: 'SIP-1: The Burn Transaction Format', href: sipUrl(1) },
+  { a: 'Sova', t: 'SIP-2: Epochs, Rewards, and Settlement', href: sipUrl(2) },
+  { a: 'Sova', t: 'SIP-3: Emission Schedule', href: sipUrl(3) },
+  { a: 'Sova', t: 'SIP-4: Zcash State Precompile', href: sipUrl(4) },
+  { a: 'S. Nakamoto', t: 'Bitcoin: A Peer-to-Peer Electronic Cash System', extra: '2008', href: 'https://bitcoin.org/bitcoin.pdf' },
+  { a: 'V. Buterin', t: 'Ethereum: A Next-Generation Smart Contract and Decentralized Application Platform', extra: '2014', href: 'https://ethereum.org/whitepaper' },
+  { a: 'A. Dietrichs et al.', t: 'EIP-4895: Beacon chain push withdrawals as operations', href: 'https://eips.ethereum.org/EIPS/eip-4895' },
+  { a: 'Sova', t: 'SIP-6: Sealer Signatures', extra: '(draft)', href: sipUrl(6) },
+  { a: 'Sova', t: 'SIP-7: Zcash Pool State and Events', extra: '(draft)', href: sip7Url },
 ];
 ---
 <Direction
@@ -111,12 +88,7 @@ const wds = [
     <nav class="toc" aria-label="Contents">
       <p class="toc-h">Contents</p>
       <ol class="toc-l">
-        {toc.map((s) => (
-          <li>
-            <a href={`#${s.id}`} data-toc={s.id}><span class="tn">{s.n}</span>{s.t}</a>
-            {s.sub && <ol>{s.sub.map((x) => <li><a href={`#${x.id}`} data-toc={x.id}><span class="tn">{x.n}</span>{x.t}</a></li>)}</ol>}
-          </li>
-        ))}
+        {toc.map((s) => <li><a href={`#${s.id}`} data-toc={s.id}><span class="tn">{s.n}</span>{s.t}</a></li>)}
       </ol>
       <p class="toc-h">Elsewhere</p>
       <ul class="toc-x">
@@ -129,70 +101,56 @@ const wds = [
     <article class="sheet" aria-label="Page 1">
       <header class="titleblock">
         <h1>{TITLE}</h1>
-        <p class="author">The Sova contributors</p>
+        <p class="author">Sova</p>
         <p class="meta">sova.io</p>
-        <p class="meta">pre-release draft · September 2026</p>
+        <p class="meta">September 2026 (pre-release draft)</p>
         <nav class="plinks" aria-label="More about Sova">
           {sitePages.map((p, i) => <>{i > 0 && <span aria-hidden="true"> · </span>}<a href={p.href}>{p.label}</a></>)}
         </nav>
       </header>
 
-      <section class="abstract" aria-label="Abstract">
-        <p><b>Abstract.</b> Sova is an EVM chain that can see Zcash. Every Sova
-        node runs its own Zcash node, and every Sova block commits to the Zcash
-        block it follows, so a contract can check that a ZEC payment was mined, and
-        how deep, against Zcash itself. The ZEC stays on Zcash, in the hands of
-        whoever it was paid to. The chain is issued by burn-mining: a user destroys
-        ZEC on Zcash, and the next Sova block mints SOVA, the chain’s gas token, to
-        that user, so every SOVA in existence traces to ZEC that was provably
-        destroyed. Every node verifies every mint, and every answer about Zcash,
-        against its own Zcash node. Execution is transparent; privacy stays at the
-        edges, where shielded ZEC funds a payment or a burn. Sova is the
-        programmable edge of the shielded pool.</p>
+      <section class="abstract" id="abstract" aria-label="Abstract">
+        <p><b>Abstract.</b> Contracts that accept ZEC today accept a wrapped
+        token instead: a claim on coins that a custodian holds on Zcash, on a
+        chain whose contracts cannot see Zcash at all. We propose an EVM chain
+        whose every node runs a Zcash node, so that a contract can verify a ZEC
+        payment against Zcash itself and the ZEC can stay where it was paid. The
+        chain’s gas, SOVA, is issued only by destroying ZEC in a transparent
+        Zcash transaction that names an EVM address. Burns are grouped by Zcash
+        block, one Sova block per Zcash block, so Zcash’s proof-of-work orders
+        Sova. Each epoch’s fixed reward is shared among that epoch’s burners in
+        proportion to the ZEC each destroyed, and the largest burner assembles
+        the block. Every node re-derives every mint from its own Zcash node and
+        rejects a block that disagrees, and every Sova block commits to the Zcash
+        block it settles, so a precompile can answer a contract’s questions about
+        the transparent Zcash chain with the same answer on every node. Privacy
+        is at the funding edge, where a shielded balance funds a burn or a
+        payment; execution is public.</p>
       </section>
 
       <details class="toc-m">
         <summary>Contents</summary>
         <ol class="toc-l">
-          {toc.map((s) => (
-            <li>
-              <a href={`#${s.id}`}><span class="tn">{s.n}</span>{s.t}</a>
-              {s.sub && <ol>{s.sub.map((x) => <li><a href={`#${x.id}`}><span class="tn">{x.n}</span>{x.t}</a></li>)}</ol>}
-            </li>
-          ))}
+          {toc.map((s) => <li><a href={`#${s.id}`}><span class="tn">{s.n}</span>{s.t}</a></li>)}
         </ol>
       </details>
 
-      <h2 id="s1">1. Introduction</h2>
-      <p>Shielded ZEC is digital cash: it moves with no ledger trail and no
-      permission [1]. Money becomes more useful when programs can react to it: a
-      sale, a swap, a subscription, an agent paying its own way. The usual route is
-      to wrap ZEC onto another chain, which puts the coins in a custodian’s hands
-      and leaves the contracts there blind to Zcash. Sova instead runs an EVM beside
-      Zcash, with no change to Zcash. Each Sova node runs a Zcash node, so a
-      contract can confirm a ZEC payment against Zcash itself (Section 6).</p>
-      <p>The chain’s native asset, SOVA, pays for gas and is earned one way, by
-      destroying ZEC (Sections 2 to 4). Sova runs no proof-of-work of its own. It
-      is burn-mined and PoW-anchored: Zcash’s proof-of-work orders its blocks.</p>
-
-      <h2 id="s2">2. Burns</h2>
-      <p>A burn is one transparent Zcash transaction [2]. It pays at least {MIN_BURN_ZAT} zatoshis
-      to <code>76a914&nbsp;00…00&nbsp;88ac</code>, a script whose key hash is twenty
-      zero bytes, which no one can spend. It carries one OP_RETURN output: the magic
-      “SV”, a version byte, the 20-byte EVM address to credit, and 32 upgrade-signal
-      bits. Its weight is the ZEC destroyed. A malformed burn is not an error; it
-      is simply not a burn. Figure 1 shows a burn becoming SOVA.</p>
-
-      <figure class="fig" id="fig1">
-        <div class="term">
-          <pre id="t1"><code>{transcript.map((l) => (
-            <span class={`ln ${l.k}`} data-k={l.k}><span class="on"></span><span class="off">{l.k === 'cmd' ? '$ ' : l.k === 'note' || l.k === 'mint' ? '# ' : ''}{l.t}</span></span>
-          ))}</code></pre>
-        </div>
-        <figcaption><span class="fl">Figure 1:</span> A burn becoming SOVA on a local
-        regtest network. Values from a logged run, shortened.</figcaption>
-      </figure>
-
+      <span id="s1"></span>
+      <h2 id="intro">1. Introduction</h2>
+      <p>Shielded ZEC is digital cash: it moves without a ledger trail and
+      without permission [1]. It cannot run programs. To let a program react to
+      a ZEC payment, the practice has been to move the value onto a chain that
+      runs programs: a custodian, a multisignature group or a bridge takes the
+      ZEC and issues a token in its place. The token is a claim on the
+      custodian, and the contracts that use it see the token, never the coin.
+      They cannot tell whether a payment happened on Zcash, and the holder has
+      given up what made the cash worth programming: possession of it. The
+      arrangement works as long as the custodian is honest and solvent, and
+      everything built on it inherits that condition.</p>
+      <p>What is needed is a chain whose contracts can verify a Zcash payment
+      directly, so that the payment can be made on Zcash, to the payee, in the
+      payee’s own keys; and whose own asset comes into existence without anyone
+      holding anything on the other side.</p>
       <span class="folio" aria-hidden="true">1</span>
     </article>
 
@@ -200,66 +158,87 @@ const wds = [
     <article class="sheet" aria-label="Page 2">
       <p class="runhead" aria-hidden="true"><i>{TITLE}</i><span>pre-release draft</span></p>
 
-      <h2 id="s3">3. Epochs and Sealing</h2>
-      <p>One Zcash block is one epoch, and each epoch gets exactly one Sova block
-      [3]. From a base height <i>B</i>, the block for epoch <i>E</i> sits at Sova
-      height <i>E</i>&nbsp;−&nbsp;<i>B</i>&nbsp;+&nbsp;1. The epoch’s burners rank by
-      weight; the top burner seals the block, and lower ranks may seal on a timeout
-      ladder if it is absent. An epoch with no burns still gets its block, and mints
-      nothing (Figure 2).</p>
+      <p>In this paper, we propose an EVM chain that runs beside Zcash and reads
+      it. Every Sova node runs its own Zcash node. The chain’s asset, SOVA, is
+      issued only when ZEC is destroyed in a Zcash transaction that names the
+      address to credit: the burn is the mining act, and afterward the ZEC
+      exists for no one. Burns are grouped by Zcash block, one Sova block per
+      Zcash block, so Sova’s order is Zcash’s, and every Sova block commits to
+      the Zcash block it settles. Because every node derives every mint from
+      Zcash, a node can also answer a contract’s question about Zcash
+      deterministically, and that is what lets a contract verify a payment.
+      Sova changes nothing in Zcash and posts nothing to it.</p>
 
-      <figure class="fig" id="fig2">
-        <div class="term stream-wrap">
-          <p class="demo-tag">DEMO · simulated · not a live network</p>
-          <div class="stream" id="stream" aria-hidden="true">
-            <span class="lane z">zcash</span>
-            <span class="lane s">sova</span>
-            <div class="cols" id="cols">
-              {demo.map((d) => (
-                <div class="col" style={`--k:${d.k}`}>
-                  <div class="zb"><span class="n">#{d.z}</span><br />{d.burns
-                    ? <><span class="b">{d.burns} burn{d.burns > 1 ? 's' : ''}</span><br />{d.zec} ZEC</>
-                    : <>no burns<br />&nbsp;</>}</div>
-                  <span class="link in"></span>
-                  <div class={`sb in ${d.burns ? 'mint' : 'empty'}`}><span class="n">sova #{d.s}</span><br />{d.burns ? `+${REWARD_SOVA} SOVA` : '0 minted'}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-          <pre class="slog" id="log" aria-hidden="true" set:html={demoLog.map((l) => l.replace(/^(zcash #\d+|sova  #\d+)/, '<b>$1</b>')).join('\n')} />
-        </div>
-        <figcaption><span class="fl">Figure 2:</span> Each Zcash block is followed by one
-        Sova block, which mints {REWARD_SOVA} SOVA if the Zcash block carried burns and
-        nothing if it did not. <i>Simulated</i>: random burns, 75&nbsp;s blocks shown at
-        30×.</figcaption>
+      <span id="s2"></span>
+      <h2 id="burns">2. Burns</h2>
+      <p>We define a burn as one transparent Zcash transaction [1, 2] that
+      destroys ZEC and names the EVM address to credit. It pays at least 1,000
+      zatoshis to the eater script <code>76a914&nbsp;00…00&nbsp;88ac</code>, a
+      standard pay-to-public-key-hash output whose key hash is twenty zero bytes.
+      No preimage of that hash is known, so the value is unspendable. The
+      transaction carries exactly one OP_RETURN output of 29 bytes: the
+      two-byte magic “SV”, a version byte, the 20-byte EVM address, and 32
+      signal bits for upgrade signaling. The burn’s weight is the ZEC it
+      destroys, summed over its eater outputs (Figure 1). The Zcash fee is paid
+      to Zcash miners as usual and is not weight.</p>
+
+      <figure class="fig" id="fig1">
+        <svg class="dia" viewBox="0 0 420 262" role="img" aria-label="A burn transaction: one transparent input of 0.0210 ZEC; outputs are the eater, 0.0200 ZEC, which is the weight; the payload, an OP_RETURN script of 29 bytes; and change of 0.0008 ZEC. The fee of 0.0002 ZEC goes to the Zcash miner. The payload script is 6a 1b, the magic SV, version 01, the 20-byte EVM address to credit, and 32 signal bits.">
+          <defs>
+            <marker id="f1a" viewBox="0 0 8 8" refX="7.5" refY="4" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0.8 L8 4 L0 7.2 z" class="ah" /></marker>
+          </defs>
+          <text x="0" y="12" class="h">input</text>
+          <text x="150" y="12" class="h">outputs</text>
+          <text x="410" y="12" class="h g" text-anchor="end">weight</text>
+
+          <rect x="0.5" y="22.5" width="117" height="44" class="bx" />
+          <text x="10" y="40">t-addr</text>
+          <text x="10" y="58">0.0210 ZEC</text>
+          <text x="0" y="90" class="sm">fee 0.0002 ZEC</text>
+          <text x="0" y="105" class="sm">to the Zcash miner,</text>
+          <text x="0" y="120" class="sm">not weight</text>
+
+          <path d="M118 44.5 H133.5 V148.5" class="ln" />
+          <path d="M133.5 44.5 H148" class="ln" marker-end="url(#f1a)" />
+          <path d="M133.5 96.5 H148" class="ln" marker-end="url(#f1a)" />
+          <path d="M133.5 148.5 H148" class="ln" marker-end="url(#f1a)" />
+
+          <rect x="150.5" y="22.5" width="269" height="44" class="bx gb" />
+          <text x="160" y="40" class="b">eater</text>
+          <text x="410" y="40" class="g" text-anchor="end">0.0200 ZEC</text>
+          <text x="160" y="58" class="mono">76a914 00…00 88ac</text>
+
+          <rect x="150.5" y="74.5" width="269" height="44" class="bx" />
+          <text x="160" y="92" class="b">payload</text>
+          <text x="410" y="92" class="dim" text-anchor="end">0 ZEC</text>
+          <text x="160" y="110" class="sm">OP_RETURN script, 29 bytes</text>
+
+          <rect x="150.5" y="126.5" width="269" height="44" class="bx" />
+          <text x="160" y="144" class="b">change</text>
+          <text x="410" y="144" text-anchor="end">0.0008 ZEC</text>
+          <text x="160" y="162" class="sm">t-addr</text>
+
+          <text x="0" y="202" class="h">the payload script, byte by byte</text>
+          <rect x="0.5" y="210.5" width="71" height="26" class="bx" />
+          <rect x="71.5" y="210.5" width="46" height="26" class="bx" />
+          <rect x="117.5" y="210.5" width="52" height="26" class="bx" />
+          <rect x="169.5" y="210.5" width="176" height="26" class="bx gb" />
+          <rect x="345.5" y="210.5" width="74" height="26" class="bx" />
+          <text x="36" y="228" class="mono" text-anchor="middle">6a 1b</text>
+          <text x="94.5" y="228" text-anchor="middle">“SV”</text>
+          <text x="143.5" y="228" class="mono" text-anchor="middle">01</text>
+          <text x="257.5" y="228" class="g" text-anchor="middle">EVM address, 20 bytes</text>
+          <text x="382.5" y="228" text-anchor="middle">32 bits</text>
+          <text x="36" y="253" class="xs" text-anchor="middle">OP_RETURN</text>
+          <text x="94.5" y="253" class="xs" text-anchor="middle">magic</text>
+          <text x="143.5" y="253" class="xs" text-anchor="middle">version</text>
+          <text x="257.5" y="253" class="xs" text-anchor="middle">the address to credit</text>
+          <text x="382.5" y="253" class="xs" text-anchor="middle">signal</text>
+        </svg>
+        <figcaption><span class="fl">Figure 1:</span> A burn: one transparent
+        Zcash transaction. The eater output is the weight; the payload names the
+        address to credit.</figcaption>
       </figure>
-
-      <h3 id="s3-1">3.1 Settlement as Withdrawals</h3>
-      <p>The mint needs no new transaction type and no change to the EVM’s
-      executor. An epoch’s rewards enter the chain as the block’s{' '}
-      <i>withdrawals</i>, the balance-credit list Ethereum added in its Shanghai
-      upgrade [5], inherited unchanged from the execution layer [3]. Withdrawal{' '}
-      <i>i</i> is an index, a validator index of 0 (a reserved marker), the
-      burner’s address and an amount in gwei, in rank order. The list is a pure
-      function of the epoch’s burns: rank them, apply (1) and (2) of Section 4,
-      emit one entry per burner (Figure 4). A block claiming epoch <i>E</i> must
-      carry exactly that list; any other list makes it invalid.</p>
-
-      <h3 id="s3-2">3.2 The Sealing Ladder</h3>
-      <p>Burners rank by weight, heaviest first; equal weights go to the smaller
-      txid, compared byte by byte. Rank 0 seals. If it is absent, rank <i>r</i> may
-      seal once <i>r</i>&nbsp;×&nbsp;<i>step</i> has passed since the epoch became
-      sealable (the draft step is 15&nbsp;s). A node that did not burn in the epoch
-      never seals it. The timeouts serve liveness only, never validity or
-      preference. Among an epoch’s valid blocks every node prefers the lower rank,
-      then the lower block hash, so a rank-0 block that arrives late displaces an
-      on-time rank-1 block (Figure 3). Such a micro-reorg is bounded to the tip
-      epoch; below the tip nothing is reconsidered.</p>
-      <p>No block carries a label naming its sealer. The one-tenth tip makes each
-      rank’s withdrawal list distinct, so a receiver recovers the sealer’s rank
-      from the withdrawals alone. The rule is <i>the relay delivers, the arbiter
-      decides</i>: peers only hand over blocks, and each node’s own fork-choice
-      arbiter is the only thing that moves its head.</p>
 
       <span class="folio" aria-hidden="true">2</span>
     </article>
@@ -268,80 +247,91 @@ const wds = [
     <article class="sheet" aria-label="Page 3">
       <p class="runhead" aria-hidden="true"><i>{TITLE}</i><span>pre-release draft</span></p>
 
-      <figure class="fig" id="fig3">
-        <div class="term scroll-x">
-          <table class="ladder">
-            <caption class="sr">Sealing ladder timeline, two-node regtest scenario</caption>
-            <tbody>
-              {ladder.map((r, i) => <tr class={i === 0 ? 'hd' : i === ladder.length - 1 ? 'res' : ''}><th scope="row">{r[0]}</th><td>{r[1]}</td><td>{r[2]}</td></tr>)}
-            </tbody>
-          </table>
-        </div>
-        <figcaption><span class="fl">Figure 3:</span> The sealing ladder, as the
-        two-node scenario in the nightly test suite runs it. Rank 1 keeps the chain
-        live while rank 0 is frozen; rank 0’s late block still wins at fork choice.
-        Weights as in Figure 4.</figcaption>
+      <p>The rule is total: every transaction either is a burn or is not. A
+      transaction with no payload output, two payload outputs, an undecodable
+      payload or too little eater value is not a burn, and no node treats it as
+      an error. A burn needs nothing from Sova when it is made, and Zcash needs
+      to know nothing about Sova: the burn is recognized after the fact by
+      anyone who reads the Zcash chain with the rule above.</p>
+      <p>Weight is linear in the ZEC destroyed, so splitting a burn into several
+      transactions, or several addresses, earns exactly what one burn of the
+      same total earns. There is no advantage in appearing to be many
+      burners.</p>
+
+      <span id="s3"></span>
+      <h2 id="epochs">3. Epochs</h2>
+      <p>To order Sova without a proof-of-work of its own, we use Zcash’s. One
+      Zcash block is one epoch, and each epoch has exactly one Sova block. From
+      a base height <i>B</i>, the Zcash height at which the network began, the
+      Sova block for epoch <i>E</i> sits at Sova height <i>E</i>&nbsp;−&nbsp;<i>B</i>&nbsp;+&nbsp;1 [3]. That block settles the
+      burns confirmed in the epoch’s Zcash block: it credits their addresses,
+      and nothing else can. Zcash blocks arrive about every 75 seconds, and so
+      do Sova’s.</p>
+
+      <p>Each Sova block also commits to the hash of the Zcash block it settles,
+      in a header field the EVM inherited from Ethereum’s beacon chain and that
+      Sova had no other use for [5]: Zcash is Sova’s beacon (Figure 2). The
+      parent hash chains Sova blocks to one another, and the anchor chains each
+      of them to a Zcash block, whose own header chains to every Zcash block
+      before it. A Sova block therefore names one Zcash history, and a Sova
+      history is as hard to rewrite as the Zcash history it names.</p>
+
+      <figure class="fig" id="fig2">
+        <svg class="dia" viewBox="0 0 420 192" role="img" aria-label="Two chains. Zcash blocks E−1, E and E+1 carry 2 burns, no burns and 1 burn. Below them, Sova blocks h−1, h and h+1 credit 2 addresses, mint nothing, and credit 1 address. Each chain links to its parent by hash; each Sova block points up to the Zcash block it settles, its anchor. h = E − B + 1.">
+          <defs>
+            <marker id="f2a" viewBox="0 0 8 8" refX="7.5" refY="4" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0.8 L8 4 L0 7.2 z" class="ah" /></marker>
+            <marker id="f2g" viewBox="0 0 8 8" refX="7.5" refY="4" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0.8 L8 4 L0 7.2 z" class="ahg" /></marker>
+          </defs>
+
+          <rect x="0.5" y="0.5" width="108" height="44" class="bx" />
+          <rect x="138.5" y="0.5" width="108" height="44" class="bx" />
+          <rect x="276.5" y="0.5" width="108" height="44" class="bx" />
+          <text x="10" y="19">Zcash <tspan class="it">E</tspan>−1</text>
+          <text x="10" y="36" class="sm">2 burns</text>
+          <text x="148" y="19">Zcash <tspan class="it">E</tspan></text>
+          <text x="148" y="36" class="sm dim">no burns</text>
+          <text x="286" y="19">Zcash <tspan class="it">E</tspan>+1</text>
+          <text x="286" y="36" class="sm">1 burn</text>
+          <path d="M138 22.5 H111" class="ln" marker-end="url(#f2a)" />
+          <path d="M276 22.5 H249" class="ln" marker-end="url(#f2a)" />
+          <path d="M419 22.5 H387" class="ln dash" marker-end="url(#f2a)" />
+
+          <path d="M40.5 96 V47" class="ln g" marker-end="url(#f2g)" />
+          <path d="M178.5 96 V47" class="ln g" marker-end="url(#f2g)" />
+          <path d="M316.5 96 V47" class="ln g" marker-end="url(#f2g)" />
+          <text x="47" y="76" class="sm g it">anchor</text>
+          <text x="185" y="76" class="sm g it">anchor</text>
+          <text x="323" y="76" class="sm g it">anchor</text>
+
+          <rect x="0.5" y="98.5" width="108" height="44" class="bx" />
+          <rect x="138.5" y="98.5" width="108" height="44" class="bx dash" />
+          <rect x="276.5" y="98.5" width="108" height="44" class="bx" />
+          <text x="10" y="117">Sova <tspan class="it">h</tspan>−1</text>
+          <text x="10" y="134" class="sm">credits 2</text>
+          <text x="148" y="117">Sova <tspan class="it">h</tspan></text>
+          <text x="148" y="134" class="sm dim">mints nothing</text>
+          <text x="286" y="117">Sova <tspan class="it">h</tspan>+1</text>
+          <text x="286" y="134" class="sm">credits 1</text>
+          <path d="M138 120.5 H111" class="ln" marker-end="url(#f2a)" />
+          <path d="M276 120.5 H249" class="ln" marker-end="url(#f2a)" />
+          <path d="M419 120.5 H387" class="ln dash" marker-end="url(#f2a)" />
+
+          <path d="M24 164.5 H2" class="ln" marker-end="url(#f2a)" />
+          <text x="32" y="168.5" class="sm">parent hash</text>
+          <text x="419" y="168.5" class="sm" text-anchor="end"><tspan class="it">h</tspan> = <tspan class="it">E</tspan> − <tspan class="it">B</tspan> + 1</text>
+          <path d="M12.5 191 V176" class="ln g" marker-end="url(#f2g)" />
+          <text x="32" y="188" class="sm">anchor: the hash of the Zcash block it settles</text>
+        </svg>
+        <figcaption><span class="fl">Figure 2:</span> One Sova block per Zcash
+        block. The parent hash chains Sova blocks to each other; the anchor
+        chains each to the Zcash block it settles.</figcaption>
       </figure>
 
-      <h3 id="s3-3">3.3 Finality</h3>
-      <p>Sova’s ordering is Zcash’s. Fork choice follows each node’s own Zcash
-      view, so a Zcash reorganization implies the matching Sova reorganization,
-      and finality is Zcash confirmation depth [3]. When a node’s Zcash follower
-      reports a reorganization, the node unwinds its expectations and candidates
-      above the fork point and derives them again from the replacement chain.
-      Producers never mark the tip final: “safe” trails the head by 32 epochs and
-      “finalized” by 64.</p>
-
-      <h2 id="s4">4. Issuance</h2>
-      <p>The epoch reward <i>R</i> is {REWARD_SOVA} SOVA after a {SLOW_START_EPOCHS}-epoch
-      slow start, like Zcash’s own launch, and it halves every {HALVING_EPOCHS} epochs,
-      Zcash’s halving interval [4]. Nine tenths of <i>R</i> is shared by
-      weight <i>w<sub>i</sub></i>; the remainder, one tenth plus rounding dust, tips the
-      sealer. Everything is computed in gwei, so the shares sum to <i>R</i> exactly:</p>
-
-      <div class="eq" role="math" aria-label="s sub i equals the floor of nine tenths R times w sub i over the sum of all weights">
-        <span class="eqbody"><i>s<sub>i</sub></i><span class="op">=</span><span class="fl-l" aria-hidden="true"></span><span class="frac"><span>9</span><span>10</span></span><i>R</i><span class="op">·</span><span class="frac"><span><i>w<sub>i</sub></i></span><span>Σ<sub><i>j</i></sub> <i>w<sub>j</sub></i></span></span><span class="fl-r" aria-hidden="true"></span></span>
-        <span class="eqno">(1)</span>
-      </div>
-      <div class="eq" role="math" aria-label="the sealer tip t equals R minus the sum of all shares">
-        <span class="eqbody"><i>t</i><span class="op">=</span><i>R</i><span class="op">−</span><span>Σ<sub><i>i</i></sub></span><i>s<sub>i</sub></i></span>
-        <span class="eqno">(2)</span>
-      </div>
-
-      <p class="noindent">For the 0-based epoch index <i>E</i>, the schedule is</p>
-
-      <div class="eq cases-eq" role="math" aria-label="R of E equals 0.3125 times E plus 1 when E is less than 20,000, and 6,250 over 2 to the k otherwise">
-        <span class="eqbody"><i>R</i>(<i>E</i>)<span class="op">=</span><span class="brace" aria-hidden="true">{'{'}</span><span class="cases"><span><span>0.3125&nbsp;(<i>E</i>&nbsp;+&nbsp;1)</span><span class="cond"><i>E</i>&nbsp;&lt;&nbsp;20,000</span></span><span><span>6,250&nbsp;/&nbsp;2<sup><i>k</i></sup></span><span class="cond">otherwise</span></span></span></span>
-        <span class="eqno">(3)</span>
-      </div>
-
-      <p class="noindent">in SOVA, where the era <i>k</i> is <i>E</i> divided by
-      1,680,000, rounded down. Halvings round down to whole gwei; era 42 pays 1&nbsp;gwei and era 43 pays nothing, so
-      total issuance can never exceed about 20.94 billion SOVA. A burn-less epoch
-      mints nothing and its reward is never made up. Fees follow EIP-1559: the base
-      fee is burned, and priority fees and the tip pay sealers. Local test networks
-      pay a flat <i>R</i>; the full schedule is built and switches on with the
-      public testnet. Figure 4 is a two-burner epoch.</p>
-
-      <figure class="fig" id="fig4">
-        <div class="term scroll-x">
-          <table class="split">
-            <caption class="sr">Two-burner reward split, regtest</caption>
-            <thead><tr><th scope="col">rank</th><th scope="col">weight</th><th scope="col">tip (2)</th><th scope="col">share (1)</th><th scope="col">paid, SOVA</th></tr></thead>
-            <tbody>
-              {split.rows.map((r) => (
-                <tr><td>{r.rank}</td><td>{r.weight}</td><td>{r.tip}</td><td>{r.share}</td><td class="paid">{r.paid}</td></tr>
-              ))}
-            </tbody>
-            <tfoot><tr><td colspan="4">total, <i>R</i></td><td class="paid sum">{split.total}</td></tr></tfoot>
-          </table>
-          <pre class="wds"><span class="c"># the Sova block’s withdrawals, rank order</span>
-{wds.map((w) => <><span class="k">[{w.i}]</span> validator_index 0  {w.who}  <span class="v">{w.gwei}</span> gwei{'\n'}</>)}</pre>
-        </div>
-        <figcaption><span class="fl">Figure 4:</span> Paid amounts from a two-node regtest
-        run, and the withdrawals that pay them. The 5&nbsp;:&nbsp;2 weights and the tip are
-        reconstructed with (1) and (2), which reproduce the logged amounts exactly.</figcaption>
-      </figure>
+      <p><span id="s3-3"></span>Fork choice follows each node’s own view of
+      Zcash. If Zcash reorganizes, the Sova blocks that settled the replaced
+      Zcash blocks are unwound and derived again from the replacement chain, and
+      finality on Sova is Zcash confirmation depth [3]. An epoch with no burns
+      still has its block, which mints nothing.</p>
 
       <span class="folio" aria-hidden="true">3</span>
     </article>
@@ -350,69 +340,53 @@ const wds = [
     <article class="sheet" aria-label="Page 4">
       <p class="runhead" aria-hidden="true"><i>{TITLE}</i><span>pre-release draft</span></p>
 
-      <h2 id="s5">5. Verification</h2>
-      <p>A block claiming an epoch is valid only if its withdrawals equal the
-      settlement one of the epoch’s ranks would produce, as each node re-derives it
-      from its own Zcash node [3]. No signature, committee or oracle vouches for a
-      mint: a peer cannot mint what your own Zcash node does not justify. Burners can
-      check their own burns, txid by txid, with{' '}
-      <code>sova-miner report --verify-rpc</code>.</p>
+      <span id="s4"></span>
+      <h2 id="issuance">4. Issuance</h2>
+      <p>SOVA is created only by settling burns [4]. The genesis allocates
+      nothing, so every SOVA in existence was minted to someone who destroyed
+      ZEC. Each epoch has a scheduled reward <i>R</i>, and the burners of that
+      epoch share it. Nine tenths of <i>R</i> is divided among them in
+      proportion to weight; the remainder, one tenth of <i>R</i> plus the
+      rounding dust, is a tip to the burner who seals the block (Section 5).
+      All arithmetic is in gwei with floor division, so the shares sum to <i>R</i> exactly:</p>
 
-      <h3 id="s5-1">5.1 Every Import Path</h3>
-      <p>The check is a consensus rule. It runs in the node’s{' '}
-      <code>validate_block_pre_execution</code>, which the underlying client, reth,
-      calls on every path a block can take into the chain: a block delivered at
-      the tip, a short gap fetched from peers, and history synced in bulk.
-      Withdrawals sit in the block body, so no execution is needed to check them.
-      An earlier version ran the check only on blocks delivered through the Engine
-      API, which would have let a syncing node accept any mint in history. Design
-      review caught that gap, and it was closed before any public network.</p>
+      <div class="eq" role="math" aria-label="s sub i equals the floor of nine tenths times R times w sub i over the sum over j of w sub j">
+        <span class="eqbody"><i>s<sub>i</sub></i><span class="op">=</span><span class="fl-l" aria-hidden="true"></span><span class="frac"><span>9</span><span>10</span></span><span class="op">·</span><i>R</i><span class="op">·</span><span class="frac"><span><i>w<sub>i</sub></i></span><span>Σ<sub><i>j</i></sub> <i>w<sub>j</sub></i></span></span><span class="fl-r" aria-hidden="true"></span></span>
+        <span class="eqno">(1)</span>
+      </div>
+      <div class="eq" role="math" aria-label="t equals R minus the sum over i of s sub i">
+        <span class="eqbody"><i>t</i><span class="op">=</span><i>R</i><span class="op">−</span><span>Σ<sub><i>i</i></sub></span><i>s<sub>i</sub></i></span>
+        <span class="eqno">(2)</span>
+      </div>
 
-      <h3 id="s5-2">5.2 The Tip and Late Joiners</h3>
-      <p>A Sova block can legitimately arrive seconds before a node’s own Zcash
-      node has the block it settles. Heights above the node’s scanned watermark
-      are therefore deferred rather than rejected: such a block competes at the
-      lowest trust and is ranked properly once the scan catches up. Every height at
-      or below the watermark is enforced, however old, and nothing is pruned from
-      the check. A node that joins late scans Zcash first and syncs Sova history
-      only as far as its scan reaches, so every historical mint is checked, never
-      trusted. A test node joining 150 blocks behind catches up this way and checks the oldest mint as it goes.</p>
+      <p>The reward does not grow with the ZEC burned. More burners in an epoch
+      divide the same <i>R</i> more thinly, so competition sets the price of a
+      SOVA in destroyed ZEC and never the supply. A burner who wants a larger
+      share must destroy more ZEC; nothing else counts. An epoch with no burns
+      mints nothing, and its reward is never made up: there is no accumulated
+      reward waiting for the first burn after a quiet stretch, and the amount
+      minted tracks demand.</p>
+      <p>The schedule, for the 0-based epoch index <i>E</i>, is</p>
 
-      <h2 id="s-zcash">6. Contracts That See Zcash</h2>
-      <p>Consensus already reads Zcash: every node derives each mint from its own
-      Zcash node (Section 5). SIP-4 gives contracts the same view [6]. Each Sova
-      block commits to the hash of the Zcash block its epoch settles, and a
-      precompile answers questions about the transparent Zcash chain up to that
-      block: the committed height and hash, a block’s hash and time, where a
-      transaction was mined and how deep, what a transparent output pays and to
-      which script, and whether a transaction is a burn. Every answer is a pure
-      function of the committed chain, so two nodes that accept the same block
-      compute the same answers, whatever their own Zcash tip. A node that cannot
-      answer yet holds the block and retries; it never guesses. “Not found” is a
-      result, the same on every honest node. Confirmations count from the
-      committed block, and each contract sets its own minimum depth.</p>
-      <p>Shielded amounts, recipients and memos stay private, from contracts as from
-      everyone. A shielded wallet can still pay a transparent address, and that one
-      output is public. That is enough to sell for ZEC: a buyer reserves an order,
-      pays the seller’s own Zcash address from any wallet, and the contract delivers
-      once the payment is deep enough. The ZEC goes from buyer to seller on Zcash.
-      A Zcash reorganization deeper than the payment unwinds the Sova blocks built on
-      it. The anchor rule is in the node; the precompile is built, in review, and
-      ships with the public testnet.</p>
+      <div class="eq cases-eq" role="math" aria-label="R of E equals 0.3125 times E plus 1 SOVA if E is less than 20,000, and otherwise 6,250 over 2 to the k SOVA, where k is the floor of E over 1,680,000">
+        <span class="eqbody"><i>R</i>(<i>E</i>)<span class="op">=</span><span class="brace" aria-hidden="true">{'{'}</span><span class="cases"><span><span class="cv"><span class="nw">0.3125&nbsp;·&nbsp;(<i>E</i>&nbsp;+&nbsp;1)&nbsp;SOVA</span></span><span class="cond">if&nbsp;<i>E</i>&nbsp;&lt;&nbsp;20,000</span></span><span><span class="cv"><span class="nw">6,250&nbsp;/&nbsp;2<sup><i>k</i></sup>&nbsp;SOVA,</span> <span class="nw"><i>k</i>&nbsp;=&nbsp;<span class="flr"><i>E</i>&nbsp;/&nbsp;1,680,000</span></span></span><span class="cond">otherwise</span></span></span></span>
+        <span class="eqno">(3)</span>
+      </div>
 
-      <h2 id="s6">7. Networking</h2>
-      <p>Nodes speak <code>sova/1</code>, an RLPx sub-protocol with three messages:{' '}
-      <code>Announce</code> (height and hash, sent to every peer when a node accepts
-      a block), <code>GetBlock</code> and <code>Block</code>. Blocks are pulled,
-      not pushed, so a peer cannot flood a node with bodies, and no{' '}
-      <code>sova/1</code> message can move a head: a received block goes through
-      the same validation as any other, and only the local arbiter chooses.</p>
-      <p>Peers find each other with discv4 and discv5 on one UDP port, starting
-      from bootnodes that are always set explicitly, so a Sova node never falls
-      back to Ethereum’s. The testnet has its own genesis, which allocates nothing
-      and gives the network its own fork ID; a discovered peer joins only once its
-      fork ID checks out, which keeps Sova apart from Ethereum and every other
-      network built on the same client.</p>
+      <p class="noindent">with halvings rounded down to whole gwei. The first
+      20,000 epochs ramp the reward from 0.3125 SOVA to 6,250 in equal steps,
+      the slow start Zcash itself used at launch, so that the first days, when
+      the tooling is new and SOVA has no market, cannot be captured cheaply. The
+      reward then halves every 1,680,000 epochs, which is Zcash’s own halving
+      interval, because an epoch is a Zcash block. Era 42 pays 1 gwei per epoch
+      and era 43 pays nothing. Total issuance can therefore never exceed
+      20,937,503,124.97 SOVA, and it reaches that only if every epoch has a burn
+      (Section 10).</p>
+      <p>As the reward halves, sealers are paid by fees. Fees follow EIP-1559
+      [7]: the base fee is destroyed, and priority fees, with the tip, go to the
+      sealer. The schedule can change only by a soft fork that burners signal in
+      the burns themselves, through the 32 signal bits of Section 2, and adopt by
+      burn weight; the tally rule is future work.</p>
 
       <span class="folio" aria-hidden="true">4</span>
     </article>
@@ -421,72 +395,333 @@ const wds = [
     <article class="sheet" aria-label="Page 5">
       <p class="runhead" aria-hidden="true"><i>{TITLE}</i><span>pre-release draft</span></p>
 
-      <h2 id="s7">8. Privacy at the Edges</h2>
-      <p>The EVM is transparent: every call and state change is public. A burn is
-      transparent too, but it can be funded by a z→t transfer out of the shielded
-      pool, so the SOVA it earns need not link to an identity. Three things stay
-      visible: burns from one address link to each other, the deshielding transfer
-      is public, and so are payouts. A ZEC payment that a contract checks works the
-      same way: the payer can fund it from the shielded pool, and only the output to
-      the seller is public.</p>
+      <span id="s3-2"></span>
+      <h2 id="sealing">5. Sealing</h2>
+      <p>Some burner has to assemble the epoch’s block: choose transactions,
+      execute them, and publish. We rank the epoch’s burners by weight,
+      heaviest first, ties to the smaller transaction id compared byte by byte
+      [3]. Rank 0 seals. If rank 0 has not sealed, rank <i>r</i> may seal once <i>r</i>&nbsp;×&nbsp;<i>step</i> has passed since the epoch became
+      sealable; the draft step is 15 seconds. A node that did not burn in the
+      epoch never seals it. The ladder is for liveness only: it says who may
+      seal now, and nothing about which block is valid or preferred.</p>
+      <p><span id="s3-1"></span>The rewards enter the chain as the block’s
+      withdrawals, the balance-credit list Ethereum added at Shanghai [8], one
+      entry per burner in rank order with the amount in gwei. The list is a pure
+      function of the epoch’s burns and the sealer’s rank: rank the burners,
+      apply (1) and (2), emit one entry each. A block claiming epoch <i>E</i> must carry exactly the list that some rank of <i>E</i> produces, or it is
+      invalid. Because the tip goes to the sealer, each rank’s list is
+      different, and a node recovers the sealer’s rank from the withdrawals
+      alone.</p>
+      <p>Among an epoch’s valid blocks every node prefers the lower rank, then
+      the lower block hash. A rank-0 block that arrives after a rank-1 block was
+      accepted displaces it (Figure 3): the node reorganizes one block, at the
+      tip, and builds on rank 0. Below the tip nothing is reconsidered, because
+      the next epoch has already been built on top. Preference is decided by the
+      receiving node from the block’s content, never by the sender and never by
+      arrival time, so two nodes that see the same blocks choose the same
+      head.</p>
 
-      <h2 id="s8">9. What Sova Is Not</h2>
-      <p>Sova is not a privacy chain and has no private smart contracts. It is not a
-      Zcash L2: it has its own consensus and posts nothing to Zcash. There is no peg:
-      ZEC stays on Zcash, where contracts can see it (Section 6). A planned wrapped
-      ZEC would be held by NEAR’s MPC network, and called custody every time. SOVA
-      is gas. It is not governance, not staking and not a claim on anything.</p>
+      <figure class="fig" id="fig3">
+        <svg class="dia" viewBox="0 0 420 250" role="img" aria-label="One epoch with two ranked burners, rank 0 with weight 5 and rank 1 with weight 2. At time 0 rank 0 may seal but is silent. At time step, rank 1 seals B1 and the head moves to B1. Later, rank 0 seals B0 on the same parent, and the head moves to B0. B1 is displaced: a one-block reorganization at the tip, and the next epoch builds on B0.">
+          <defs>
+            <marker id="f3a" viewBox="0 0 8 8" refX="7.5" refY="4" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0.8 L8 4 L0 7.2 z" class="ah" /></marker>
+          </defs>
+          <path d="M104.5 6 V124 M196.5 6 V124 M312.5 6 V124" class="guide" />
 
-      <h2 id="s9">10. Running a Node</h2>
-      <p>One command, <code>./box/up.sh</code>, starts a regtest Zcash node, a Sova
-      node and a miner on one machine. A first build from source takes 11 to 25
-      minutes, depending on the machine; after that, a run mints within 30 seconds. The source and the specifications
-      are public at <a href="https://github.com/sova-chain/sova">github.com/sova-chain/sova</a>, and the public testnet comes next. Ashwings (Figure 5), owls drawn entirely by their contract, will be a
-      day-one mint.</p>
+          <text x="0" y="28">rank 0, <tspan class="it">w</tspan> = 5</text>
+          <path d="M104 24.5 H300" class="ln dot" />
+          <text x="112" y="17" class="sm dim it">may seal: silent</text>
+          <rect x="312.5" y="13.5" width="40" height="22" class="bx gb" />
+          <text x="332.5" y="29" class="g" text-anchor="middle">B0</text>
 
-      <figure class="fig" id="fig5">
-        <div class="term owlfig">
-          <div class="sub">
-            <img src="/ashwings/onchain-4.svg" width="96" height="96" alt="A gold pixel owl, as rendered by the Ashwings contract" loading="lazy" decoding="async" />
-            <span class="subl">(a)</span>
-          </div>
-          <div class="sub">
-            <pre class="owl" aria-hidden="true" set:html={owl} />
-            <span class="subl">(b)</span>
-          </div>
-        </div>
-        <figcaption><span class="fl">Figure 5:</span> An Ashwing, a fully on-chain NFT:
-        (a) the SVG the contract itself returns, (b) the same 24&nbsp;×&nbsp;24 pixels as
-        text. No owner, no admin key, no metadata server. Free to mint; gas is paid in SOVA.</figcaption>
+          <text x="0" y="64">rank 1, <tspan class="it">w</tspan> = 2</text>
+          <path d="M104 60.5 H190" class="ln dot" />
+          <text x="112" y="53" class="sm dim it">waits</text>
+          <rect x="196.5" y="49.5" width="40" height="22" class="bx" />
+          <text x="216.5" y="65" text-anchor="middle">B1</text>
+
+          <text x="0" y="100">head</text>
+          <rect x="104.5" y="85.5" width="92" height="22" class="bx dash" />
+          <rect x="196.5" y="85.5" width="116" height="22" class="bx" />
+          <rect x="312.5" y="85.5" width="107" height="22" class="bx gb" />
+          <text x="150.5" y="101" class="sm dim" text-anchor="middle">parent</text>
+          <text x="254.5" y="101" text-anchor="middle">B1</text>
+          <text x="366" y="101" class="g" text-anchor="middle">B0</text>
+
+          <path d="M104 124.5 H419" class="ln" />
+          <text x="0" y="142" class="sm">time</text>
+          <text x="104.5" y="142" class="sm" text-anchor="middle">0</text>
+          <text x="196.5" y="142" class="sm it" text-anchor="middle">step</text>
+          <text x="312.5" y="142" class="sm" text-anchor="middle">later</text>
+
+          <text x="0" y="178" class="h">the chain after</text>
+          <rect x="0.5" y="198.5" width="70" height="26" class="bx" />
+          <text x="35.5" y="216" class="sm" text-anchor="middle">parent</text>
+          <rect x="120.5" y="170.5" width="110" height="26" class="bx gb" />
+          <text x="175.5" y="188" class="g" text-anchor="middle">B0, rank 0</text>
+          <rect x="120.5" y="222.5" width="110" height="26" class="bx dash" />
+          <text x="175.5" y="240" class="dim" text-anchor="middle">B1, rank 1</text>
+          <rect x="290.5" y="170.5" width="129" height="26" class="bx" />
+          <text x="355" y="188" class="sm" text-anchor="middle">next epoch</text>
+          <path d="M120 183.5 L73 207" class="ln" marker-end="url(#f3a)" />
+          <path d="M120 235.5 L73 216" class="ln dim" marker-end="url(#f3a)" />
+          <path d="M290 183.5 H233" class="ln" marker-end="url(#f3a)" />
+          <text x="244" y="229" class="sm dim it">displaced: a one-block</text>
+          <text x="244" y="244" class="sm dim it">reorg, at the tip only</text>
+        </svg>
+        <figcaption><span class="fl">Figure 3:</span> The ladder keeps the
+        chain live when rank 0 is late; preference by rank keeps every node on
+        the same block once rank 0 arrives. Weights as in the worked epoch of
+        Section 10.</figcaption>
       </figure>
 
-      <h2 id="s10">11. Lineage</h2>
-      <p>Sova began as an EVM chain on the OP Stack with native BTC, held under a
-      single operator key. Its mainnet ran from September to November 2025, and
-      the chain was then shut down. An audit of every derivable custody address
-      found zero BTC remaining.</p>
-      <p>The present chain keeps its predecessor’s foundation, a reth node extended
-      with the chain’s own rules, and drops the OP Stack, the bridge and custody.
-      A user destroys ZEC and deposits nothing, so the chain holds nothing. The
-      full history is at <a href="/story">sova.io/story</a>.</p>
+      <span class="folio" aria-hidden="true">5</span>
+    </article>
+
+    <!-- Sheet 6 -->
+    <article class="sheet" aria-label="Page 6">
+      <p class="runhead" aria-hidden="true"><i>{TITLE}</i><span>pre-release draft</span></p>
+
+      <p>A block does not yet name its sealer; the rank is read from the tip.
+      What remains open in this rule is that a block’s author cannot be checked
+      from its header alone. A draft rule [9] has the sealer sign the header
+      with the key of the address its burn credits, and gives an epoch that no
+      ranked burner seals one fixed empty block, so that a single burn to a dead
+      address cannot stop the chain. Section 10 assumes that rule.</p>
+
+      <span id="s6"></span>
+      <h2 id="network">6. Network</h2>
+      <p>The steps to run the network are as follows:</p>
+      <ol class="steps">
+        <li><span class="sn">1)</span> Each node runs a Zcash node and follows
+        it block by block. For every new Zcash block it extracts the burns, ranks
+        the burners, and computes the epoch’s settlement for every rank.</li>
+        <li><span class="sn">2)</span> A burner broadcasts a burn to the Zcash
+        network, like any Zcash transaction. It needs no Sova node to do so.</li>
+        <li><span class="sn">3)</span> When the epoch becomes sealable, the
+        ranked burner whose turn it is assembles the block, with the epoch’s
+        settlement as its withdrawals, the anchor in its header and the pending
+        transactions, executes it, and announces it to its peers by height and
+        hash.</li>
+        <li><span class="sn">4)</span> A peer that lacks an announced block
+        requests it and receives it. Blocks are pulled, never pushed.</li>
+        <li><span class="sn">5)</span> Each node validates a received block
+        against its own Zcash view (Section 7). A valid block becomes a candidate
+        for its epoch, the node moves its head to the best candidate it knows by
+        the preference of Section 5, and it announces a block onward only after
+        accepting it.</li>
+        <li><span class="sn">6)</span> The next epoch’s sealer builds on the head
+        its own node has chosen.</li>
+      </ol>
+
+      <p>Nodes speak sova/1, a small sub-protocol of the Ethereum wire stack
+      with three messages: Announce, GetBlock and Block. No message can move a
+      node’s head; only the node’s own choice does. Peers find each other by
+      the standard discovery protocols from bootnodes that every node sets
+      explicitly, and the network has its own genesis and fork identifier, so a
+      peer from another chain built on the same software is refused at the
+      handshake. A node that has fallen behind fetches the missing blocks from
+      peers by the ordinary Ethereum sync, but only up to the Zcash height its
+      own Zcash node has reached, so that every block it imports meets a
+      settlement it can check.</p>
+
+      <span class="folio" aria-hidden="true">6</span>
+    </article>
+
+    <!-- Sheet 7 -->
+    <article class="sheet" aria-label="Page 7">
+      <p class="runhead" aria-hidden="true"><i>{TITLE}</i><span>pre-release draft</span></p>
+
+      <span id="s5"></span>
+      <h2 id="verification">7. Verification</h2>
+      <p><span id="s5-1"></span>A node accepts a block only if its own Zcash
+      node justifies it. The check is a consensus rule. For a block at height <i>N</i>, which settles epoch <i>E<sub>N</sub></i>&nbsp;=&nbsp;<i>N</i>&nbsp;+&nbsp;<i>B</i>&nbsp;−&nbsp;1,
+      the node requires that the anchor equals the hash of Zcash block <i>E<sub>N</sub></i> as its own Zcash node has it, and that the
+      withdrawals equal the settlement it derived for <i>E<sub>N</sub></i> at
+      some rank. The withdrawals are in the block body, so the check needs no
+      execution, and it runs on every path by which a block can enter:
+      delivered at the tip, fetched to fill a short gap, or synced as history. A
+      mint is vouched for by the Zcash chain alone, as each node reads it. A
+      peer cannot mint what the receiving node’s Zcash node does not show, and a
+      history in which one mint was altered is rejected at that height by every
+      node that syncs it.</p>
+      <p><span id="s5-2"></span>A block may arrive seconds before the node’s
+      own Zcash node has the block it settles. Such a block is held, not
+      rejected: the node retries once its scan reaches <i>E<sub>N</sub></i>. A
+      block whose anchor names, at <i>E<sub>N</sub></i>, a hash the node’s Zcash
+      node does not have is also held, because Zcash may return to that branch.
+      Only a block that is wrong on a matching anchor, with a withdrawals list
+      that no rank produces or a bad state root, is invalid for good.</p>
+      <p>A joining node scans Zcash first, which is fast against a local Zcash
+      node, then syncs Sova only as far as its scan reaches. It therefore checks
+      the oldest mint as carefully as the newest, and nothing in the check is
+      ever pruned. The cost of this is that every Sova node runs a Zcash node.
+      That is also what makes the next section possible.</p>
+
+      <span id="s-zcash"></span>
+      <h2 id="reading-zcash">8. Reading Zcash</h2>
+      <p>Since every node holds the Zcash chain up to the block its head commits
+      to, a contract can be allowed to read it. A precompile at a fixed address
+      answers questions about the transparent Zcash chain from the base height <i>B</i> through the block <i>E<sub>N</sub></i> that the executing Sova
+      block settles [5]: the anchor itself, by height and hash; the hash and
+      time of the block at a height; where a transaction was mined, its position
+      and its depth; what a transparent output pays and to which script; and
+      whether a transaction is a burn, decoded by the rule consensus uses. Every
+      answer is a pure function of the committed chain. Two nodes that accept
+      the same Sova block compute the same answers, whatever their own Zcash
+      tips at the time, so the state root is the same on every node. A node that
+      cannot answer yet holds the block; it never guesses. “Not found” is an
+      answer, and it is the same on every honest node. Depth is counted from the
+      committed block, <i>E<sub>N</sub></i>&nbsp;−&nbsp;<i>h</i>&nbsp;+&nbsp;1, never from a
+      node’s tip. The protocol fixes no confirmation depth, because the anchor
+      already makes every answer deterministic; the depth a contract requires is
+      its own economic choice, and the contract library makes every check state
+      it.</p>
+
+      <span class="folio" aria-hidden="true">7</span>
+    </article>
+
+    <!-- Sheet 8 -->
+    <article class="sheet" aria-label="Page 8">
+      <p class="runhead" aria-hidden="true"><i>{TITLE}</i><span>pre-release draft</span></p>
+
+      <p>This is enough to be paid in ZEC. A seller’s contract records an order
+      with a fresh Zcash address that the seller controls; the buyer pays it
+      from any Zcash wallet, a shielded balance included; and once the
+      precompile shows at least the price at that address, at the depth the
+      contract demands, the contract delivers. The ZEC went from buyer to seller
+      on Zcash, and the seller held it from the moment it was paid. A Zcash
+      reorganization deeper than the payment unwinds the Sova blocks built on
+      it, on every node alike, and the delivery with them, which is why the
+      depth is the contract’s to choose and should exceed whatever could reverse
+      what the contract did outside Sova.</p>
+      <p>What the precompile cannot see is what Zcash hides from everyone: the
+      amount, sender, recipient and memo of a shielded transfer, and the balance
+      of a shielded address. A transaction’s id, height and position are public
+      even when it is fully shielded, and so is a transparent output paid from a
+      shielded balance. Transaction ids before Zcash’s v5 format are malleable,
+      so a contract keys on what an output pays, not on an id chosen in advance.
+      What Zcash does publish about its shielded pools, the value held in each
+      and every change to it, can be read the same way; a draft extension of the
+      precompile does so [10].</p>
+
+      <span id="s7"></span>
+      <h2 id="privacy">9. Privacy</h2>
+      <p>The EVM is public. Every call, balance and state change on Sova is
+      visible, as on Ethereum. Privacy in this design is at the edge where value
+      enters: a burn, and a payment a contract verifies, are both transparent
+      Zcash outputs, and both can be funded from the shielded pool. A z→t
+      transfer has no visible input, so the transparent address that then burns
+      or pays is not linked on the ledger to whoever funded it [1]. The link is
+      broken before the burn, by Zcash, and Sova never sees it.</p>
+      <p>Three things stay visible. Burns from one address are linked to each
+      other, so the address is a persistent pseudonym for as long as it is used.
+      The deshielding transfer is public in amount, address and height; a
+      distinctive amount, or a deshield followed at once by a burn, is an easy
+      correlation. And the SOVA minted, and everything done with it, is public.
+      Each of these is a matter of habit rather than protocol: fresh addresses,
+      unremarkable amounts, and time between funding and use.</p>
+
+      <span class="folio" aria-hidden="true">8</span>
+    </article>
+
+    <!-- Sheet 9 -->
+    <article class="sheet" aria-label="Page 9">
+      <p class="runhead" aria-hidden="true"><i>{TITLE}</i><span>pre-release draft</span></p>
+
+      <h2 id="calculations">10. Calculations</h2>
+      <p>We consider what it costs to attack the chain and what it costs to take
+      part in it.</p>
+      <p><b>Rewriting a mint.</b> A mint is asserted by no one; it is derived
+      from a Zcash block, and the Sova block that carries it names that Zcash
+      block by hash. To change a mint at Sova height <i>N</i>, an attacker must
+      replace Zcash block <i>E<sub>N</sub></i> and every Zcash block after it,
+      that is, reorganize Zcash from that depth, and every Sova node would
+      follow the reorganization identically. Sova adds no proof-of-work of its
+      own and needs none: below the tip, its history is exactly as costly to
+      rewrite as Zcash’s, and the probability that an attacker overtakes the
+      honest Zcash chain from <i>z</i> blocks behind is as computed in [6]. At
+      the tip, the only reorganization Sova performs by itself is the one-block
+      replacement of Section 5, and only by a block of better rank for the same
+      epoch, which pays every burner the same share and moves the tip to its
+      sealer.</p>
+
+      <p><b>Censoring at the tip.</b> A sealer chooses its block’s transactions
+      for one epoch. With the sealer’s signature in the header [9], keeping a
+      transaction out for <i>k</i> epochs means being rank 0 in each of them,
+      that is, out-burning every other burner <i>k</i> times, and the ZEC is
+      destroyed whether or not the transaction was worth excluding. The
+      transaction is included by the first sealer who is not the attacker.</p>
+      <p><b>The price of a share.</b> In an epoch with total weight <i>W</i>&nbsp;=&nbsp;Σ&nbsp;<i>w</i>, a SOVA from the pro-rata pool costs <i>W</i>&nbsp;/&nbsp;((9/10)&nbsp;<i>R</i>) in destroyed ZEC. Since <i>R</i> is fixed by the schedule, competition raises this price and never
+      the amount minted. At the floor, a burn of 1,000 zatoshis costs more in
+      Zcash fees, about 20,000 zatoshis, than in ZEC destroyed; a miner that
+      burns in every epoch spends roughly a quarter of a ZEC a day, most of it
+      to Zcash miners.</p>
+      <p><b>Emission.</b> The slow start mints 62,503,125 SOVA over its 20,000
+      epochs, 62,496,875 less than a flat reward would. Each era of 1,680,000
+      epochs lasts about four years, and with halvings floored to whole gwei,
+      era 42 pays 1 gwei per epoch and era 43 pays nothing, so emission ends
+      after 43 eras, a little over 170 years, at an upper bound of
+      20,937,503,124.97 SOVA. Every epoch without a burn lowers the total that
+      will ever exist.</p>
+      <p><span id="fig4"></span><b>A worked epoch.</b> Two burners with weights
+      in the ratio 5&nbsp;:&nbsp;2, and <i>R</i>&nbsp;=&nbsp;6,250 SOVA. By (1),
+      rank 0’s share is floor(5,625&nbsp;×&nbsp;5/7) = 4,017.857142857 SOVA and
+      rank 1’s is 1,607.142857142; by (2) the tip is 625.000000001, which rank 0
+      also receives as sealer, for 4,642.857142858 in all. The three amounts sum
+      to 6,250 exactly. If rank 1 seals instead, the shares are the same and the
+      tip moves to rank 1, so the two blocks differ and a node can tell which
+      rank sealed.</p>
+
+      <span class="folio" aria-hidden="true">9</span>
+    </article>
+
+    <!-- Sheet 10 -->
+    <article class="sheet" aria-label="Page 10">
+      <p class="runhead" aria-hidden="true"><i>{TITLE}</i><span>pre-release draft</span></p>
+
+      <span id="s8"></span><span id="s9"></span><span id="s10"></span>
+      <h2 id="conclusion">11. Conclusion</h2>
+      <p>We have proposed a chain for programs that can verify Zcash payments,
+      with an asset that is issued without an issuer. We started with burns: a
+      Zcash transaction that destroys ZEC and names an address, recognized by a
+      rule anyone can apply. Grouping burns by Zcash block gives the chain its
+      order and its clock from Zcash’s proof-of-work, and lets each Sova block
+      commit to the Zcash block it settles. A fixed reward shared by weight
+      makes destroying ZEC the only way to earn SOVA, and makes competition
+      raise its price rather than its supply. Ranking the burners chooses a
+      sealer without an election, and a preference on rank keeps every node’s
+      choice the same. Because every node derives every mint from its own Zcash
+      node, a node trusts no other node for anything, and the same derivation
+      gives contracts a view of Zcash that is identical everywhere. The ZEC a
+      contract verifies stays with its payee on Zcash, and the chain holds
+      nothing.</p>
+      <p>Today the design runs as a local network, a Zcash regtest node, a Sova
+      node and a miner started by one command, and the source and these
+      specifications are public [2, 3, 4, 5]. The anchor and the precompile of
+      Sections 3, 7 and 8 are specified and built, and ship with the public
+      testnet, which will be the first public network. The sealer signature of
+      Section 5 is a draft. A wrapped ZEC held by a third party’s signers is
+      possible later work; it would be custody, it would be called custody, and
+      it is no part of this design.</p>
+
+      <span class="folio" aria-hidden="true">10</span>
+    </article>
+
+    <!-- Sheet 11 -->
+    <article class="sheet" aria-label="Page 11">
+      <p class="runhead" aria-hidden="true"><i>{TITLE}</i><span>pre-release draft</span></p>
 
       <h2 id="refs" class="refs-h">References</h2>
       <ol class="refs">
-        <li><span class="rn">[1]</span> D. Hopwood, S. Bowe, T. Hornby, N. Wilcox, “Zcash Protocol Specification,”{' '}
-          <a href="https://zips.z.cash/protocol/protocol.pdf" rel="noopener">https://zips.z.cash/protocol/protocol.pdf</a>.</li>
-        <li><span class="rn">[2]</span> The Sova contributors, “SIP-1: The Burn Transaction Format,”{' '}
-          <a href={sipUrl(1)} rel="noopener">{sipUrl(1)}</a>.</li>
-        <li><span class="rn">[3]</span> The Sova contributors, “SIP-2: Epochs, Rewards, and Settlement,”{' '}
-          <a href={sipUrl(2)} rel="noopener">{sipUrl(2)}</a>.</li>
-        <li><span class="rn">[4]</span> The Sova contributors, “SIP-3: Emission Schedule,”{' '}
-          <a href={sipUrl(3)} rel="noopener">{sipUrl(3)}</a>.</li>
-        <li><span class="rn">[5]</span> G. Wood, “Ethereum: A Secure Decentralised Generalised Transaction Ledger,”{' '}
-          <a href="https://ethereum.github.io/yellowpaper/paper.pdf" rel="noopener">https://ethereum.github.io/yellowpaper/paper.pdf</a>.</li>
-        <li><span class="rn">[6]</span> The Sova contributors, “SIP-4: Zcash State Precompile,”{' '}
-          <a href={sipUrl(4)} rel="noopener">{sipUrl(4)}</a>.</li>
+        {refs.map((r, i) => (
+          <li><span class="rn">[{i + 1}]</span> {r.extra === '(draft)' ? `${r.a}, “${r.t}” (draft),` : r.extra ? `${r.a}, “${r.t},” ${r.extra},` : `${r.a}, “${r.t},”`}{' '}
+            <a href={r.href} rel="noopener">{r.href}</a>{i === 6 && <>; V. Buterin et al., “EIP-1559: Fee market change for ETH 1.0 chain,”{' '}
+            <a href="https://eips.ethereum.org/EIPS/eip-1559" rel="noopener">https://eips.ethereum.org/EIPS/eip-1559</a></>}.</li>
+        ))}
       </ol>
 
-      <span class="folio" aria-hidden="true">5</span>
+      <span class="folio" aria-hidden="true">11</span>
     </article>
   </main>
   </div>
@@ -532,12 +767,9 @@ const wds = [
     --paper: #fffefb;
     --ink: #141210;
     --ink2: #4a4640;
-    --t-bg: #16130e;
-    --t-g: #f4b728;
-    --t-g2: #cf9d2a;
-    --t-g3: #7d6020;
-    --t-cream: #fbf3dc;
-    --t-ember: #e0703f;
+    --rule: #b9b3a8;
+    --accent: #8a6a1f;
+    --accent-bg: #f7f0de;
     --serif: 'Sova Paper Serif', 'CMU Serif', 'Latin Modern Roman', 'Computer Modern', 'Times New Roman', Times, 'Liberation Serif', serif;
     --mono: ui-monospace, Menlo, 'DejaVu Sans Mono', Consolas, monospace;
   }
@@ -573,11 +805,9 @@ const wds = [
      Narrower: hidden, and the first sheet's "Contents" disclosure takes over. */
   .toc { display: none; }
   .toc-h { margin: 0 0 6px; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #6f6a61; }
-  .toc-l, .toc-l ol, .toc-x { list-style: none; margin: 0; padding: 0; }
-  .toc-l ol { padding-left: 1.9em; }
+  .toc-l, .toc-x { list-style: none; margin: 0; padding: 0; }
   .toc a { display: flex; gap: 0.5em; padding: 2px 0 2px 10px; border-left: 2px solid transparent; color: #5a554d; text-decoration: none; line-height: 1.3; }
   .toc-l .tn { flex: 0 0 auto; min-width: 1.4em; font-variant-numeric: tabular-nums; }
-  .toc-l ol .tn { min-width: 1.9em; }
   .toc a:hover { color: var(--ink); }
   .toc a[aria-current='true'] { color: var(--ink); border-left-color: #8a6a1f; }
   .toc-x { margin-bottom: 4px; }
@@ -616,9 +846,11 @@ const wds = [
   .runhead {
     position: absolute; top: 44px; left: 68px; right: 68px; margin: 0;
     display: flex; justify-content: space-between; gap: 12px;
-    font-size: 13px; color: var(--ink2); border-bottom: 0.5px solid #b9b3a8; padding-bottom: 5px;
+    font-size: 13px; color: var(--ink2); border-bottom: 0.5px solid var(--rule); padding-bottom: 5px;
     text-align: left; hyphens: manual;
   }
+  /* Old (v4) anchors kept as empty spans; give them the headings' offset. */
+  .sheet [id] { scroll-margin-top: 16px; }
 
   .titleblock { text-align: center; margin: 4px 0 26px; hyphens: manual; }
   h1 { font-size: 26px; line-height: 1.2; font-weight: 700; margin: 0 0 18px; letter-spacing: -0.005em; }
@@ -632,8 +864,7 @@ const wds = [
   .abstract p { margin: 0; text-indent: 0; }
 
   h2 { font-size: 18px; font-weight: 700; margin: 24px 0 7px; text-align: left; hyphens: manual; }
-  h3 { font-size: 16px; font-weight: 700; margin: 16px 0 5px; text-align: left; hyphens: manual; }
-  h2, h3 { scroll-margin-top: 16px; }
+  h2 { scroll-margin-top: 16px; }
   p { margin: 0; }
   .sheet > p + p { text-indent: 1.5em; }
   .sheet > p a { color: #6e5418; text-decoration-color: #cdbf9c; text-underline-offset: 2px; }
@@ -641,6 +872,12 @@ const wds = [
   .noindent { margin-top: 4px; }
   code { font-family: var(--mono); font-size: 0.8em; hyphens: manual; }
   sub { font-size: 0.7em; line-height: 0; }
+  sup { font-size: 0.7em; line-height: 0; }
+
+  /* Section 6: the numbered steps, set as a hanging list */
+  .steps { list-style: none; margin: 6px 0 0; padding: 0; }
+  .steps li { position: relative; padding-left: 1.7em; margin: 0 0 3px; }
+  .sn { position: absolute; left: 0; }
 
   /* Display equations */
   .eq { display: flex; align-items: center; justify-content: center; position: relative; margin: 14px 0; min-height: 3em; text-align: center; hyphens: manual; }
@@ -654,128 +891,49 @@ const wds = [
   .fl-l, .fl-r { align-self: stretch; width: 0.3em; margin: 0.05em 0.06em; border-bottom: 1px solid currentColor; }
   .fl-l { border-left: 1px solid currentColor; }
   .fl-r { border-right: 1px solid currentColor; }
+  .flr { display: inline-block; line-height: 1.05; padding: 0 0.2em 0.04em; margin: 0 0.06em; border: solid currentColor; border-width: 0 1px 1px; }
   /* Cases (3): a scaled brace and two stacked rows */
   .brace { font-size: 2.6em; line-height: 1; margin: 0 0.08em 0 0.1em; transform: scaleX(0.7); }
-  .cases { display: inline-flex; flex-direction: column; gap: 0.15em; text-align: left; }
-  .cases > span { display: flex; gap: 1.6em; justify-content: space-between; }
+  .cases { display: inline-flex; flex-direction: column; gap: 0.2em; text-align: left; }
+  .cases > span { display: flex; gap: 1.6em; justify-content: space-between; align-items: baseline; }
   .cond { font-size: 0.92em; }
-  sup { font-size: 0.7em; line-height: 0; }
+  .nw { white-space: nowrap; }
 
-  /* Figures: small terminal panels */
-  .fig { margin: 20px 0 6px; }
-  .fig figcaption { font-size: 15px; line-height: 1.38; margin: 8px 6px 0; text-align: justify; }
+  /* Figures: line drawings in the paper's ink, one accent (the deep gold of
+     the wordmark) for what the figure is about. viewBox 420 wide, shown at
+     up to 480 px, so 13-unit text is about 15 px on a sheet and 11 px on a
+     phone. */
+  .fig { margin: 16px 0 12px; }
+  .fig figcaption { font-size: 15px; line-height: 1.38; margin: 10px 6px 0; text-align: justify; }
   .fl { font-weight: 700; }
-  .term {
-    position: relative; background: var(--t-bg); color: var(--t-g);
-    border: 1px solid #000; border-radius: 3px;
-    padding: 12px 14px; overflow: hidden;
-    font: 12.5px/1.55 var(--mono); text-align: left; hyphens: manual;
-    text-shadow: 0 0 1px rgba(244, 183, 40, 0.45), 0 0 7px rgba(244, 183, 40, 0.2);
-  }
-  .term::after {
-    content: ''; position: absolute; inset: 0; pointer-events: none;
-    background: repeating-linear-gradient(to bottom, transparent 0 2px, rgba(0, 0, 0, 0.2) 2px 3px);
-  }
-  .term pre { margin: 0; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
-
-  /* Fig. 1 */
-  .ln { display: block; }
-  .ln.cmd { color: var(--t-cream); }
-  .ln.out { color: var(--t-g2); }
-  .ln.note, .ln.log { color: var(--t-g3); text-shadow: none; }
-  .ln.mint { color: var(--t-g); font-weight: 700; }
-  .anim .off { visibility: hidden; }
-  .ln.cur .on::after {
-    content: '▌'; color: var(--t-g); display: inline-block; width: 0; overflow: visible;
-    animation: blink 1s steps(1) infinite;
-  }
-  @keyframes blink { 50% { opacity: 0; } }
-
-  /* Fig. 2 */
-  .stream-wrap { padding: 10px 12px 10px; }
-  .demo-tag {
-    position: relative; z-index: 3; display: inline-block; margin: 0 0 8px;
-    border: 1px solid var(--t-ember); color: var(--t-ember); padding: 0 7px;
-    font-size: 11px; line-height: 1.6; letter-spacing: 0.04em; text-shadow: none; text-indent: 0;
-  }
-  .stream { --cw: 124px; position: relative; height: 150px; overflow: hidden; border: 1px solid #3a2f18; }
-  .lane { position: absolute; left: 8px; z-index: 2; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--t-g3); text-shadow: none; }
-  .lane.z { top: 5px; }
-  .lane.s { top: 80px; }
-  .cols { position: absolute; inset: 0; }
-  .stream :global(.col) {
-    position: absolute; top: 0; right: 0; width: var(--cw); height: 100%;
-    transform: translateX(calc(var(--cw) * var(--k, 0) * -1));
-    transition: transform 0.6s cubic-bezier(0.2, 0.7, 0.2, 1);
-    font-size: 11.5px; line-height: 1.35;
-  }
-  .stream :global(.zb), .stream :global(.sb) { position: absolute; left: 7px; right: 7px; padding: 4px 6px; border: 1px solid var(--t-g2); }
-  .stream :global(.zb) { top: 20px; }
-  .stream :global(.zb.new) { animation: drop 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
-  .stream :global(.sb) { top: 96px; opacity: 0; }
-  .stream :global(.sb.in) { opacity: 1; }
-  .stream :global(.sb.in.new) { animation: mint 0.45s ease-out both; }
-  .stream :global(.sb.mint) { border-color: var(--t-g); background: rgba(244, 183, 40, 0.12); color: var(--t-cream); }
-  .stream :global(.sb.empty) { border-style: dashed; border-color: var(--t-g3); color: var(--t-g3); text-shadow: none; }
-  .stream :global(.link) { position: absolute; left: 50%; top: 66px; height: 29px; border-left: 1px dashed var(--t-g3); opacity: 0; }
-  .stream :global(.link.in) { opacity: 1; transition: opacity 0.3s; }
-  .stream :global(.n) { color: var(--t-cream); }
-  .stream :global(.b) { color: var(--t-ember); }
-  @keyframes drop { from { transform: translateY(-30px); opacity: 0; } to { transform: none; opacity: 1; } }
-  @keyframes mint { from { transform: scale(0.9); opacity: 0; filter: brightness(2.2); } to { transform: none; opacity: 1; filter: none; } }
-  .slog {
-    height: calc(4 * 1.5em + 2px); overflow: hidden; margin: 8px 0 0 !important; padding: 0 0 0 8px;
-    border-left: 2px solid var(--t-g3); font-size: 11.5px !important; line-height: 1.5 !important; color: var(--t-g2);
-    white-space: pre !important;
-  }
-  .slog :global(b) { color: var(--t-cream); font-weight: 400; }
-  .slog :global(i) { color: var(--t-ember); font-style: normal; }
-
-  /* Fig. 3 */
-  .scroll-x { overflow-x: auto; }
-  .ladder { border-collapse: collapse; width: 100%; }
-  .ladder th { font-weight: 400; text-align: left; color: var(--t-cream); padding: 1px 16px 1px 0; white-space: nowrap; vertical-align: top; }
-  .ladder td { color: var(--t-g2); padding: 1px 16px 1px 0; white-space: nowrap; }
-  .ladder td:last-child { padding-right: 0; }
-  .ladder .hd th, .ladder .hd td { color: var(--t-g3); text-shadow: none; padding-bottom: 5px; border-bottom: 1px solid #3a2f18; }
-  .ladder .hd + tr th, .ladder .hd + tr td { padding-top: 5px; }
-  .ladder .res th, .ladder .res td { color: var(--t-g); padding-top: 5px; border-top: 1px solid #3a2f18; }
-
-  /* Fig. 4 */
-  .split { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
-  .split th { font-weight: 400; color: var(--t-g3); text-align: right; padding: 0 0 4px 12px; text-shadow: none; white-space: nowrap; }
-  .split td { text-align: right; padding: 2px 0 2px 12px; color: var(--t-g2); white-space: nowrap; }
-  .split th:first-child, .split td:first-child { text-align: left; padding-left: 0; }
-  .split .paid { color: var(--t-cream); }
-  .split tfoot td { border-top: 1px solid var(--t-g3); padding-top: 5px; color: var(--t-g3); }
-  .split tfoot i { font-style: italic; }
-  .split .sum { color: var(--t-g); font-weight: 700; }
-  .wds { margin: 12px 0 0 !important; padding-top: 9px; border-top: 1px dashed #3a2f18; white-space: pre !important; overflow-wrap: normal !important; color: var(--t-g2); }
-  .wds .c { color: var(--t-g3); text-shadow: none; }
-  .wds .k { color: var(--t-cream); }
-  .wds .v { color: var(--t-cream); }
-
-  /* Fig. 5 */
-  .owlfig { display: flex; justify-content: center; align-items: flex-end; gap: 40px; padding: 16px 14px 10px; }
-  .owlfig .sub { display: flex; flex-direction: column; align-items: center; gap: 6px; }
-  .owlfig img { width: 96px; height: 96px; image-rendering: pixelated; }
-  .owl { font-size: 4px !important; line-height: 4.8px !important; white-space: pre !important; overflow-wrap: normal !important; color: var(--t-g2); }
-  .owl :global(.r0) { color: #6e5418; text-shadow: none; }
-  .owl :global(.r1) { color: #8a6a1f; }
-  .owl :global(.r2) { color: #b08421; }
-  .owl :global(.r3) { color: #cf9d2a; }
-  .owl :global(.r4) { color: #f4b728; }
-  .owl :global(.r5) { color: #ffd46e; }
-  .owl :global(.r6) { color: #fbf3dc; }
-  .subl { font-family: var(--serif); color: var(--t-cream); font-size: 14px; text-shadow: none; }
+  .dia { display: block; width: 100%; max-width: 480px; height: auto; margin: 0 auto; overflow: visible; }
+  .dia text { font-family: var(--serif); font-size: 13px; fill: var(--ink); }
+  .dia .sm { font-size: 12px; }
+  .dia .xs { font-size: 11px; fill: var(--ink2); }
+  .dia .h { font-size: 12px; fill: var(--ink2); font-style: italic; }
+  .dia .b { font-weight: 700; }
+  .dia .it, .dia tspan.it { font-style: italic; }
+  .dia .mono { font-family: var(--mono); font-size: 11.5px; }
+  .dia text.g, .dia tspan.g { fill: var(--accent); }
+  .dia text.dim { fill: var(--ink2); }
+  .dia .bx { fill: none; stroke: var(--ink); stroke-width: 1; }
+  .dia .bx.gb { stroke: var(--accent); stroke-width: 1.4; fill: var(--accent-bg); }
+  .dia .bx.dash { stroke: var(--ink2); stroke-dasharray: 4 3; }
+  .dia .ln { fill: none; stroke: var(--ink); stroke-width: 1; }
+  .dia .ln.g { stroke: var(--accent); stroke-width: 1.3; }
+  .dia .ln.dim { stroke: var(--ink2); }
+  .dia .ln.dash { stroke: var(--ink2); stroke-dasharray: 3 3; }
+  .dia .ln.dot { stroke: var(--ink2); stroke-dasharray: 1 3; stroke-linecap: round; }
+  .dia .guide { fill: none; stroke: var(--rule); stroke-width: 0.75; stroke-dasharray: 2 3; }
+  .dia .ah { fill: var(--ink); }
+  .dia .ahg { fill: var(--accent); }
 
   /* References */
   .refs { list-style: none; margin: 0; padding: 0; font-size: 15px; line-height: 1.38; text-align: left; hyphens: manual; }
-  .refs li { position: relative; margin: 0 0 5px; padding-left: 2.3em; }
+  .refs li { position: relative; margin: 0 0 5px; padding-left: 2.6em; }
   .rn { position: absolute; left: 0; }
-  .refs a { color: inherit; overflow-wrap: anywhere; text-decoration-color: #b9b3a8; }
+  .refs a { color: inherit; overflow-wrap: anywhere; text-decoration-color: var(--rule); }
   .refs a:hover { color: #8a6a1f; }
-  .ph { color: var(--ink2); }
 
   /* Narrow screens: lose the frame, keep the paper */
   @media (max-width: 860px) {
@@ -794,34 +952,19 @@ const wds = [
     .titleblock { margin-bottom: 22px; }
     .abstract { margin: 0 0 20px; font-size: 15.5px; }
     .fig figcaption { text-align: left; font-size: 14.5px; margin: 8px 0 0; }
-    .term { font-size: 11px; padding: 10px; }
-    .stream { --cw: 104px; }
-    .stream :global(.col) { font-size: 10.5px; }
-    .slog { font-size: 10px !important; }
-    .split { font-size: 9.5px; }
-    .split th, .split td { padding-left: 7px; }
-    .ladder, .wds { font-size: 10px !important; }
-    .ladder th, .ladder td { padding-right: 10px; }
-    .ladder td { white-space: normal; }
-    .eq.cases-eq { padding-right: 1.6em; }
-    .cases > span { gap: 0.8em; }
     .toc-m .toc-l { columns: 1; }
     .plinks { font-size: 14.5px; line-height: 1.6; }
-    h3 { font-size: 15.5px; }
     .eqbody { font-size: 16.5px; }
     .eqno { font-size: 15px; }
-    .owlfig { gap: 24px; }
+    /* (3) is too wide for a phone on one line: each case's condition drops
+       under its value, and the second value breaks after "SOVA,". */
+    .eq.cases-eq { padding-right: 1.9em; }
+    .cases-eq .eqbody { font-size: 15.5px; white-space: normal; }
+    .cases { gap: 0.45em; }
+    .cases > span { flex-direction: column; gap: 0.05em; }
+    .cases .cond { padding-left: 1.2em; }
+    .cv { display: flex; flex-wrap: wrap; column-gap: 0.3em; }
     .foot { padding-top: 16px; border-top: 1px solid #e4dfd5; }
-  }
-  @media (max-width: 380px) {
-    .term { font-size: 10.5px; }
-    .split { font-size: 9px; }
-    .split th, .split td { padding-left: 5px; }
-    .wds { font-size: 9.5px !important; }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .ln.cur .on::after { animation: none; }
-    .stream :global(.col) { transition: none; }
   }
 </style>
 
@@ -847,98 +990,5 @@ const wds = [
     const io = new IntersectionObserver(pick, { rootMargin: '0px 0px -82% 0px' });
     heads.forEach((h) => io.observe(h));
     pick();
-  }
-
-  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-  const watch = (el: Element) => {
-    const s = { visible: false };
-    new IntersectionObserver(([e]) => { s.visible = e.isIntersecting; }).observe(el);
-    return s;
-  };
-
-  // Figure 1: type each command, print each output line, hold, clear, repeat.
-  // Every line's full text is already in the DOM (a visible and a hidden half),
-  // so nothing reflows while it types.
-  const pre = document.getElementById('t1');
-  if (pre && !reduce) {
-    const lines = [...pre.querySelectorAll<HTMLElement>('.ln')].map((el) => ({
-      el, k: el.dataset.k, on: el.firstElementChild as HTMLElement,
-      off: el.lastElementChild as HTMLElement, t: el.textContent || '',
-    }));
-    const set = (l: (typeof lines)[0], n: number) => {
-      l.on.textContent = l.t.slice(0, n);
-      l.off.textContent = l.t.slice(n);
-    };
-    pre.classList.add('anim');
-    const v = watch(pre);
-    const idle = async () => { while (!v.visible || document.hidden) await wait(300); };
-    (async () => {
-      for (;;) {
-        lines.forEach((l) => set(l, 0));
-        await wait(500);
-        for (const l of lines) {
-          await idle();
-          lines.forEach((o) => o.el.classList.toggle('cur', o === l));
-          if (l.k === 'cmd') {
-            set(l, 2);
-            await wait(350);
-            for (let n = 3; n <= l.t.length; n++) { set(l, n); await wait(22); }
-            await wait(300);
-          } else {
-            set(l, l.t.length);
-            await wait(l.k === 'mint' ? 200 : 420);
-          }
-        }
-        await wait(4200);
-      }
-    })();
-  }
-
-  // Figure 2: simulated block stream, labelled DEMO on the page. It starts
-  // from the server-rendered columns and adds a Zcash block every 2.5 s, then
-  // its Sova block. Reduced motion: the static columns stay as they are.
-  const stream = document.getElementById('stream');
-  const cols = document.getElementById('cols');
-  const log = document.getElementById('log');
-  if (stream && cols && log && !reduce) {
-    const live = [...cols.children] as HTMLElement[];
-    const lines = log.innerHTML.split('\n');
-    let zh = 108, sh = 6;
-    const addLog = (s: string) => {
-      lines.push(s);
-      while (lines.length > 4) lines.shift();
-      log.innerHTML = lines.join('\n');
-    };
-    const tick = () => {
-      const burns = Math.random() < 0.72 ? 1 + ((Math.random() * 4) | 0) : 0;
-      const zec = burns ? (burns * (0.001 + Math.random() * 0.02)).toFixed(4) : '0';
-      const pl = (n: number, w: string) => `${n} ${w}${n > 1 ? 's' : ''}`;
-      const col = document.createElement('div');
-      col.className = 'col';
-      col.style.setProperty('--k', '0');
-      col.innerHTML =
-        `<div class="zb new"><span class="n">#${zh}</span><br>${burns ? `<span class="b">${pl(burns, 'burn')}</span><br>${zec} ZEC` : 'no burns<br>&nbsp;'}</div>` +
-        `<span class="link"></span>` +
-        `<div class="sb new ${burns ? 'mint' : 'empty'}"><span class="n">sova #${sh}</span><br>${burns ? '+6,250 SOVA' : '0 minted'}</div>`;
-      live.forEach((c, i) => c.style.setProperty('--k', String(live.length - i)));
-      cols.appendChild(col);
-      live.push(col);
-      const w = parseFloat(getComputedStyle(stream).getPropertyValue('--cw')) || 124;
-      const max = Math.ceil(stream.clientWidth / w) + 1;
-      while (live.length > max) live.shift()!.remove();
-      const z = zh, s = sh;
-      addLog(`<b>zcash #${z}</b> ${burns ? `<i>${pl(burns, 'burn')}</i> ${zec} ZEC destroyed` : 'no burns'}`);
-      setTimeout(() => {
-        col.querySelector('.link')!.classList.add('in');
-        col.querySelector('.sb')!.classList.add('in');
-        addLog(burns
-          ? `<b>sova  #${String(s).padEnd(3)}</b> sealed by rank 0  +6,250 SOVA to ${pl(burns, 'burner')}`
-          : `<b>sova  #${String(s).padEnd(3)}</b> empty epoch, 0 minted`);
-      }, 900);
-      zh++; sh++;
-    };
-    const v = watch(stream);
-    setInterval(() => { if (v.visible && !document.hidden) tick(); }, 2500);
   }
 </script>

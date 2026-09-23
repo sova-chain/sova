@@ -3,7 +3,7 @@
 // Kinds: local (runs on your machine today), testnet (ships with the public
 // testnet), planned (not built), and the SIP statuses frozen, accepted, draft.
 // Styles live in layouts/Site.astro (.st).
-interface Props { k: 'local' | 'testnet' | 'planned' | 'frozen' | 'accepted' | 'draft' | 'launch' }
+interface Props { k: 'local' | 'testnet' | 'planned' | 'frozen' | 'accepted' | 'draft' | 'withdrawn' | 'launch' }
 const { k } = Astro.props;
 const label = k === 'launch' ? 'at launch' : k;
 ---

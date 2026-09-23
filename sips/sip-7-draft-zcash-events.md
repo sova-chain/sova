@@ -1,6 +1,6 @@
 # SIP-7: Zcash Pool State and Events
 
-- Status: **Draft, design only** (2026-09-23). No code. Needs Rob's calls
+- Status: **Accepted** (Rob, 2026-09-23: recommended v1.1 scope and decisions); implementation pending, targets the testnet reset. Earlier: **Draft, design only**. Needs Rob's calls
   in "Decisions for Rob" (§10) before a build is dispatched.
 - Numbering: **SIP-7.** SIP-5 is reserved for the wZEC peg, and SIP-6 is
   sealer signatures.

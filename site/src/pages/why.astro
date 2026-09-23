@@ -36,12 +36,12 @@ const grassroots = [
 ];
 
 const fresh = [
-  { h: 'Contracts that see Zcash.', t: 'A contract verifies that a ZEC payment landed, and how deep, then acts: a sale, a swap, a mint.', proof: 'paper §6', href: '/paper#s-zcash', k: 'testnet' },
-  { h: 'Burn-mining.', t: 'Issuance comes only from destroyed ZEC, split among that epoch’s burners.', proof: 'paper §4', href: '/paper#s4' },
-  { h: 'Anchored to Zcash.', t: 'One Sova block per Zcash block, ordered by Zcash’s proof-of-work.', proof: 'paper §3', href: '/paper#s3' },
-  { h: 'Every node checks every mint.', t: 'Against its own Zcash node, synced history included.', proof: 'paper §5', href: '/paper#s5' },
-  { h: 'The sealer ladder.', t: 'The top burner seals each block. If it is offline, the next in line seals after a short delay.', proof: 'paper §3.2', href: '/paper#s3-2' },
-  { h: 'Its own network protocol.', t: 'Peers announce and serve blocks. Only your own node moves its head.', proof: 'paper §7', href: '/paper#s6' },
+  { h: 'Contracts that see Zcash.', t: 'A contract verifies that a ZEC payment landed, and how deep, then acts: a sale, a swap, a mint.', proof: 'paper §8', href: '/paper#reading-zcash', k: 'testnet' },
+  { h: 'Burn-mining.', t: 'Issuance comes only from destroyed ZEC, split among that epoch’s burners.', proof: 'paper §4', href: '/paper#issuance' },
+  { h: 'Anchored to Zcash.', t: 'One Sova block per Zcash block, ordered by Zcash’s proof-of-work.', proof: 'paper §3', href: '/paper#epochs' },
+  { h: 'Every node checks every mint.', t: 'Against its own Zcash node, synced history included.', proof: 'paper §7', href: '/paper#verification' },
+  { h: 'The sealer ladder.', t: 'The top burner seals each block. If it is offline, the next in line seals after a short delay.', proof: 'paper §5', href: '/paper#sealing' },
+  { h: 'Its own network protocol.', t: 'Peers announce and serve blocks. Only your own node moves its head.', proof: 'paper §6', href: '/paper#network' },
   { h: 'Agent-native mining.', t: 'An MCP server gives an agent six tools and a hard budget.', proof: 'mine', href: '/mine#agent' },
 ];
 ---
@@ -87,7 +87,7 @@ const fresh = [
     ))}
   </ol>
 
-  <p class="edge">The EVM is public. Privacy lives at the funding edge: burn from the shielded pool and your SOVA need not link to you. <a class="proof" href="/paper#s7">→ paper §8</a></p>
+  <p class="edge">The EVM is public. Privacy lives at the funding edge: burn from the shielded pool and your SOVA need not link to you. <a class="proof" href="/paper#privacy">→ paper §9</a></p>
 
   <p class="next"><a href="/paper">Read the paper</a><a href="/build">Build</a><a href="/mine">Mine</a><a href="/story">The story</a></p>
 </Site>

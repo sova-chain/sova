@@ -101,8 +101,9 @@ Protocol changes go through SIPs, in [`sips/`](sips/).
 | [SIP-2](sips/sip-2.md) | Epochs, Rewards, and Settlement | Draft: implemented, proven on regtest |
 | [SIP-3](sips/sip-3.md) | Emission Schedule | Accepted |
 | [SIP-4](sips/sip-4-draft-zcash-state-precompile.md) | Zcash State Precompile | Draft: build approved, code in review |
-| SIP-5 | Wrapped ZEC via NEAR | Number reserved; text comes after SIP-4 |
-| [SIP-6](sips/sip-6-draft-sealer-signatures.md) | Sealer Signatures | Draft: design only |
+| [SIP-5](sips/sip-5-withdrawn.md) | Wrapped ZEC | Withdrawn: a Sova Labs product (wz.cash), not a protocol rule |
+| [SIP-6](sips/sip-6-draft-sealer-signatures.md) | Sealer Signatures | Accepted: implementation pending |
+| [SIP-7](sips/sip-7-draft-zcash-events.md) | Zcash Pool State and Events | Accepted: implementation pending |
 
 ## Repository layout
 

@@ -99,7 +99,13 @@ and no project machine ever holds user funds or a key with consensus power.
   node, with no bridge or oracle. Approved and in development; it ships at
   the testnet reset. First demos: buy with ZEC from any Zcash wallet, and
   custody-free ZEC↔SOVA swaps.
-- **Wrapped ZEC, custodied by NEAR.** ZEC held by NEAR's MPC network
+- **Contracts that see the shielded pool (SIP-7).** Pool totals and every
+  change to them, readable by contracts, plus a per-block Zcash summary in
+  Sova's state. Accepted; targets the testnet reset.
+- **Wrapped ZEC is a Sova Labs product, not the protocol.** wZcash at
+  wz.cash: ZEC held by NEAR's MPC network, a Sova Labs relayer, a small fee.
+  Custodial and labelled that way; the network makes no guarantees about it.
+  Former text for reference: ZEC held by NEAR's MPC network
   (Chain Signatures) and minted as wZEC on Sova. This is custody, and it is
   disclosed as custody: holding wZEC means trusting NEAR's signer set. Sova
   provides the contracts and monitors the vault from Zcash; the project
