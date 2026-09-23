@@ -12,7 +12,7 @@
 // paper links (/#s4, /#refs, ...) to /paper.
 import Site from '../layouts/Site.astro';
 import Tag from '../components/Tag.astro';
-import { EDGE_LINE, sips } from '../data/sova';
+import { EDGE_LINE, sips, repo } from '../data/sova';
 
 // Simulated checkout (docs/design/ashwing-zec-checkout.md): a 0.25 ZEC listing
 // plus a 42-zat order tag, paid z→t, minConf 3, then claim(order, txid, vout)
@@ -116,12 +116,15 @@ const doors = [
 
   <h2>the SIPs</h2>
   <ul class="siplist">
-    {sips.map((s) => <li><a href={`/sips#${s.id}`}><span class="sn">SIP-{s.n}</span> {s.title}</a> <Tag k={s.st} /></li>)}
+    {sips.map((s) => <li>{s.file
+      ? <a href={repo.blob(`sips/${s.file}`)}><span class="sn">SIP-{s.n}</span> {s.title}</a>
+      : <span class="nolink"><span class="sn">SIP-{s.n}</span> {s.title}</span>} <Tag k={s.st} /></li>)}
   </ul>
+  <p class="dim"><a href="/sips">What each SIP does, and how one moves →</a></p>
 
   <h2>open source</h2>
   <p>MIT or Apache-2.0. Run a node, propose a SIP, send a pull request. <a href="/build#contribute">How to contribute →</a></p>
-  <p class="dim"><span aria-disabled="true" data-placeholder="source-repo">GitHub</span> <Tag k="launch" /></p>
+  <pre class="sh"><code><span class="p">$ </span>git clone <a href={repo.root}>{repo.root}</a> &amp;&amp; cd sova</code></pre>
 </Site>
 
 <style>
@@ -195,6 +198,7 @@ const doors = [
   .siplist li { margin: 0 0 6px; break-inside: avoid; }
   .siplist a { text-decoration: none; }
   .siplist .sn { color: var(--cream); }
+  .siplist .nolink { color: var(--g3); }
 
   @media (max-width: 760px) {
     .doors { grid-template-columns: repeat(2, minmax(0, 1fr)); }

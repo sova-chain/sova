@@ -9,6 +9,7 @@
 // README.md (license). Every claim is in site/README.md.
 import Site from '../layouts/Site.astro';
 import Tag from '../components/Tag.astro';
+import { repo, CLONE } from '../data/sova';
 
 const methods = [
   ['anchor()', 'The Zcash block this Sova block commits to: height and hash.'],
@@ -84,21 +85,22 @@ ZcashLib.Payment memory p = ZcashLib.requireOutputPays(
 
   <h2 id="try">try it locally <Tag k="local" /></h2>
   <p>The contracts, a stand-in for the precompile, the checkout page and its relayer, all on your machine. Needs Foundry, Node 22 and a Chromium (<code>CHROME=/path</code>).</p>
-  <pre class="sh"><code><span class="p">$ </span>(cd contracts &amp;&amp; forge build &amp;&amp; forge test)
+  <pre class="sh"><code><span class="p">$ </span>{CLONE}
+<span class="p">$ </span>(cd contracts &amp;&amp; forge build &amp;&amp; forge test)
 <span class="p">$ </span>(cd site &amp;&amp; npm ci &amp;&amp; npm run build)
 <span class="p">$ </span>cd tools/checkout-relayer &amp;&amp; npm ci
 <span class="p">$ </span>npm run e2e</code></pre>
   <p class="dim"># e2e starts anvil, puts a mock at 0x…5a00, deploys the checkout, and drives a headless browser through a ZEC purchase: reserve, pay, confirm, claim, owl.</p>
-  <p>Source: <span class="ph" data-placeholder="source-repo">contracts/src/zcash/</span> <Tag k="launch" /> · SIP-4 text: <span class="ph" data-placeholder="docs">sips/sip-4</span> <Tag k="launch" /></p>
+  <p>Source: <a href={repo.tree('contracts/src/zcash')}>contracts/src/zcash/</a> · SIP-4 text: <a href={repo.blob('sips/sip-4-draft-zcash-state-precompile.md')}>sips/sip-4</a></p>
 
   <h2 id="contribute">contribute</h2>
-  <p>Sova is open source, MIT or Apache-2.0 at your option. The repository opens at launch. <span class="ph" data-placeholder="source-repo">GitHub</span> <Tag k="launch" /></p>
+  <p>Sova is open source, MIT or Apache-2.0 at your option. The repository is on GitHub: <a href={repo.root}>sova-chain/sova</a>. Start with <a href={repo.contributing}><code>CONTRIBUTING.md</code></a>.</p>
   <dl class="kv">
     <dt>run a node</dt><dd><a href="/node">One command</a>. “It didn’t work on my machine” is a useful issue.</dd>
-    <dt>change the protocol</dt><dd>Float the idea in the SIPs category of Discussions, then open the SIP as a pull request to <code>sips/</code>. <a href="/sips">The SIPs</a>.</dd>
+    <dt>change the protocol</dt><dd>Float the idea in the SIPs category of <a href={repo.discussions}>Discussions</a>, then open the SIP as a pull request to <code>sips/</code>. <a href="/sips">The SIPs</a>.</dd>
     <dt>send code</dt><dd>Human and AI pairs are the default; the author explains the change. Consensus code merges with simulation coverage in <code>box/sim</code>.</dd>
-    <dt>report a bug</dt><dd>Issue templates, in the repository. <span class="ph" data-placeholder="source-repo">Issues</span> <Tag k="launch" /></dd>
-    <dt>security</dt><dd>Report privately, through GitHub’s private vulnerability reporting or the security address in <code>SECURITY.md</code>. Public issues are for everything else. <span class="ph" data-placeholder="security">Advisories</span> <Tag k="launch" /></dd>
+    <dt>report a bug</dt><dd>Issue templates, in the repository: <a href={repo.issues}>Issues</a>.</dd>
+    <dt>security</dt><dd>Report privately, through <a href={repo.reportVulnerability}>GitHub’s private vulnerability reporting</a> or the security address in <a href={repo.securityPolicy}><code>SECURITY.md</code></a>. Public issues are for everything else.</dd>
   </dl>
 
   <p class="next"><a href="/sips">The SIPs</a><a href="/paper#s-zcash">The paper, §6</a><a href="/node">Run a node</a></p>

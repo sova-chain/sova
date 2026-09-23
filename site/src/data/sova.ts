@@ -36,37 +36,57 @@ export const notClaims = [
   ['SOVA is gas', 'Not governance, not staking, not a claim on anything.'],
 ] as const;
 
+// The public repository: github.com/sova-chain/sova, default branch `main`
+// (an export of the `release` trunk, same file layout).
+export const REPO = 'https://github.com/sova-chain/sova';
+export const CLONE = `git clone ${REPO} && cd sova`;
+export const repo = {
+  root: REPO,
+  sips: `${REPO}/tree/main/sips`,
+  docs: `${REPO}/tree/main/docs`,
+  issues: `${REPO}/issues`,
+  discussions: `${REPO}/discussions`,
+  contributing: `${REPO}/blob/main/CONTRIBUTING.md`,
+  securityPolicy: `${REPO}/blob/main/SECURITY.md`,
+  reportVulnerability: `${REPO}/security/advisories/new`,
+  /** A file on `main`, e.g. `sips/sip-1.md`. */
+  blob: (path: string) => `${REPO}/blob/main/${path}`,
+  /** A directory on `main`, e.g. `contracts/src/zcash`. */
+  tree: (path: string) => `${REPO}/tree/main/${path}`,
+};
+
 // The SIPs (sips/*.md; SIP-5 is reserved in docs/WORKPLAN.md row z-2 and
-// docs/ROADMAP.md, not yet written). `st` is the status word shown as a tag;
-// `note` is the status detail. Rendered by /sips and the landing page.
+// docs/ROADMAP.md, not yet written, so it has no `file`). `st` is the status
+// word shown as a tag; `note` is the status detail; `file` is the text in
+// sips/ (linked on GitHub). Rendered by /sips and the landing page.
 export const sips = [
   {
-    n: 1, id: 'sip-1', title: 'Burn transaction format', st: 'frozen',
+    n: 1, id: 'sip-1', file: 'sip-1.md', title: 'Burn transaction format', st: 'frozen',
     sum: 'What a burn is: one transparent Zcash transaction that pays ZEC to an unspendable script and names the EVM address to credit.',
     note: 'Frozen after a burn was relayed through public Zcash testnet peers and mined by an unrelated miner (txid 641cc306…, height 4,383,754).',
   },
   {
-    n: 2, id: 'sip-2', title: 'Epochs, rewards and settlement', st: 'draft',
+    n: 2, id: 'sip-2', file: 'sip-2.md', title: 'Epochs, rewards and settlement', st: 'draft',
     sum: 'One Zcash block is one epoch. Burners rank by weight, the top burner seals, and rewards land as the block’s withdrawals, re-derived by every node.',
     note: 'Implemented; proven on regtest.',
   },
   {
-    n: 3, id: 'sip-3', title: 'Emission schedule', st: 'accepted',
+    n: 3, id: 'sip-3', file: 'sip-3.md', title: 'Emission schedule', st: 'accepted',
     sum: '6,250 SOVA per epoch after a 20,000-epoch slow start, halving every 1,680,000 epochs, Zcash’s own interval.',
     note: 'Numbers locked; the schedule switches on with the public testnet.',
   },
   {
-    n: 4, id: 'sip-4', title: 'Zcash state precompile', st: 'draft',
+    n: 4, id: 'sip-4', file: 'sip-4-draft-zcash-state-precompile.md', title: 'Zcash state precompile', st: 'draft',
     sum: 'Contracts read transparent Zcash state, as of the Zcash block each Sova block commits to.',
     note: 'Build approved. Code in review; ships with the public testnet.',
   },
   {
-    n: 5, id: 'sip-5', title: 'Wrapped ZEC via NEAR', st: 'planned',
+    n: 5, id: 'sip-5', file: null, title: 'Wrapped ZEC via NEAR', st: 'planned',
     sum: 'ZEC held by NEAR’s MPC network and minted as wZEC on Sova. Custody, labelled as custody, with the vault monitored from Zcash.',
     note: 'Number reserved; text comes after SIP-4.',
   },
   {
-    n: 6, id: 'sip-6', title: 'Sealer signatures', st: 'draft',
+    n: 6, id: 'sip-6', file: 'sip-6-draft-sealer-signatures.md', title: 'Sealer signatures', st: 'draft',
     sum: 'The sealer signs its block with the key its burn credits, so every block names its sealer and light clients get a signature to verify.',
     note: 'Design only, decisions open. Planned for the testnet reset, with SIP-4.',
   },
@@ -116,13 +136,17 @@ export const owlSamples = [
   [6, 'dusk'], [7, 'midnight'], [8, 'moss'], [9, 'classic'], [10, 'slate'], [11, 'bright'],
 ] as const;
 
-// Placeholders wired at launch (site/README.md, "Placeholders to wire at launch").
-export const placeholders = [
-  { key: 'source-repo', label: 'Source (at launch)' },
-  { key: 'docs', label: 'Specs & docs (at launch)' },
+// The footer's outbound links (every Site.astro page, the paper and the
+// /v/* directions). An entry with no `href` is a placeholder until launch:
+// rendered as a non-link with data-placeholder={key} (site/README.md,
+// "Still at launch").
+export const footerLinks: readonly { key: string; label: string; href?: string }[] = [
+  { key: 'source-repo', label: 'Source', href: repo.root },
+  { key: 'sips', label: 'Specs', href: repo.sips },
+  { key: 'docs', label: 'Docs', href: repo.docs },
   { key: 'testnet', label: 'Testnet (at launch)' },
   { key: 'community', label: 'Forum thread (at launch)' },
-] as const;
+];
 
 // Sova wordmark paths (brand/SOVA LOGO/COLOR/SOVA_LOGO_COLOR.svg), viewBox 0 0 387 70.
 export const WORDMARK_PATHS = [

@@ -46,7 +46,7 @@ Astro's anonymous telemetry is switched off in every script
 | `public/favicon.svg` | `brand/SOVA PFP/SOVA_PFP_COLOR.svg` |
 | `src/pages/v/{2009,terminal,burn,paper}.astro` | Candidate redesigns (pre-decision), at `/v/2009`, `/v/terminal`, `/v/burn`, and `/v/paper` (2009 refined into a typeset paper whose figures are terminal panels); `/v` lists them. Unlike the index they use small vanilla scripts for motion, all honouring `prefers-reduced-motion` |
 | `src/layouts/Direction.astro`, `src/components/DirSwitch.astro` | Head and cross-links for the `/v/*` pages (no shared stylesheet) |
-| `src/data/sova.ts`, `src/data/owl-ascii.ts` | Shared facts (the page list, the SIP list, positioning lines; sourced per the table below), and the build-time Ashwings-to-ASCII renderer |
+| `src/data/sova.ts`, `src/data/owl-ascii.ts` | Shared facts (the page list, the SIP list with each SIP's file, the repository URLs and footer links, positioning lines; sourced per the table below), and the build-time Ashwings-to-ASCII renderer |
 
 No third-party requests: fonts, images and CSS are all first-party. The CSS is
 inlined into the HTML at build time.
@@ -61,32 +61,43 @@ inlined into the HTML at build time.
 | Build output directory | `dist` |
 | Environment variable | `NODE_VERSION=22` (or newer) |
 
-Before the first real deploy (M0), work through the placeholders below. They're
-all tagged `data-placeholder="…"`, so `grep -rn data-placeholder src/` finds
-them.
+The source is public at <https://github.com/sova-chain/sova> (default branch
+`main`, an export of the `release` trunk with the same file layout), so every
+source, spec, contributing and security link points there. What still has no
+URL stays a non-link tagged `data-placeholder="…"`; `grep -rn data-placeholder
+src/` finds every one.
 
-## Placeholders to wire at launch
+## Links to the public repository
+
+Every URL is built from `repo` / `CLONE` in `src/data/sova.ts`; SIP links use
+`sips[].file`, the exact file name in `sips/` (SIP-5 has no file yet, so it
+stays unlinked and `[planned]`). If a SIP file is renamed (for example when a
+draft drops `-draft-` from its name), update `file` there.
+
+| Where | Link |
+| --- | --- |
+| Footer of every `Site.astro` page, the paper and `/v/*` (`footerLinks`) | "Source" → the repo; "Specs" → `tree/main/sips`; "Docs" → `tree/main/docs` |
+| `/` "the SIPs" list | Each SIP → `blob/main/sips/<file>` (SIP-5 unlinked); a line to `/sips` |
+| `/` "open source" | `git clone https://github.com/sova-chain/sova && cd sova`, the URL linked |
+| `/sips` | Each SIP title → its file; "the texts" → `tree/main/sips`; "propose one" → Discussions (the root: a SIPs category may not exist yet) |
+| `/build#try` | Clone command first in the block |
+| `/build` source line | `contracts/src/zcash/` → `tree/main/contracts/src/zcash`; `sips/sip-4` → `blob/main/sips/sip-4-draft-zcash-state-precompile.md` |
+| `/build#contribute` | The repo, `CONTRIBUTING.md`, Discussions, Issues, private vulnerability reporting (`security/advisories/new`, needs a GitHub login) and `SECURITY.md` |
+| `/node` "start" block | `git clone https://github.com/sova-chain/sova && cd sova`, then `./box/up.sh` |
+| Paper §10 and references [2], [3], [4], [6] | The repo; each SIP file, URL shown in full like [1] and [5] (printable ASCII, inside the paper's font subset) |
+| `/v/2009` spec line, `/v/terminal` verify and run blocks, `/v/burn` CTA and run section | SIP-1 to SIP-3 files, the repo, the clone command |
+
+## Still at launch
 
 | Where | Placeholder | Becomes |
 | --- | --- | --- |
-| Hero CTA, Run-it section, footer | `source-repo`: "Source code opens at launch" (non-link) | Link to the public repo |
-| Footer | `docs`: "Docs (at launch)" | Docs page or site section |
-| Footer | `testnet`: "Testnet (at launch)" | Testnet join guide, RPC and explorer |
-| Footer | `community`: "Forum thread (at launch)" | Zcash forum announcement thread |
-| Header pill | "Pre-release. No public network yet." | Update when the testnet is public |
-| `Base.astro` | `<meta name="robots" content="noindex">` | Remove to allow indexing |
-| `Base.astro` | No `og:image` | Add a social card, for example from `brand/SOVA_BANNER_GOLD.jpg` |
-| Receipts section | "once the repository is public" / "when the repository opens" | Link each "Check it" to the file or command it names |
-| `/node` "start" block | `source-repo`: `git clone <repo, at launch>` | The public clone URL |
+| Footers (`footerLinks`) | `testnet`: "Testnet (at launch)" | Testnet join guide, RPC and explorer |
+| Footers (`footerLinks`) | `community`: "Forum thread (at launch)" | Zcash forum announcement thread |
 | `/mine`, `/node` "testnet" sections | `testnet`: "The testnet guide goes live at launch" | Link to the testnet miner / node guide |
 | `/press` "contact" | `press-contact`: "A press contact goes live at launch" | A press email or form |
-| Footer of every `Site.astro` page | `source-repo`, `docs`, `testnet`, `community` (the same four as the paper) | As above |
-| `/` "open source"; `/build` source line, `#contribute` (GitHub, Issues) | `source-repo`: "GitHub [at launch]" | The public repo, its issues |
-| `/build` source line; `/sips` "the texts"; paper reference [6] | `docs`: `sips/sip-4`, "sips/ in the repository", "(available at launch)" | The SIP files in the public repo |
-| `/build#contribute` security row | `security`: "Advisories [at launch]" | The repo's private vulnerability reporting page (`SECURITY.md`) |
-| `/sips` "propose one" | `discussions`: "Discussions [at launch]" | The SIPs category of GitHub Discussions |
-
-`grep -rn data-placeholder src/` finds every one.
+| Status lines (`status="pre-release · no public network yet"`) | Plain text | Update when the testnet is public |
+| `Base.astro` (unused today) | `<meta name="robots" content="noindex">` | Remove before a page uses it |
+| All layouts | No `og:image` | Add a social card, for example from `brand/SOVA_BANNER_GOLD.jpg` |
 
 ## Where each claim comes from
 
@@ -100,7 +111,7 @@ them.
 | Landing "what you can do": pay with ZEC from any Zcash wallet, shielded balance included, demo buy an Ashwing; ZEC↔SOVA swaps in self-custody; proof-of-burn for names, spam fees, Sybil-resistant badges; mine or let an agent mine; wrapped ZEC custodied by NEAR | `sips/sip-4-draft-zcash-state-precompile.md` §9 (use cases 1-3), `contracts/src/zcash/{ZecCheckout,ZecEscrow}.sol`, `docs/design/ashwing-zec-checkout.md`, `mcp/README.md`, `docs/ROADMAP.md` (wZEC via NEAR), `docs/WORKPLAN.md` row z-2 |
 | Landing terminal (labelled simulated): 0.25 ZEC price + 42-zat tag = 0.25000042 ZEC, z→t from a shielded balance, 3 confirmations (testnet minConf 3), `claim(order, txid, vout)`, `txOutput` / `txInfo` checks, an Ashwing minted to the buyer. The txid, order number, token number and address are illustrative | `docs/design/ashwing-zec-checkout.md` (user story, design), `contracts/src/zcash/ZecCheckout.sol` (`claim`), `IZcash.sol`; owl image `public/ashwings/onchain-4.svg` |
 | Landing "how it works", including "every Zcash answer" checked against the node's own Zcash node | `sips/sip-2.md` (Epochs, Validation), `sips/sip-3.md`, `sips/sip-4-draft-zcash-state-precompile.md` (§1 anchor; §5 answers only from the node's own index) |
-| MIT or Apache-2.0 at your option; the repository opens at launch | `README.md` (License), `docs/ROADMAP.md` (M0: public repository in progress) |
+| MIT or Apache-2.0 at your option; the repository is public at github.com/sova-chain/sova | `README.md` (License, clone line) |
 | Paper abstract and §1 (v4): every Sova block commits to the Zcash block it follows; a contract can check that a ZEC payment was mined and how deep; the ZEC stays with whoever it was paid to; wrapping puts coins with a custodian and leaves contracts blind to Zcash | `sips/sip-4-draft-zcash-state-precompile.md` (§1 anchor commitment, landed on `release` as `21efaa0` per `docs/WORKPLAN.md`; §3), `positioning.md` (Act II) |
 | Paper §6 Contracts That See Zcash: the anchor commitment; the five answers (anchor, block hash and time, where a tx was mined and how deep, what a transparent output pays and to which script, whether a tx is a burn); pure function of the committed chain; a node that cannot answer holds the block and retries; "not found" is a result; confirmations from the committed block, each contract sets its minimum; shielded amounts, recipients, memos private; z→t output public; reserve-pay-deliver sale; a deeper Zcash reorg unwinds Sova; anchor rule in the node, precompile built and in review, ships with the public testnet | `sips/sip-4-draft-zcash-state-precompile.md` (Summary, §1-§3, §7, §8, §9), `contracts/src/zcash/ZcashLib.sol` (minConf required, no default), `docs/design/ashwing-zec-checkout.md`, `docs/WORKPLAN.md` (z-1 row: step 1 landed `21efaa0`; v1 code complete on `z1/sip4-v1`) |
 | Paper §9 (v4): no peg; ZEC stays on Zcash where contracts can see it; a planned wrapped ZEC held by NEAR's MPC network, called custody every time. `/press` "No peg today" | `docs/ROADMAP.md` (Later: wZEC custodied by NEAR, disclosed as custody), `positioning.md` (Act III), `docs/WORKPLAN.md` row z-2 |

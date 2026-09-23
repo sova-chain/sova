@@ -6,7 +6,7 @@
 // page's terminal is its one CSS animation. Pages are indexable (only /v/*
 // and /ashwings/buy are noindex). Facts are sourced in site/README.md.
 import Direction from './Direction.astro';
-import { WORDMARK_PATHS, sitePages, placeholders, EDGE_LINE } from '../data/sova';
+import { WORDMARK_PATHS, sitePages, footerLinks, EDGE_LINE } from '../data/sova';
 
 interface Props {
   title: string;
@@ -51,7 +51,7 @@ const { title, description, current, cmd, status, indexable = true } = Astro.pro
       {sitePages.map((p) => <> · <a href={p.href}>{p.label}</a></>)}
     </p>
     <p class="dim">
-      {placeholders.map((p, i) => <>{i > 0 && ' · '}<span aria-disabled="true" data-placeholder={p.key}>{p.label}</span></>)}
+      {footerLinks.map((p, i) => <>{i > 0 && ' · '}{p.href ? <a href={p.href}>{p.label}</a> : <span aria-disabled="true" data-placeholder={p.key}>{p.label}</span>}</>)}
     </p>
     <p class="dim">{EDGE_LINE} Code dual-licensed MIT or Apache-2.0.</p>
   </footer>

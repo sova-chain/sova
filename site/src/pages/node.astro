@@ -3,6 +3,7 @@
 // box/up/README.md (prerequisites, quickstart, "What you're seeing", evidence,
 // troubleshooting). Sources: site/README.md.
 import Site from '../layouts/Site.astro';
+import { CLONE } from '../data/sova';
 ---
 <Site
   title="Run a Sova node"
@@ -25,8 +26,7 @@ import Site from '../layouts/Site.astro';
   </ul>
 
   <h2>start</h2>
-  <pre class="sh"><code><span class="p">$ </span>git clone <span class="ph" data-placeholder="source-repo">&lt;repo, at launch&gt;</span> sova-chain
-<span class="p">$ </span>cd sova-chain
+  <pre class="sh"><code><span class="p">$ </span>{CLONE}
 <span class="p">$ </span>./box/up.sh</code></pre>
   <p>The first run compiles the node and the miner: 11 minutes on an idle Apple Silicon laptop, closer to 25 on a busy one. After that, <code>up</code> takes under a minute, and the first epoch settles seconds later.</p>
 

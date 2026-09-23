@@ -7,7 +7,7 @@ import Direction from '../../layouts/Direction.astro';
 import DirSwitch from '../../components/DirSwitch.astro';
 import {
   EDGE_LINE, REWARD_SOVA, HALVING_EPOCHS, SLOW_START_EPOCHS,
-  notClaims, owls, placeholders, WORDMARK_PATHS,
+  notClaims, owls, footerLinks, repo, WORDMARK_PATHS,
 } from '../../data/sova';
 
 // Big numerals. Each digit becomes a rolling column (see .roll in the CSS).
@@ -54,7 +54,7 @@ const split = [
         <p class="edge">{EDGE_LINE}</p>
         <div class="ctas">
           <a class="btn" href="#flow">See a burn become SOVA ↓</a>
-          <span class="btn ghost" aria-disabled="true" data-placeholder="source-repo">Source opens at launch</span>
+          <a class="btn ghost" href={repo.root}>Source on GitHub</a>
         </div>
       </div>
       <div class="stage-wrap">
@@ -139,12 +139,12 @@ const split = [
 
     <section class="run">
       <code>$ ./box/up.sh</code>
-      <p>A full burn-to-mine devnet on your laptop. Repo opens at launch.</p>
+      <p>A full burn-to-mine devnet on your laptop. <a href={repo.root}>Clone the source</a> and run it.</p>
     </section>
   </main>
 
   <footer class="foot">
-    <ul>{placeholders.map((p) => <li><span aria-disabled="true" data-placeholder={p.key}>{p.label}</span></li>)}</ul>
+    <ul>{footerLinks.map((p) => <li>{p.href ? <a href={p.href}>{p.label}</a> : <span aria-disabled="true" data-placeholder={p.key}>{p.label}</span>}</li>)}</ul>
     <p>Code dual-licensed MIT or Apache-2.0.</p>
     <DirSwitch current="burn" />
   </footer>
@@ -201,7 +201,8 @@ const split = [
     background: var(--gold); color: var(--ink); text-decoration: none;
   }
   .btn:hover { background: #ffc94a; }
-  .btn.ghost { background: none; color: var(--ash); border: 1px solid var(--rule); font-weight: 500; cursor: not-allowed; }
+  .btn.ghost { background: none; color: var(--ash); border: 1px solid var(--rule); font-weight: 500; }
+  .btn.ghost:hover { background: none; color: var(--paper); border-color: var(--ash); }
   .stage-wrap { position: relative; aspect-ratio: 1 / 1; width: 100%; max-width: 600px; justify-self: end; }
   .stage-wrap::before {
     content: ''; position: absolute; inset: 10% 10% 0; border-radius: 50%;

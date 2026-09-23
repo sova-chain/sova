@@ -2,11 +2,12 @@
 // /sips: the Sova Improvement Proposals, with status and one line each
 // (data/sova.ts `sips`, from sips/*.md; SIP-5 reserved in docs/WORKPLAN.md
 // row z-2 and docs/ROADMAP.md), how a SIP moves (CONTRIBUTING.md, the status
-// lines of sips/sip-1.md and sip-3.md), and how to propose one. The SIP texts
-// open with the repository: links are placeholders. Sources: site/README.md.
+// lines of sips/sip-1.md and sip-3.md), and how to propose one. Each title
+// links to its text in the public repository (SIP-5 has none yet).
+// Sources: site/README.md.
 import Site from '../layouts/Site.astro';
 import Tag from '../components/Tag.astro';
-import { sips } from '../data/sova';
+import { sips, repo } from '../data/sova';
 
 const flow = [
   { k: 'idea', t: 'Floated in the SIPs category of Discussions.' },
@@ -20,7 +21,7 @@ const flow = [
   description="The Sova Improvement Proposals: burn format, epochs and settlement, emission, the Zcash state precompile, wrapped ZEC via NEAR, sealer signatures. Status and one line each."
   current="/sips"
   cmd="ls sips/"
-  status="pre-release · SIP texts open with the repository"
+  status="pre-release · the SIP texts are in the repository"
 >
   <h1>SIPs</h1>
   <p class="lead">The protocol, written down. Consensus rules change through Sova Improvement Proposals.</p>
@@ -28,13 +29,13 @@ const flow = [
   <ol class="sips">
     {sips.map((s) => (
       <li id={s.id}>
-        <p class="sh1"><span class="num">SIP-{s.n}</span> <span class="ti">{s.title}</span> <Tag k={s.st} /></p>
+        <p class="sh1"><span class="num">SIP-{s.n}</span> {s.file ? <a class="ti" href={repo.blob(`sips/${s.file}`)}>{s.title}</a> : <span class="ti">{s.title}</span>} <Tag k={s.st} /></p>
         <p class="sum">{s.sum}</p>
         <p class="note dim">{s.note}</p>
       </li>
     ))}
   </ol>
-  <p class="dim"># the texts: <span class="ph" data-placeholder="docs">sips/ in the repository</span> <Tag k="launch" /> · the paper cites SIP-1 to SIP-4: <a href="/paper#refs">references</a></p>
+  <p class="dim"># the texts: <a href={repo.sips}>sips/ in the repository</a> · the paper cites SIP-1 to SIP-4: <a href="/paper#refs">references</a></p>
 
   <h2>how a SIP moves</h2>
   <ol class="flow">
@@ -43,7 +44,7 @@ const flow = [
 
   <h2>propose one</h2>
   <p>Start with the problem, in the SIPs category of Discussions. When the idea holds up, open the SIP as a pull request to <code>sips/</code>, before the code that implements it. Protocol changes, from consensus rules to the burn format, go through a SIP.</p>
-  <p><span class="ph" data-placeholder="discussions">Discussions</span> <Tag k="launch" /> · <a href="/build#contribute">How to contribute</a></p>
+  <p><a href={repo.discussions}>Discussions</a> · <a href="/build#contribute">How to contribute</a></p>
 
   <p class="next"><a href="/build">Build</a><a href="/paper">The paper</a><a href="/node">Run a node</a></p>
 </Site>

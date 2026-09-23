@@ -8,7 +8,7 @@ import DirSwitch from '../../components/DirSwitch.astro';
 import { owlAscii } from '../../data/owl-ascii';
 import {
   EDGE_LINE, REWARD_SOVA, HALVING_EPOCHS, SLOW_START_EPOCHS, MIN_BURN_ZAT,
-  notClaims, placeholders,
+  notClaims, footerLinks, repo, CLONE,
 } from '../../data/sova';
 
 // "SOVA" in the figlet ANSI Shadow face.
@@ -101,7 +101,7 @@ const PS = 'anon@sova:~$';
           <li><span class="ok">[ OK ]</span> no admin keys in consensus, no premine, no investor allocation</li>
           <li><span class="ok">[ OK ]</span> <code>sova-miner report --verify-rpc</code> diffs your burns txid by txid</li>
         </ul>
-        <p class="dim"># properties of the code. checkable yourself when the repo opens.</p>
+        <p class="dim"># properties of the code. check them yourself: <a href={repo.root}>github.com/sova-chain/sova</a></p>
       </div>
     </section>
 
@@ -132,7 +132,7 @@ const PS = 'anon@sova:~$';
       <div class="out">
         <h2 id="run" class="sr">Run it yourself</h2>
         <p>zebrad regtest + sova node + miner. one command, minting in under 30 s after the first build.</p>
-        <p class="dim"># repo opens at launch. point an agent at the MCP server and give it a budget.</p>
+        <p class="dim"># first: {CLONE}. point an agent at the MCP server and give it a budget.</p>
       </div>
     </section>
 
@@ -141,7 +141,7 @@ const PS = 'anon@sova:~$';
       <div class="out">
         <h2 id="links" class="sr">Links</h2>
         <ul class="links">
-          {placeholders.map((p) => <li><span aria-disabled="true" data-placeholder={p.key}>{p.label.toLowerCase()}</span></li>)}
+          {footerLinks.map((p) => <li>{p.href ? <a href={p.href}>{p.label.toLowerCase()}</a> : <span aria-disabled="true" data-placeholder={p.key}>{p.label.toLowerCase()}</span>}</li>)}
         </ul>
         <p class="dim"># MIT or Apache-2.0</p>
       </div>

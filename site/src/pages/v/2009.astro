@@ -6,7 +6,7 @@ import Direction from '../../layouts/Direction.astro';
 import DirSwitch from '../../components/DirSwitch.astro';
 import {
   EDGE_LINE, REWARD_SOVA, HALVING_EPOCHS, SLOW_START_EPOCHS, MIN_BURN_ZAT,
-  transcript, notClaims, owls, placeholders, WORDMARK_PATHS,
+  transcript, notClaims, owls, footerLinks, repo, WORDMARK_PATHS,
 } from '../../data/sova';
 ---
 <Direction
@@ -74,16 +74,16 @@ import {
       </div>
 
       <p class="spec">
-        Read the spec: <span class="ph" aria-disabled="true" data-placeholder="docs">SIP-1 burns</span>,{' '}
-        <span class="ph" aria-disabled="true" data-placeholder="docs">SIP-2 epochs</span>,{' '}
-        <span class="ph" aria-disabled="true" data-placeholder="docs">SIP-3 emission</span>{' '}
-        <span class="soon">(published with the source at launch)</span>
+        Read the spec: <a href={repo.blob('sips/sip-1.md')}>SIP-1 burns</a>,{' '}
+        <a href={repo.blob('sips/sip-2.md')}>SIP-2 epochs</a>,{' '}
+        <a href={repo.blob('sips/sip-3.md')}>SIP-3 emission</a>{' '}
+        <span class="soon">(in the <a href={repo.root}>source</a>)</span>
       </p>
     </main>
 
     <footer class="foot">
       <p>
-        {placeholders.map((p, i) => <>{i > 0 && ' | '}<span aria-disabled="true" data-placeholder={p.key}>{p.label}</span></>)}
+        {footerLinks.map((p, i) => <>{i > 0 && ' | '}{p.href ? <a href={p.href}>{p.label}</a> : <span aria-disabled="true" data-placeholder={p.key}>{p.label}</span>}</>)}
       </p>
       <p>Code dual-licensed MIT or Apache-2.0.</p>
       <DirSwitch current="2009" />

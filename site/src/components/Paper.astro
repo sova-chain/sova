@@ -18,7 +18,7 @@ import DirSwitch from './DirSwitch.astro';
 import { owlAscii } from '../data/owl-ascii';
 import {
   EDGE_LINE, REWARD_SOVA, HALVING_EPOCHS, SLOW_START_EPOCHS, MIN_BURN_ZAT,
-  transcript, placeholders, WORDMARK_PATHS, twoBurnerSplit as split, sitePages as allPages,
+  transcript, footerLinks, repo, sips, WORDMARK_PATHS, twoBurnerSplit as split, sitePages as allPages,
 } from '../data/sova';
 
 interface Props {
@@ -30,6 +30,8 @@ const TITLE = 'Sova: An EVM Chain That Can See Zcash';
 // Links out of the paper: home first, then every page but this one.
 const sitePages = [{ href: '/', label: 'Home' }, ...allPages.filter((p) => p.href !== '/paper')];
 const owl = owlAscii('onchain-4.svg');
+// Reference URL of a SIP's text on GitHub (data/sova.ts `sips[].file`).
+const sipUrl = (n: number) => repo.blob(`sips/${sips.find((s) => s.n === n)!.file}`);
 
 // Table of contents: every numbered heading on the page, in order.
 const toc: { id: string; n: string; t: string; sub?: { id: string; n: string; t: string }[] }[] = [
@@ -439,7 +441,7 @@ const wds = [
       <p>One command, <code>./box/up.sh</code>, starts a regtest Zcash node, a Sova
       node and a miner on one machine. A first build from source takes 11 to 25
       minutes, depending on the machine; after that, a run mints within 30 seconds. The source and the specifications
-      open at launch, and the public testnet comes next. Ashwings (Figure 5), owls drawn entirely by their contract, will be a
+      are public at <a href="https://github.com/sova-chain/sova">github.com/sova-chain/sova</a>, and the public testnet comes next. Ashwings (Figure 5), owls drawn entirely by their contract, will be a
       day-one mint.</p>
 
       <figure class="fig" id="fig5">
@@ -472,12 +474,16 @@ const wds = [
       <ol class="refs">
         <li><span class="rn">[1]</span> D. Hopwood, S. Bowe, T. Hornby, N. Wilcox, “Zcash Protocol Specification,”{' '}
           <a href="https://zips.z.cash/protocol/protocol.pdf" rel="noopener">https://zips.z.cash/protocol/protocol.pdf</a>.</li>
-        <li><span class="rn">[2]</span> The Sova contributors, “SIP-1: The Burn Transaction Format,” <span class="ph" data-placeholder="docs">(available at launch)</span>.</li>
-        <li><span class="rn">[3]</span> The Sova contributors, “SIP-2: Epochs, Rewards, and Settlement,” <span class="ph" data-placeholder="docs">(available at launch)</span>.</li>
-        <li><span class="rn">[4]</span> The Sova contributors, “SIP-3: Emission Schedule,” <span class="ph" data-placeholder="docs">(available at launch)</span>.</li>
+        <li><span class="rn">[2]</span> The Sova contributors, “SIP-1: The Burn Transaction Format,”{' '}
+          <a href={sipUrl(1)} rel="noopener">{sipUrl(1)}</a>.</li>
+        <li><span class="rn">[3]</span> The Sova contributors, “SIP-2: Epochs, Rewards, and Settlement,”{' '}
+          <a href={sipUrl(2)} rel="noopener">{sipUrl(2)}</a>.</li>
+        <li><span class="rn">[4]</span> The Sova contributors, “SIP-3: Emission Schedule,”{' '}
+          <a href={sipUrl(3)} rel="noopener">{sipUrl(3)}</a>.</li>
         <li><span class="rn">[5]</span> G. Wood, “Ethereum: A Secure Decentralised Generalised Transaction Ledger,”{' '}
           <a href="https://ethereum.github.io/yellowpaper/paper.pdf" rel="noopener">https://ethereum.github.io/yellowpaper/paper.pdf</a>.</li>
-        <li><span class="rn">[6]</span> The Sova contributors, “SIP-4: Zcash State Precompile,” <span class="ph" data-placeholder="docs">(available at launch)</span>.</li>
+        <li><span class="rn">[6]</span> The Sova contributors, “SIP-4: Zcash State Precompile,”{' '}
+          <a href={sipUrl(4)} rel="noopener">{sipUrl(4)}</a>.</li>
       </ol>
 
       <span class="folio" aria-hidden="true">5</span>
@@ -490,7 +496,7 @@ const wds = [
       {sitePages.map((p, i) => <>{i > 0 && ' · '}<a href={p.href}>{p.label}</a></>)}
     </p>
     <p>
-      {placeholders.map((p, i) => <>{i > 0 && ' · '}<span aria-disabled="true" data-placeholder={p.key}>{p.label}</span></>)}
+      {footerLinks.map((p, i) => <>{i > 0 && ' · '}{p.href ? <a href={p.href}>{p.label}</a> : <span aria-disabled="true" data-placeholder={p.key}>{p.label}</span>}</>)}
     </p>
     <p>{EDGE_LINE} Code dual-licensed MIT or Apache-2.0. Set in Computer Modern (a subset of CMU Serif, <a href="/fonts/LICENSE-CMU-Serif.txt">SIL OFL</a>).</p>
     {!home && <DirSwitch current="paper" />}
