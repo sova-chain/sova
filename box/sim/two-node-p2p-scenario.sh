@@ -220,6 +220,32 @@ else
   pass "(d) no reputation hits"
 fi
 
+# ============================================================
+# (e) confirmation labels: safe = 3 blocks behind (the branch rule never
+# replaces those), finalized = 10 (Rob, 2026-09-23). The head can move
+# between reads, hence the small upper slack.
+# ============================================================
+echo ""
+echo "=== (e) safe and finalized ==="
+for node in A B; do
+  rpc_var="ENGINE_RPC_${node}"
+  SAFE_N="$(eth_tag_number "${!rpc_var}" safe)"
+  FIN_N="$(eth_tag_number "${!rpc_var}" finalized)"
+  HEAD_N="$(eth_block_number "${!rpc_var}")"
+  if [[ -z "${SAFE_N}" || -z "${FIN_N}" ]]; then
+    fail "(e) node ${node}: safe/finalized unset (safe=${SAFE_N:-none} finalized=${FIN_N:-none} head=${HEAD_N})"
+    continue
+  fi
+  SAFE_LAG=$((HEAD_N - SAFE_N))
+  FIN_LAG=$((HEAD_N - FIN_N))
+  if [[ "${SAFE_LAG}" -ge 3 && "${SAFE_LAG}" -le 6 ]] \
+    && { [[ "${FIN_LAG}" -ge 10 && "${FIN_LAG}" -le 13 ]] || [[ "${FIN_N}" -eq 0 && "${HEAD_N}" -le 13 ]]; }; then
+    pass "(e) node ${node}: head ${HEAD_N}, safe ${SAFE_N} (-${SAFE_LAG}), finalized ${FIN_N} (-${FIN_LAG})"
+  else
+    fail "(e) node ${node}: head ${HEAD_N}, safe ${SAFE_N} (-${SAFE_LAG}, want 3..6), finalized ${FIN_N} (-${FIN_LAG}, want 10..13)"
+  fi
+done
+
 echo ""
 if [[ "${FAILURES}" -eq 0 ]]; then
   echo "TWO-NODE P2P SCENARIO PASSED (all assertions)"

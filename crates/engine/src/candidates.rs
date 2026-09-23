@@ -59,6 +59,15 @@ const MAX_ATTACH_DEPTH: u64 = 64;
 /// A branch forking deeper than this is not a candidate, whatever its rank.
 pub const MAX_REPLACE_DEPTH: u64 = 3;
 
+/// Blocks below the head reported as `safe`: the branch rule never replaces
+/// a block with this many blocks built on it.
+pub const SAFE_DEPTH: u64 = MAX_REPLACE_DEPTH;
+
+/// Blocks below the head reported as `finalized` (Rob, 2026-09-23): ten
+/// Zcash confirmations of the anchor, about 12.5 minutes, the depth SIP-4
+/// suggests for mainnet and close to Ethereum's finality.
+pub const FINALIZED_DEPTH: u64 = 10;
+
 /// The canonical-hash lookup, borrowed.
 type Reader<'a> = &'a (dyn Fn(u64) -> Option<[u8; 32]> + Send + Sync);
 

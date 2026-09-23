@@ -25,10 +25,10 @@
 //! sibling of the tip, built on the tip's parent) and what stops a stale
 //! trigger from stacking a ghost block on top of an imported one.
 //!
-//! Finality is depth-lagged exactly like stock `LocalMiner` (64 blocks,
-//! halved for safe) so recent tips stay reorgable — on Sova that depth
-//! is an epoch-count lag, mirroring the reality that only Zcash depth
-//! finalizes anything.
+//! Finality is depth-lagged so recent tips stay reorgable: `safe` is
+//! [`SAFE_DEPTH`] blocks behind (the branch rule never replaces those) and
+//! `finalized` [`FINALIZED_DEPTH`] behind — an epoch-count lag, mirroring
+//! the reality that only Zcash depth finalizes anything.
 
 use std::time::Duration;
 
@@ -43,6 +43,8 @@ use reth_ethereum::{
 };
 use reth_payload_builder::PayloadBuilderHandle;
 
+use crate::candidates::{FINALIZED_DEPTH, SAFE_DEPTH};
+
 /// A build request from the sealer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BuildTarget {
@@ -54,10 +56,6 @@ pub struct BuildTarget {
     /// first build) is a no-op, never a second block.
     pub sibling: bool,
 }
-
-/// Blocks behind head marked finalized (and half of it marked safe) —
-/// the same default depth as stock `LocalMiner`.
-const FINALITY_DEPTH: u64 = 64;
 
 /// A local block producer that treats the provider's canonical chain as
 /// the only source of truth for what to build on and what to re-assert.
@@ -133,9 +131,9 @@ where
     ) -> eyre::Result<ForkchoiceState> {
         Ok(ForkchoiceState {
             head_block_hash: head_hash,
-            safe_block_hash: self.canonical_hash(head_height.saturating_sub(FINALITY_DEPTH / 2))?,
+            safe_block_hash: self.canonical_hash(head_height.saturating_sub(SAFE_DEPTH))?,
             finalized_block_hash: self
-                .canonical_hash(head_height.saturating_sub(FINALITY_DEPTH))?,
+                .canonical_hash(head_height.saturating_sub(FINALIZED_DEPTH))?,
         })
     }
 

@@ -346,14 +346,21 @@ async fn main() -> eyre::Result<()> {
                 move |best: engine::candidates::BestCandidate| {
                     let engine_handle = engine_handle.clone();
                     // Depth-lagged safe/finalized from the canonical
-                    // chain (the candidate's ancestors), zero = "none
-                    // yet". Never `same_hash`: finalizing the adopted
-                    // tip would forbid the next micro-reorg.
+                    // chain. Counted from the lower of the candidate and
+                    // our effective head: a branch the arbiter adopts
+                    // forks at most MAX_REPLACE_DEPTH - 1 below the
+                    // effective head, so these are always ancestors of
+                    // the new head. Never `same_hash`: finalizing the
+                    // adopted tip would forbid the next micro-reorg.
                     let lag = {
                         let provider = lag_provider.clone();
+                        let head = provider.best_block_number().unwrap_or(0);
+                        let effective = engine::expectations::global()
+                            .effective_head(head, |h| canonical_anchor(&provider, h));
+                        let base = best.sova_height.min(effective);
                         move |depth: u64| {
                             provider
-                                .block_hash(best.sova_height.saturating_sub(depth))
+                                .block_hash(base.saturating_sub(depth))
                                 .ok()
                                 .flatten()
                                 .unwrap_or(alloy_primitives::B256::ZERO)
@@ -362,8 +369,8 @@ async fn main() -> eyre::Result<()> {
                     async move {
                         let state = ForkchoiceState {
                             head_block_hash: alloy_primitives::B256::from(best.block_hash),
-                            safe_block_hash: lag(32),
-                            finalized_block_hash: lag(64),
+                            safe_block_hash: lag(engine::candidates::SAFE_DEPTH),
+                            finalized_block_hash: lag(engine::candidates::FINALIZED_DEPTH),
                         };
                         match engine_handle.fork_choice_updated(state, None).await {
                             Ok(outcome) if outcome.payload_status.is_valid() => Ok(()),

@@ -152,6 +152,18 @@ eth_block_number() {
   eth_rpc "$1" eth_blockNumber "[]" | python3 -c "import sys,json;print(int(json.load(sys.stdin)['result'],16))"
 }
 
+# Block number behind a tag ("safe", "finalized"); empty when unset.
+eth_tag_number() {
+  eth_rpc "$1" eth_getBlockByNumber "[\"$2\", false]" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin).get('result')
+    print(int(d['number'], 16) if d else '')
+except Exception:
+    print('')
+"
+}
+
 eth_balance_wei() {
   eth_rpc "$1" eth_getBalance "[\"$2\",\"latest\"]" \
     | python3 -c "import sys,json;print(int(json.load(sys.stdin)['result'],16))"
