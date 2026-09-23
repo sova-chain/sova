@@ -1,0 +1,44 @@
+name: Feature or SIP idea
+description: Suggest an improvement to the tooling, node, miner, contracts or docs.
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Protocol changes** (consensus rules, the burn format, settlement, emission, anything nodes must agree on) are governed by SIPs:
+        float the idea in the **SIPs** category of Discussions first, then open the SIP as a pull request to `sips/` (see CONTRIBUTING.md).
+        Use this form for everything else, or to track a SIP that has been agreed.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is hard or impossible today, and for whom?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What you would like to happen. Sketches, commands or interfaces welcome.
+    validations:
+      required: true
+  - type: dropdown
+    id: protocol
+    attributes:
+      label: Does this change what nodes agree on?
+      options:
+        - "No: tooling, docs, UX, performance, or a local-only change"
+        - "Yes: it needs a SIP (link the Discussion or SIP PR below)"
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: sip
+    attributes:
+      label: Related Discussion or SIP
+      description: Link, if any.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

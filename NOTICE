@@ -1,0 +1,37 @@
+Sova
+Copyright (c) 2026 The Sova Contributors
+
+Unless a file or directory says otherwise, the contents of this repository
+are licensed under either of
+
+  * Apache License, Version 2.0 (LICENSE-APACHE), or
+  * MIT license (LICENSE-MIT)
+
+at your option.
+
+Exceptions: third-party code under its own license
+---------------------------------------------------
+
+contracts/src/vendor/v2-core/        Uniswap V2 core           GPL-3.0
+contracts/src/vendor/v2-periphery/   Uniswap V2 periphery      GPL-3.0
+                                     (one line modified: the pair init code
+                                     hash in libraries/UniswapV2Library.sol)
+contracts/src/vendor/uniswap-lib/    Uniswap solidity-lib      GPL-3.0-or-later
+                                     (TransferHelper.sol)
+contracts/src/vendor/Multicall3.sol  Multicall3                MIT
+contracts/lib/forge-std/             Foundry forge-std         MIT OR Apache-2.0
+site/public/fonts/                   CMU Serif, Newsreader,    see the LICENSE-*.txt
+                                     Roboto Mono               files there (SIL OFL 1.1)
+
+The GPL-3.0 directories carry the GNU General Public License, version 3,
+in their own LICENSE files. The MIT / Apache-2.0 grant above does not
+apply to them. contracts/src/vendor/README.md records provenance and the
+modification.
+
+The compiled AMM: the Uniswap V2 factory, pair and router contracts that
+contracts/script/Deploy.s.sol and box/deploy-dapps.sh compile and deploy
+are built from the GPL-3.0 source above (including the modified
+UniswapV2Library.sol); the MIT / Apache-2.0 grant does not cover that
+source. Sova's own contracts (contracts/src/WSOVA.sol,
+contracts/src/Ashwings.sol) and scripts are MIT and do not import the GPL
+files; the Sova node and miner contain no Uniswap code.

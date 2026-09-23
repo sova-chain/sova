@@ -1,0 +1,54 @@
+# `sova-faucet`: the project-run TAZ faucet (infra-2 decision D5). Lives in
+# the nested burn-wallet workspace beside `sova-miner` because it reuses
+# burn-wallet's keystore, transparent tx builder, ZIP-317 fee and zebrad RPC
+# client -- and, like the miner, must never link reth (see burn-wallet's
+# Cargo.toml). It holds the one hot key allowed on project infrastructure:
+# testnet-only, capped; see docs/ops/faucet.md.
+[package]
+name = "sova-faucet"
+description = "Capped, rate-limited TAZ (testnet ZEC) faucet with an isolated testnet-only key"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+authors = ["The Sova Contributors"]
+publish = false
+
+[[bin]]
+name = "sova-faucet"
+path = "src/main.rs"
+
+# Mirrors the repo-root workspace's `[workspace.lints]` (not inheritable
+# across the nested-workspace boundary).
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+unreachable_pub = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"
+
+[dependencies]
+burn-wallet = { path = ".." }
+# SIP-1's MIN_BURN_ZAT, reused as the dust threshold (same as sova-miner).
+consensus = { path = "../../consensus" }
+# Same versions/features burn-wallet uses, so one copy each in the lockfile.
+zcash_address = "0.13.0"
+zcash_protocol = { version = "0.10.6", features = ["local-consensus"] }
+zcash_transparent = { version = "0.10.0", features = ["transparent-inputs"] }
+
+# A small synchronous HTTP server: requests are handled one at a time,
+# which keeps check-then-record race-free with no locking.
+tiny_http = "0.12"
+toml = "0.9"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hex = "0.4"
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"
+zcash_primitives = { version = "0.30.1", features = ["transparent-inputs"] }

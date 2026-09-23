@@ -1,0 +1,211 @@
+---
+// sova.io landing page (site v4): the vision first. Sova is the EVM that can
+// see Zcash; burn-mining is how the chain is issued. The whitepaper moved to
+// /paper. Copy base: the orchestrator's v4 brief, tightened, positive framing
+// (Rob, 2026-09-23). Status tags instead of hedging. Every claim is in
+// site/README.md ("Where each claim comes from").
+//
+// The hero terminal is the page's one animation, CSS only: each line has its
+// own keyframes (generated below) on one 16 s loop, and every line is in the
+// DOM from the start, so nothing reflows. Reduced motion shows the finished
+// transcript. The only script is a one-line inline redirect that sends old
+// paper links (/#s4, /#refs, ...) to /paper.
+import Site from '../layouts/Site.astro';
+import Tag from '../components/Tag.astro';
+import { EDGE_LINE, sips } from '../data/sova';
+
+// Simulated checkout (docs/design/ashwing-zec-checkout.md): a 0.25 ZEC listing
+// plus a 42-zat order tag, paid z→t, minConf 3, then claim(order, txid, vout)
+// on AshwingsZecCheckout. Values are illustrative and the panel says so.
+const LOOP = 16;
+type L = { lane: 'zec' | 'sova'; k: 'cmd' | 'out' | 'note' | 'mint'; t: string; at: number };
+const lines: L[] = [
+  { lane: 'zec', k: 'cmd', t: '$ send 0.25000042 ZEC to the seller', at: 0.5 },
+  { lane: 'zec', k: 'note', t: '  from a shielded balance (z→t)', at: 1.4 },
+  { lane: 'zec', k: 'out', t: '  tx 7c1f…e02a mined', at: 2.4 },
+  { lane: 'sova', k: 'cmd', t: '$ claim(order 7, 7c1f…e02a, 0)', at: 6.0 },
+  { lane: 'sova', k: 'out', t: '  txOutput  OK  25,000,042 zat to seller', at: 7.0 },
+  { lane: 'sova', k: 'out', t: '  txInfo    OK  3 conf, minConf 3', at: 7.8 },
+  { lane: 'sova', k: 'mint', t: '  Ashwing #12 minted to 0x9e5f…9c6d', at: 9.0 },
+];
+// The confirmation counter on the "mined" line: 1/3, 2/3, 3/3.
+const confs = [{ t: '1/3', at: 2.4, to: 3.6 }, { t: '2/3', at: 3.6, to: 4.8 }, { t: '3/3', at: 4.8 }];
+const OWL_AT = 9.6;
+const HIDE_AT = 15.2;
+
+const pct = (s: number) => ((s / LOOP) * 100).toFixed(2);
+const kf = (name: string, from: number, to = HIDE_AT) =>
+  `@keyframes ${name}{0%,${pct(from)}%{opacity:0}${pct(from + 0.25)}%,${pct(to)}%{opacity:1}${pct(to + 0.25)}%,100%{opacity:0}}`;
+const css = [
+  ...lines.map((l, i) => kf(`tl${i}`, l.at)),
+  ...confs.map((c, i) => kf(`tc${i}`, c.at, c.to ?? HIDE_AT)),
+  kf('towl', OWL_AT),
+].join('');
+
+const can = [
+  { k: 'testnet', t: 'Pay with ZEC from any Zcash wallet, shielded balance included. Demo: buy an Ashwing.', href: '/build#patterns' },
+  { k: 'testnet', t: 'Swap ZEC and SOVA peer to peer, in self-custody.', href: '/build#patterns' },
+  { k: 'testnet', t: 'Build on proof-of-burn: names, spam fees, Sybil-resistant badges.', href: '/build#patterns' },
+  { k: 'local', t: 'Mine SOVA by burning ZEC, or give an agent a budget and let it mine.', href: '/mine' },
+  { k: 'planned', t: 'Wrapped ZEC, custodied by NEAR and labelled that way.', href: '/sips#sip-5' },
+] as const;
+
+const how = [
+  'Burn ZEC to mine. SOVA is issued only by destroying ZEC, split among each block’s burners.',
+  'One Sova block per Zcash block, ordered by Zcash’s proof-of-work.',
+  'Every node verifies every mint, and every Zcash answer, against its own Zcash node.',
+];
+
+const doors = [
+  { href: '/node', h: 'Run a node', cmd: './box/up.sh', t: 'A Zcash node, a Sova node and a miner, on your laptop.' },
+  { href: '/mine', h: 'Mine', cmd: 'sova-miner mine', t: 'Burn ZEC, earn the gas.' },
+  { href: '/build', h: 'Build', cmd: 'IZcash.txInfo()', t: 'Contracts that verify ZEC payments.' },
+  { href: '/sips', h: 'Read the SIPs', cmd: 'ls sips/', t: 'The protocol, one proposal at a time.' },
+];
+---
+<Site
+  title="Sova: the programmable edge of the shielded pool"
+  description="Sova is an EVM chain that can see Zcash: contracts verify real ZEC payments on Zcash itself. Permissionless, oracle-less, self-custody. Mined by burning ZEC."
+  current="/"
+  cmd="cat README"
+  status="pre-release · no public network yet"
+>
+  <script is:inline>if(/^#(s\d|s-zcash|refs|fig\d)/.test(location.hash))location.replace('/paper'+location.hash)</script>
+  <Fragment set:html={`<style>${css}</style>`} />
+
+  <section class="hero">
+    <h1>{EDGE_LINE}</h1>
+    <p class="lead">Sova is an EVM chain that can see Zcash: contracts verify real ZEC payments on Zcash itself.</p>
+    <p class="props"><span>Permissionless.</span> <span>Oracle-less.</span> <span>Self-custody.</span></p>
+
+    <figure class="tty">
+      <div class="tty-bar" aria-hidden="true"><span>zcash + sova</span><span class="sim">simulated</span></div>
+      <pre class="tty-body" aria-hidden="true"><code>{lines.map((l, i) => (
+        <span class={`ln ${l.k}`} style={`animation-name:tl${i}`}><span class={`lane ${l.lane}`}>{l.lane.padEnd(5)}</span>{l.t}{i === 2 && <span class="conf"> · conf <span class="cs">{confs.map((c, j) => <span class={`c c${j}`} style={`animation-name:tc${j}`}>{c.t}</span>)}</span></span>}</span>
+      ))}<span class="ln owlrow" style="animation-name:towl"><span class="lane">{'     '}</span><img src="/ashwings/onchain-4.svg" width="56" height="56" alt="" /></span><span class="ln cursor"><span class="lane">{'     '}</span>$ <span class="blk">▌</span></span></code></pre>
+      <figcaption>A ZEC payment lands on Zcash. A Sova contract verifies it and mints an owl. <Tag k="testnet" /></figcaption>
+    </figure>
+    <p class="sr">Simulated transcript: a buyer sends 0.25000042 ZEC to a seller from a shielded balance. After three Zcash confirmations, a claim on Sova checks the payment through the Zcash precompile and mints an Ashwing to the buyer.</p>
+  </section>
+
+  <h2>why it exists</h2>
+  <div class="why">
+    <p>Zcash is private money that works. Money gets useful when programs can react to it: a sale, a swap, a subscription, an agent paying its own way.</p>
+    <p>Until now that meant wrapping ZEC onto another chain, in someone else’s custody, where contracts cannot see Zcash.</p>
+    <p>Sova runs beside Zcash. Every Sova node runs its own Zcash node, so a contract verifies a ZEC payment directly, and the ZEC stays on Zcash.</p>
+  </div>
+
+  <h2>what you can do</h2>
+  <ul class="can">
+    {can.map((c) => <li><Tag k={c.k} /><a href={c.href}>{c.t}</a></li>)}
+  </ul>
+  <p class="legend dim"><Tag k="local" /> on your laptop today · <Tag k="testnet" /> ships with the public testnet · <Tag k="planned" /> on the roadmap</p>
+
+  <h2>how it works</h2>
+  <ol class="how">
+    {how.map((t, i) => <li><span class="n">{String(i + 1).padStart(2, '0')}</span><span>{t}</span></li>)}
+  </ol>
+  <p><a href="/paper">Read the paper →</a></p>
+
+  <h2>get started</h2>
+  <ul class="doors">
+    {doors.map((d) => (
+      <li><a href={d.href}><code>{d.cmd}</code><b>{d.h}</b><span>{d.t}</span></a></li>
+    ))}
+  </ul>
+
+  <h2>the SIPs</h2>
+  <ul class="siplist">
+    {sips.map((s) => <li><a href={`/sips#${s.id}`}><span class="sn">SIP-{s.n}</span> {s.title}</a> <Tag k={s.st} /></li>)}
+  </ul>
+
+  <h2>open source</h2>
+  <p>MIT or Apache-2.0. Run a node, propose a SIP, send a pull request. <a href="/build#contribute">How to contribute →</a></p>
+  <p class="dim"><span aria-disabled="true" data-placeholder="source-repo">GitHub</span> <Tag k="launch" /></p>
+</Site>
+
+<style>
+  .hero { margin: 0 0 8px; }
+  .hero h1 { max-width: 20ch; }
+  .props { color: var(--g); font-weight: 700; margin: 0 0 22px !important; letter-spacing: 0.01em; }
+  .props span { white-space: nowrap; }
+
+  /* The terminal */
+  .tty { margin: 0 0 8px; max-width: 640px; }
+  .tty-bar {
+    display: flex; justify-content: space-between; gap: 12px;
+    background: #1a150d; border: 1px solid var(--line); border-bottom: 0;
+    padding: 3px 12px; font-size: 12px; color: var(--g3);
+  }
+  .tty-bar .sim { color: var(--ember); }
+  .tty-bar .sim::before { content: '● '; }
+  .tty-body {
+    margin: 0; padding: 12px 14px 10px;
+    background: #110e09; border: 1px solid var(--line); border-left: 2px solid var(--g2);
+    font: 13.5px/1.6 var(--mono); color: var(--g2); white-space: pre; overflow: hidden;
+    text-shadow: 0 0 1px rgba(244, 183, 40, 0.4), 0 0 8px rgba(244, 183, 40, 0.15);
+  }
+  .tty-body code { background: none; padding: 0; color: inherit; font-size: inherit; }
+  .ln { display: block; animation-duration: 16s; animation-iteration-count: infinite; animation-timing-function: linear; }
+  .ln.cmd { color: var(--cream); }
+  .ln.note { color: var(--g3); text-shadow: none; }
+  .ln.mint { color: var(--g); font-weight: 700; }
+  .lane { color: var(--g3); text-shadow: none; }
+  .lane.zec { color: var(--ember); }
+  .lane.sova { color: var(--g); }
+  .conf { color: var(--g2); }
+  /* The three counter values share one slot; keyframes show one at a time. */
+  .cs { display: inline-grid; }
+  .c { grid-area: 1 / 1; animation-duration: 16s; animation-iteration-count: infinite; animation-timing-function: linear; }
+  .owlrow { height: 66px; padding-top: 5px; }
+  .owlrow img { display: inline-block; vertical-align: top; image-rendering: pixelated; border: 1px solid var(--g); box-shadow: 0 0 18px rgba(244, 183, 40, 0.35); }
+  .cursor { color: var(--cream); }
+  .blk { color: var(--g); animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .tty figcaption { font-size: 13px; color: var(--g2); margin-top: 8px; }
+  @media (prefers-reduced-motion: reduce) {
+    .ln, .c, .blk { animation: none !important; }
+    .c0, .c1 { visibility: hidden; }
+  }
+
+  .why p { max-width: 64ch; }
+  .can { list-style: none; padding: 0; margin: 0 0 10px; }
+  .can li { display: grid; grid-template-columns: 10ch 1fr; gap: 10px; margin: 0 0 8px; max-width: none; }
+  .can a { color: var(--text); text-decoration: none; }
+  .can a:hover { color: var(--cream); text-decoration: underline; text-decoration-color: var(--g3); }
+  .legend { font-size: 12.5px; }
+  .legend .st { font-size: 12px; }
+
+  .how { list-style: none; padding: 0; margin: 0 0 12px; }
+  .how li { display: grid; grid-template-columns: 4ch 1fr; gap: 8px; margin: 0 0 8px; max-width: none; }
+  .how .n { color: var(--g3); }
+
+  .doors { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; max-width: none; }
+  .doors li { max-width: none; }
+  .doors a {
+    display: flex; flex-direction: column; gap: 4px; height: 100%;
+    border: 1px solid var(--g3); padding: 12px 12px 14px; text-decoration: none; color: var(--text);
+  }
+  .doors a:hover { border-color: var(--g); background: rgba(244, 183, 40, 0.05); }
+  .doors code { background: none; padding: 0; color: var(--g3); font-size: 12px; }
+  .doors b { color: var(--g); font-size: 16px; }
+  .doors span { font-size: 13.5px; line-height: 1.5; }
+
+  .siplist { list-style: none; padding: 0; margin: 0 0 8px; columns: 2; column-gap: 28px; }
+  .siplist li { margin: 0 0 6px; break-inside: avoid; }
+  .siplist a { text-decoration: none; }
+  .siplist .sn { color: var(--cream); }
+
+  @media (max-width: 760px) {
+    .doors { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 600px) {
+    .tty-body { font-size: 11px; padding: 10px 10px 8px; }
+    .owlrow { height: 54px; }
+    .owlrow img { width: 44px; height: 44px; }
+    .can li { grid-template-columns: 1fr; gap: 0; margin-bottom: 12px; }
+    .siplist { columns: 1; }
+    .doors { gap: 10px; }
+    .doors a { padding: 10px; }
+  }
+</style>

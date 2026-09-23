@@ -1,0 +1,70 @@
+---
+// /sips: the Sova Improvement Proposals, with status and one line each
+// (data/sova.ts `sips`, from sips/*.md; SIP-5 reserved in docs/WORKPLAN.md
+// row z-2 and docs/ROADMAP.md), how a SIP moves (CONTRIBUTING.md, the status
+// lines of sips/sip-1.md and sip-3.md), and how to propose one. The SIP texts
+// open with the repository: links are placeholders. Sources: site/README.md.
+import Site from '../layouts/Site.astro';
+import Tag from '../components/Tag.astro';
+import { sips } from '../data/sova';
+
+const flow = [
+  { k: 'idea', t: 'Floated in the SIPs category of Discussions.' },
+  { k: 'draft', t: 'A pull request adding a file to sips/.' },
+  { k: 'accepted', t: 'Signed off. The rules or numbers are locked.' },
+  { k: 'frozen', t: 'Final. Changing a rule takes a new SIP.' },
+];
+---
+<Site
+  title="SIPs: Sova Improvement Proposals"
+  description="The Sova Improvement Proposals: burn format, epochs and settlement, emission, the Zcash state precompile, wrapped ZEC via NEAR, sealer signatures. Status and one line each."
+  current="/sips"
+  cmd="ls sips/"
+  status="pre-release · SIP texts open with the repository"
+>
+  <h1>SIPs</h1>
+  <p class="lead">The protocol, written down. Consensus rules change through Sova Improvement Proposals.</p>
+
+  <ol class="sips">
+    {sips.map((s) => (
+      <li id={s.id}>
+        <p class="sh1"><span class="num">SIP-{s.n}</span> <span class="ti">{s.title}</span> <Tag k={s.st} /></p>
+        <p class="sum">{s.sum}</p>
+        <p class="note dim">{s.note}</p>
+      </li>
+    ))}
+  </ol>
+  <p class="dim"># the texts: <span class="ph" data-placeholder="docs">sips/ in the repository</span> <Tag k="launch" /> · the paper cites SIP-1 to SIP-4: <a href="/paper#refs">references</a></p>
+
+  <h2>how a SIP moves</h2>
+  <ol class="flow">
+    {flow.map((f) => <li><span class={`st st-${f.k}`}>[{f.k}]</span><span>{f.t}</span></li>)}
+  </ol>
+
+  <h2>propose one</h2>
+  <p>Start with the problem, in the SIPs category of Discussions. When the idea holds up, open the SIP as a pull request to <code>sips/</code>, before the code that implements it. Protocol changes, from consensus rules to the burn format, go through a SIP.</p>
+  <p><span class="ph" data-placeholder="discussions">Discussions</span> <Tag k="launch" /> · <a href="/build#contribute">How to contribute</a></p>
+
+  <p class="next"><a href="/build">Build</a><a href="/paper">The paper</a><a href="/node">Run a node</a></p>
+</Site>
+
+<style>
+  .sips { list-style: none; padding: 0; margin: 24px 0 14px; }
+  .sips li { padding: 14px 0; border-top: 1px dashed var(--line); max-width: none; }
+  .sips li:last-child { border-bottom: 1px dashed var(--line); }
+  .sips p { margin: 0 0 4px; }
+  .sh1 { font-size: 16px; }
+  .num { color: var(--g3); display: inline-block; min-width: 7ch; }
+  .ti { color: var(--g); font-weight: 700; }
+  .sh1 .st { margin-left: 6px; }
+  .sum { color: var(--cream); }
+  .note { font-size: 13.5px; }
+  .sips li:target { background: rgba(244, 183, 40, 0.05); }
+  .flow { list-style: none; padding: 0; margin: 0 0 12px; }
+  .flow li { display: grid; grid-template-columns: 12ch 1fr; gap: 10px; margin: 0 0 8px; max-width: none; }
+  .st-idea { color: var(--g2); }
+  @media (max-width: 600px) {
+    .flow li { grid-template-columns: 1fr; gap: 0; margin-bottom: 12px; }
+    .num { min-width: 0; margin-right: 4px; }
+  }
+</style>

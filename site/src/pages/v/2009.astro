@@ -1,0 +1,209 @@
+---
+// Direction 1, "2009": early-Bitcoin minimalism. A plain white page set like
+// a whitepaper title page, system serif, no web fonts. The only motion is one
+// looping terminal where a burn becomes SOVA (regtest values, see sova.ts).
+import Direction from '../../layouts/Direction.astro';
+import DirSwitch from '../../components/DirSwitch.astro';
+import {
+  EDGE_LINE, REWARD_SOVA, HALVING_EPOCHS, SLOW_START_EPOCHS, MIN_BURN_ZAT,
+  transcript, notClaims, owls, placeholders, WORDMARK_PATHS,
+} from '../../data/sova';
+---
+<Direction
+  title="Sova: A Burn-Mined EVM Chain for Zcash"
+  description="Burn ZEC on Zcash, mint SOVA on Sova. One Sova block per Zcash block. No premine, no admin keys. Pre-release."
+  theme="#ffffff"
+>
+  <div class="page">
+    <header class="top">
+      <a href="/v/2009" class="mark" aria-label="Sova">
+        <svg viewBox="0 0 387 70" width="64" height="12" aria-hidden="true">
+          {WORDMARK_PATHS.map((d) => <path fill="#B0841D" d={d} />)}
+        </svg>
+      </a>
+      <span class="status">Pre-release. No public network yet.</span>
+    </header>
+
+    <main id="main">
+      <h1>Sova: A Burn-Mined EVM Chain for Zcash</h1>
+      <p class="byline">sova.io · pre-release draft</p>
+
+      <p class="abstract">
+        <b>Abstract.</b> Burn ZEC on Zcash and the next Sova block mints you SOVA,
+        the gas token of an EVM chain. No premine, no admin keys, no company.
+      </p>
+      <p class="edge"><i>{EDGE_LINE}</i></p>
+
+      <figure class="term" aria-label="A burn becoming SOVA, regtest transcript">
+        <pre id="t09"><code>{transcript.map((l) => (
+          <span class={`ln ${l.k}`} data-k={l.k}><span class="on"></span><span class="off">{l.k === 'cmd' ? '$ ' : l.k === 'note' || l.k === 'mint' ? '# ' : ''}{l.t}</span></span>
+        ))}</code></pre>
+        <figcaption>Regtest demo on one laptop. Values from a logged run, shortened.</figcaption>
+      </figure>
+
+      <h2>1. How it works</h2>
+      <ol class="steps">
+        <li><b>Burn.</b> Send ZEC to an address nobody can spend, tagged with your EVM address.</li>
+        <li><b>Wait one block.</b> Each Zcash block is one Sova epoch, and one Sova block.</li>
+        <li><b>Mint.</b> That Sova block pays {REWARD_SOVA} SOVA<sup>*</sup> to the epoch’s burners, split by ZEC burned.</li>
+      </ol>
+
+      <h2>2. Properties</h2>
+      <table class="props">
+        <tbody>
+          <tr><th scope="row">Premine</th><td>none</td></tr>
+          <tr><th scope="row">Admin keys</th><td>none</td></tr>
+          <tr><th scope="row">Reward</th><td>{REWARD_SOVA} SOVA per epoch<sup>*</sup></td></tr>
+          <tr><th scope="row">Halving</th><td>every {HALVING_EPOCHS} epochs, as Zcash</td></tr>
+          <tr><th scope="row">Blocks</th><td>1 Sova block per Zcash block</td></tr>
+          <tr><th scope="row">Minimum burn</th><td>{MIN_BURN_ZAT} zatoshis</td></tr>
+          <tr><th scope="row">Verification</th><td>every node re-checks every mint against its own Zcash node</td></tr>
+          <tr><th scope="row">SOVA is</th><td>gas. Nothing else.</td></tr>
+        </tbody>
+      </table>
+      <p class="fn"><sup>*</sup> After a {SLOW_START_EPOCHS}-epoch slow start, like Zcash’s own launch. Burn-less epochs mint nothing.</p>
+
+      <h2>3. What it is not</h2>
+      <p class="nots">{notClaims.map(([h], i) => <>{i > 0 && ' · '}{h}</>)}.</p>
+      <p class="fn">The EVM is transparent. Privacy is at the edge: fund your burn from shielded ZEC.</p>
+
+      <h2>4. Ashwings</h2>
+      <div class="owls">
+        {owls.slice(0, 3).map((src) => <img src={src} width="48" height="48" alt="" decoding="async" />)}
+        <p>Pixel owls drawn by the contract itself. Free to mint; you pay gas in SOVA.</p>
+      </div>
+
+      <p class="spec">
+        Read the spec: <span class="ph" aria-disabled="true" data-placeholder="docs">SIP-1 burns</span>,{' '}
+        <span class="ph" aria-disabled="true" data-placeholder="docs">SIP-2 epochs</span>,{' '}
+        <span class="ph" aria-disabled="true" data-placeholder="docs">SIP-3 emission</span>{' '}
+        <span class="soon">(published with the source at launch)</span>
+      </p>
+    </main>
+
+    <footer class="foot">
+      <p>
+        {placeholders.map((p, i) => <>{i > 0 && ' | '}<span aria-disabled="true" data-placeholder={p.key}>{p.label}</span></>)}
+      </p>
+      <p>Code dual-licensed MIT or Apache-2.0.</p>
+      <DirSwitch current="2009" />
+    </footer>
+  </div>
+</Direction>
+
+<style>
+  :global(body) {
+    background: #fff;
+    color: #111;
+    font-family: 'Times New Roman', Times, 'Liberation Serif', 'Noto Serif', serif;
+    font-size: 18px;
+    line-height: 1.45;
+  }
+  .page { max-width: 660px; margin: 0 auto; padding: 14px 16px 40px; }
+  a { color: #7a5a12; }
+  a:hover { color: #111; }
+  .top {
+    display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    border-bottom: 1px solid #111; padding-bottom: 8px; font-size: 14px;
+  }
+  .status { color: #555; }
+  h1 { font-size: clamp(25px, 5.4vw, 33px); font-weight: normal; text-align: center; margin: 44px 0 6px; line-height: 1.15; }
+  .byline { text-align: center; margin: 0 0 28px; font-size: 15px; color: #444; }
+  .abstract { margin: 0 auto 6px; max-width: 34em; font-size: 17px; }
+  .edge { margin: 0 auto 26px; max-width: 34em; color: #444; font-size: 17px; }
+  h2 { font-size: 20px; font-weight: bold; margin: 34px 0 10px; }
+
+  .term { margin: 0; }
+  .term pre {
+    margin: 0; padding: 14px 16px; background: #1c1914; color: #fbf3dc;
+    font: 13px/1.55 ui-monospace, Menlo, Consolas, 'Courier New', monospace;
+    white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid #111;
+  }
+  .ln { display: block; }
+  .ln.cmd { color: #fbf3dc; }
+  .ln.out { color: #c9bfa6; }
+  .ln.note, .ln.log { color: #8f8672; }
+  .ln.mint { color: #f4b728; font-weight: bold; }
+  .off { visibility: visible; }
+  .anim .off { visibility: hidden; }
+  .ln.cur .on::after {
+    content: '▌'; color: #f4b728; display: inline-block; width: 0; overflow: visible;
+    animation: blink 1s steps(1) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+  .term figcaption { font-size: 14px; color: #555; margin-top: 6px; font-style: italic; }
+
+  .steps { margin: 0; padding-left: 1.5em; }
+  .steps li { margin: 0 0 6px; }
+
+  .props { border-collapse: collapse; width: 100%; font-size: 16px; }
+  .props th, .props td { text-align: left; vertical-align: top; padding: 4px 0; border-bottom: 1px dotted #999; }
+  .props th { font-weight: normal; color: #444; width: 9.5em; padding-right: 12px; }
+  .props td { font-family: ui-monospace, Menlo, Consolas, 'Courier New', monospace; font-size: 14px; padding-top: 6px; }
+  .fn { font-size: 14px; color: #444; margin: 8px 0 0; }
+  .nots { margin: 0; }
+
+  .owls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .owls img { image-rendering: pixelated; width: 48px; height: 48px; }
+  .owls p { margin: 0 0 0 8px; flex: 1 1 14em; font-size: 16px; }
+
+  .spec { margin: 40px 0 0; font-size: 18px; }
+  .ph { color: #7a5a12; text-decoration: underline; text-decoration-style: dotted; cursor: not-allowed; }
+  .soon { color: #555; font-size: 14px; }
+
+  .foot { margin-top: 44px; border-top: 1px solid #111; padding-top: 10px; font-size: 14px; color: #444; }
+  .foot p { margin: 0 0 6px; }
+  .foot :global(.dirs) { margin-top: 18px; font-size: 13px; color: #777; display: flex; gap: 10px; flex-wrap: wrap; }
+  .foot :global(.dirs a) { color: #7a5a12; }
+
+  @media (max-width: 480px) {
+    :global(body) { font-size: 17px; }
+    .top .status { font-size: 12px; }
+    h1 { margin-top: 30px; }
+    .term pre { font-size: 11.5px; padding: 12px; }
+    .props th { width: 7.5em; }
+  }
+</style>
+
+<script>
+  // One looping terminal: type each command, print each output line, hold,
+  // clear, repeat. Every line's full text is already in the DOM (split into a
+  // visible and a hidden half), so nothing reflows while it types.
+  const pre = document.getElementById('t09');
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (pre && !reduce) {
+    const lines = [...pre.querySelectorAll<HTMLElement>('.ln')].map((el) => ({
+      el, k: el.dataset.k, on: el.firstElementChild as HTMLElement,
+      off: el.lastElementChild as HTMLElement, t: el.textContent || '',
+    }));
+    const set = (l: (typeof lines)[0], n: number) => {
+      l.on.textContent = l.t.slice(0, n);
+      l.off.textContent = l.t.slice(n);
+    };
+    pre.classList.add('anim');
+    let visible = true;
+    new IntersectionObserver(([e]) => { visible = e.isIntersecting; }).observe(pre);
+    const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+    const idle = async () => { while (!visible || document.hidden) await wait(300); };
+    (async () => {
+      for (;;) {
+        lines.forEach((l) => set(l, 0));
+        await wait(500);
+        for (const l of lines) {
+          await idle();
+          lines.forEach((o) => o.el.classList.toggle('cur', o === l));
+          if (l.k === 'cmd') {
+            set(l, 2);
+            await wait(350);
+            for (let n = 3; n <= l.t.length; n++) { set(l, n); await wait(22); }
+            await wait(300);
+          } else {
+            set(l, l.t.length);
+            await wait(l.k === 'mint' ? 200 : 420);
+          }
+        }
+        await wait(4200);
+      }
+    })();
+  }
+</script>

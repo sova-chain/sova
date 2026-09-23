@@ -1,0 +1,13 @@
+# Discussions must be enabled, with a "SIPs" category (slug `sips`), for
+# the first two links to resolve.
+blank_issues_enabled: false
+contact_links:
+  - name: SIP idea (protocol change)
+    url: https://github.com/sova-chain/sova/discussions/categories/sips
+    about: Consensus rules, burn format, settlement, emission -- float it in Discussions first, then open the SIP as a PR to sips/ (see CONTRIBUTING.md).
+  - name: Question or help running the box
+    url: https://github.com/sova-chain/sova/discussions
+    about: Ask in Discussions.
+  - name: Security vulnerability
+    url: https://github.com/sova-chain/sova/security/advisories/new
+    about: Never in a public issue. Report privately; see SECURITY.md.

@@ -1,0 +1,245 @@
+name: Nightly Sim
+
+# C6 tail item: a scheduled, non-gating run of the box/sim simulation
+# harness (see box/sim/README.md) against a real zebrad regtest node.
+#
+# Deliberately does NOT trigger on `push` or `pull_request` -- this workflow
+# can never become part of the PR/merge critical path (see .github/
+# workflows/ci.yml for that), it only runs on a schedule or by hand. Its
+# purpose is early warning: box/sim/run-scenarios.sh (scenarios 1-4 --
+# parallel determinism, reorg convergence, restart equivalence, live mint
+# invariants) and box/sim/two-node-scenario.sh (gossip v1 relay: two real
+# `bin/sova` processes, lockstep + block-hash equality + mint-visible-
+# through-relay) are slow (they build the workspace, stand up a real
+# zebrad container, and drive real chains for several minutes each) and
+# exercise real regtest + real binaries in a way CI's own build-test job
+# does not, so they don't belong gating every PR -- but leaving them
+# entirely unrun means regressions in the follower/sealer/relay stack only
+# surface when someone happens to run the harness by hand. This closes
+# that gap with a daily automated run whose failure is a Slack/email-style
+# nightly signal, not a red X blocking anyone's merge.
+#
+# Job shape: one job, one runner. checkout -> toolchain -> its own
+# rust-cache (a dedicated shared-key so this doesn't thrash/evict the
+# push/PR caches .github/workflows/ci.yml's lint and build-test jobs
+# depend on) -> pre-build the three binaries the scripts need, at the
+# exact paths/profiles they hardcode (see the "Build" steps below for the
+# citations) -> run both scripts sequentially, each allowed to fail
+# independently so one scenario set's failure doesn't hide the other's
+# result -> upload box/sim's logs as an artifact if either failed -> fail
+# the job (for nightly-failure notifications) iff either script failed.
+#
+# ubuntu-latest's ~14GB free disk is the tightest constraint here: this
+# workspace pulls in reth's full dependency graph, and a *debug* build of
+# that graph is dramatically larger than a release one (a local reference
+# build measured target/debug at ~29GB against target/release's ~2.1GB
+# for the same binary -- see the disk-space step below). The scripts
+# themselves hardcode `target/debug/sova` (box/sim/mint-scenario.sh's and
+# box/sim/two-node-scenario.sh's `SOVA_BIN`), so building `sova` in
+# release for this workflow isn't an option without editing those scripts
+# -- out of scope here (see this PR's own notes). The disk-space-reclaim
+# step below is this workflow's mitigation: it's real headroom, but if a
+# future dependency bump pushes the debug build past what that reclaims,
+# the next escalation is switching the scripts' SOVA_BIN convention to an
+# env-overridable release-or-debug choice, not something to bolt on here.
+
+on:
+  schedule:
+    # ~09:00 UTC daily.
+    - cron: "0 9 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Matches .github/workflows/ci.yml's own reasoning: incremental
+  # compilation adds bookkeeping overhead and bloats the cache with
+  # per-object incremental artifacts a fresh checkout each run rarely
+  # reuses -- and on this workflow, disk headroom is precious enough that
+  # skipping the incremental directory entirely also just helps fit.
+  CARGO_INCREMENTAL: 0
+
+
+# `shell: bash` runs steps with -eo pipefail: the scenario steps pipe through
+# tee, and without pipefail a failing scenario looked like a passing step
+# (every nightly was green regardless of results until 2026-09-22).
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  sim:
+    name: sim (scenarios 1-4 + relay + sova/1 P2P)
+    runs-on: ubuntu-latest
+    # Generous: a cold cache plus four live regtest scenarios plus a
+    # two-node relay scenario, each with its own minutes-long chain-driving
+    # loops, can comfortably run long. This is a nightly job with no one
+    # blocking on it, so erring high costs nothing but runner minutes.
+    timeout-minutes: 90
+    steps:
+      - name: Free disk space
+        # See this file's top-of-file comment: a debug build of this
+        # workspace's reth-based `sova` binary is tens of GB on disk (a
+        # release build of the same binary is ~2.1GB), which is tight
+        # against ubuntu-latest's ~14GB free. These paths are large
+        # preinstalled toolchains this job never uses (Android SDK, .NET,
+        # GHC, CodeQL bundles) -- removing them is a well-known, safe way
+        # to reclaim several GB before anything here starts building.
+        # `|| true` throughout: never fail the job over cleanup, and don't
+        # assume every path exists on every runner image.
+        run: |
+          echo "--- disk space before cleanup ---"
+          df -h /
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /opt/hostedtoolcache/CodeQL || true
+          sudo rm -rf /usr/local/share/boost || true
+          sudo rm -rf "${AGENT_TOOLSDIRECTORY:-/opt/hostedtoolcache}" || true
+          docker image prune -af || true
+          echo "--- disk space after cleanup ---"
+          df -h /
+
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Its own shared-key: this job's cache is a different, much
+          # larger shape (debug `sova` alongside release `consensus_sim`/
+          # `sova-miner`) than ci.yml's lint/build-test caches, and runs on
+          # a schedule rather than every push/PR -- keeping it separate
+          # means a bad or oversized nightly cache can't evict or thrash
+          # the caches those gating jobs depend on for every-day-in, every-
+          # push cache hits.
+          shared-key: sova-sim
+          workspaces: |
+            . -> target
+            crates/burn-wallet -> target
+          cache-on-failure: true
+
+      # --- Build the three binaries the scripts expect, at the exact
+      # paths/profiles they hardcode. Pre-building here means each
+      # script's own "build if missing" check (mint-scenario.sh,
+      # two-node-scenario.sh) is a no-op, and a compile failure shows up
+      # as its own clearly-attributed step instead of buried inside a
+      # long-running scenario script's log.
+
+      - name: Build consensus_sim (release)
+        # box/sim/run-scenarios.sh builds this itself, unconditionally,
+        # via this exact command, and hardcodes CONSENSUS_SIM_BIN to
+        # target/release/consensus_sim -- release, not debug (consensus
+        # does not pull in reth, so this is small either way; matching the
+        # script's own profile just avoids a redundant second compile).
+        run: cargo build --release -p consensus --bin consensus_sim
+
+      - name: Build sova (debug)
+        # box/sim/mint-scenario.sh's and box/sim/two-node-scenario.sh's
+        # SOVA_BIN is hardcoded to target/debug/sova. This is the build
+        # the disk-space step above exists for.
+        run: cargo build -p sova
+
+      - name: Build sova-miner (release, nested burn-wallet workspace)
+        # crates/burn-wallet is its own nested Cargo workspace (see the
+        # root Cargo.toml's `exclude` and its own long comment) -- all
+        # three scripts' MINER_BIN points at
+        # crates/burn-wallet/target/release/sova-miner.
+        run: cargo build --release -p sova-miner
+        working-directory: crates/burn-wallet
+
+      # --- Run the scenarios. Each is allowed to fail independently
+      # (continue-on-error) so scenarios 1-4 failing doesn't skip the
+      # two-node relay scenario (and vice versa) -- both results are
+      # useful nightly signal on their own. Output is teed to a log file
+      # under RUNNER_TEMP (never committed, outside the checked-out repo)
+      # because both scripts' own EXIT traps unconditionally delete their
+      # WORK_DIR, pass or fail -- their PASS/FAIL/log-excerpt lines only
+      # survive in whatever captured the process's own stdout/stderr.
+
+      - name: Run scenarios 1-4 (box/sim/run-scenarios.sh)
+        id: run-scenarios
+        continue-on-error: true
+        run: |
+          mkdir -p "${RUNNER_TEMP}/nightly-sim-logs"
+          box/sim/run-scenarios.sh 2>&1 | tee "${RUNNER_TEMP}/nightly-sim-logs/run-scenarios.log"
+
+      - name: Run two-node relay scenario (box/sim/two-node-scenario.sh)
+        id: two-node-scenario
+        continue-on-error: true
+        run: |
+          mkdir -p "${RUNNER_TEMP}/nightly-sim-logs"
+          box/sim/two-node-scenario.sh 2>&1 | tee "${RUNNER_TEMP}/nightly-sim-logs/two-node-scenario.log"
+
+      - name: Run ladder scenario (box/sim/ladder-scenario.sh)
+        # v2 preference's acceptance proof: rank-1 seals while rank-0 is
+        # SIGSTOPped, the resumed rank-0 block wins by micro-reorg, and
+        # both mine-mode nodes converge (see the script's own header).
+        id: ladder-scenario
+        continue-on-error: true
+        run: |
+          mkdir -p "${RUNNER_TEMP}/nightly-sim-logs"
+          box/sim/ladder-scenario.sh 2>&1 | tee "${RUNNER_TEMP}/nightly-sim-logs/ladder-scenario.log"
+
+      - name: Run two-node sova/1 P2P scenario (box/sim/two-node-p2p-scenario.sh)
+        # m1-b: two nodes, no shared JWT, blocks propagate only over the
+        # sova/1 RLPx sub-protocol.
+        id: two-node-p2p-scenario
+        continue-on-error: true
+        run: |
+          mkdir -p "${RUNNER_TEMP}/nightly-sim-logs"
+          box/sim/two-node-p2p-scenario.sh 2>&1 | tee "${RUNNER_TEMP}/nightly-sim-logs/two-node-p2p-scenario.log"
+
+      - name: Run ladder sova/1 P2P scenario (box/sim/ladder-p2p-scenario.sh)
+        # The real v2 preference proof: over reliable P2P delivery the
+        # resumed rank-0 must still win by late sibling + micro-reorg, and
+        # Sova heights must keep tracking Zcash epochs (no ghost blocks).
+        id: ladder-p2p-scenario
+        continue-on-error: true
+        run: |
+          mkdir -p "${RUNNER_TEMP}/nightly-sim-logs"
+          box/sim/ladder-p2p-scenario.sh 2>&1 | tee "${RUNNER_TEMP}/nightly-sim-logs/ladder-p2p-scenario.log"
+
+      - name: Run three-node discovery scenario (box/sim/three-node-discovery-scenario.sh)
+        # m1-b step 4: sova-testnet profile, discovery on; node C is given
+        # only a bootnode and must find the miner through discovery, then
+        # converge over sova/1. All sockets checked to be loopback-only.
+        id: three-node-discovery-scenario
+        continue-on-error: true
+        run: |
+          mkdir -p "${RUNNER_TEMP}/nightly-sim-logs"
+          box/sim/three-node-discovery-scenario.sh 2>&1 | tee "${RUNNER_TEMP}/nightly-sim-logs/three-node-discovery-scenario.log"
+
+      - name: Run late-join scenario (box/sim/join-scenario.sh, 150 behind)
+        # m1-b catch-up: a fresh node 150 blocks behind must sync history
+        # only after its own zebrad scan covers it (C5 enforced, not deferred).
+        id: join-scenario
+        continue-on-error: true
+        run: |
+          mkdir -p "${RUNNER_TEMP}/nightly-sim-logs"
+          JOIN_DEPTH=150 box/sim/join-scenario.sh 2>&1 | tee "${RUNNER_TEMP}/nightly-sim-logs/join-scenario.log"
+
+      - name: Upload sim logs
+        if: steps.run-scenarios.outcome == 'failure' || steps.two-node-scenario.outcome == 'failure' || steps.ladder-scenario.outcome == 'failure' || steps.two-node-p2p-scenario.outcome == 'failure' || steps.ladder-p2p-scenario.outcome == 'failure' || steps.three-node-discovery-scenario.outcome == 'failure' || steps.join-scenario.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-sim-logs
+          path: ${{ runner.temp }}/nightly-sim-logs
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Fail the job if any scenario failed
+        # Scheduled-workflow failure is how this reaches anyone (GitHub
+        # notifies on a scheduled run's failure) -- this is what makes
+        # that notification meaningful, without making either scenario
+        # script's exit code gate anything upstream (see this file's
+        # `on:` block: no push/pull_request trigger at all).
+        if: always()
+        run: |
+          if [[ "${{ steps.run-scenarios.outcome }}" == "failure" || "${{ steps.two-node-scenario.outcome }}" == "failure" || "${{ steps.ladder-scenario.outcome }}" == "failure" || "${{ steps.two-node-p2p-scenario.outcome }}" == "failure" || "${{ steps.ladder-p2p-scenario.outcome }}" == "failure" || "${{ steps.three-node-discovery-scenario.outcome }}" == "failure" || "${{ steps.join-scenario.outcome }}" == "failure" ]]; then
+            echo "::error::One or more nightly sim scenarios failed -- see the nightly-sim-logs artifact."
+            exit 1
+          fi
+          echo "All nightly sim scenarios passed."

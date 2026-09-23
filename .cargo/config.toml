@@ -1,0 +1,14 @@
+# Disable incremental compilation to prevent disk bloat
+#
+# Issue: Incremental caches have repeatedly ballooned to 6GB+ on this machine,
+# consuming precious disk space during fleet work. While incremental compilation
+# speeds up iterative builds, the cache overhead is not justified for this project.
+#
+# Rationale: Dependency artifacts are already cached in target/, so the cost of
+# a clean rebuild of dependencies is minimal. The primary warm rebuild benefit
+# (re-compiling only changed files in-crate) is less valuable than the disk space
+# savings. If working on large in-crate refactors that would benefit from
+# incremental compilation, comment out or remove this setting.
+
+[build]
+incremental = false

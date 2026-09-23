@@ -1,0 +1,25 @@
+# Regtest zebrad with PERSISTENT state, for the snapshot round-trip test.
+# Same as box/regtest/zebrad.toml except [state]: ephemeral = false and a fixed
+# cache_dir (bind-mounted from the host by docker-compose.yml).
+
+[network]
+network = "Regtest"
+listen_addr = "0.0.0.0:18233"
+
+[network.testnet_parameters.activation_heights]
+NU5 = 1
+
+[state]
+ephemeral = false
+cache_dir = "/home/zebra/.cache/zebra"
+
+[rpc]
+listen_addr = "0.0.0.0:18232"
+# Loopback-only test node (see docker-compose.yml); plain curl, no cookie.
+enable_cookie_auth = false
+
+[mining]
+miner_address = "tmJymvcUCn1ctbghvTJpXBwHiMEB8P6wxNV"
+
+[tracing]
+use_color = false

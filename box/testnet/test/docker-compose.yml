@@ -1,0 +1,17 @@
+# Disposable regtest zebrad for box/testnet/snapshot-e2e-regtest.sh.
+# Own project (sova-snap), container (sova-zebrad-snap) and port (18352) so it
+# never collides with box/regtest (18232) or a live testnet node.
+# State is a bind mount of $SNAP_CACHE_DIR (a temp dir on the internal disk).
+services:
+  zebrad:
+    image: zfnd/zebra:6.3.0
+    container_name: sova-zebrad-snap
+    restart: "no"
+    stop_grace_period: 60s
+    ports:
+      - "127.0.0.1:18352:18232"
+    volumes:
+      - ./zebrad-regtest.toml:/home/zebra/.config/zebrad.toml:ro
+      - ${SNAP_CACHE_DIR:?set SNAP_CACHE_DIR}:/home/zebra/.cache/zebra
+    environment:
+      - RUST_LOG=info

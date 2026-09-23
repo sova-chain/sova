@@ -1,0 +1,28 @@
+---
+// Index of the landing-page design directions (not linked from sova.io).
+import Direction from '../../layouts/Direction.astro';
+const dirs = [
+  { href: '/v/2009', name: '2009', line: 'Sova: A Burn-Mined EVM Chain for Zcash', note: 'Whitepaper plain. One looping terminal.' },
+  { href: '/v/terminal', name: 'Terminal', line: 'An EVM chain mined by burning ZEC.', note: 'The page is a CRT. Commands type in; a demo block stream runs.' },
+  { href: '/v/paper', name: 'Paper', line: 'Sova: A Burn-Mined EVM Chain for Zcash', note: 'Refines 2009: typeset as a 2008-era paper (Computer Modern, numbered sections, equations, references). The figures are small terminal panels, the only motion.' },
+  { href: '/v/burn', name: 'Burn', line: 'Burn ZEC. Mine SOVA.', note: 'A coin burns into the Sova mark. Big numerals, animated flow, owl strip.' },
+];
+---
+<Direction title="Sova: design directions" description="Candidate directions for the sova.io landing page.">
+  <main>
+    <h1>sova.io: design directions</h1>
+    <ol>
+      {dirs.map((d) => <li><a href={d.href}>{d.name}</a> <q>{d.line}</q><br /><small>{d.note}</small></li>)}
+    </ol>
+    <p><small>The live site: the landing page at <a href="/">/</a>, the paper at <a href="/paper">/paper</a>.</small></p>
+  </main>
+</Direction>
+<style>
+  :global(body) { background: #1c1914; color: #fbf3dc; font: 17px/1.5 ui-monospace, Menlo, monospace; }
+  main { max-width: 640px; margin: 0 auto; padding: 40px 16px; }
+  h1 { font-size: 22px; color: #f4b728; }
+  li { margin: 0 0 18px; }
+  a { color: #f4b728; }
+  q { color: #c9bfa6; }
+  small { color: #8f8672; }
+</style>

@@ -1,0 +1,24 @@
+[package]
+name = "sova"
+description = "Sova node binary"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy-primitives.workspace = true
+alloy-rpc-types = { workspace = true, features = ["engine"] }
+hex.workspace = true
+consensus = { path = "../../crates/consensus" }
+engine = { path = "../../crates/engine" }
+reth-ethereum = { workspace = true, features = ["node", "network", "test-utils"] }
+reth-network-peers.workspace = true
+reth-rpc-layer.workspace = true
+reth-tracing.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+eyre.workspace = true

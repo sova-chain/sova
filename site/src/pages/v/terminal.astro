@@ -1,0 +1,409 @@
+---
+// Direction 2, "Terminal": the page is a CRT terminal in Zcash gold. Each
+// section is a command; its output types in as it scrolls into view. The block
+// stream is a clearly labelled simulation (random burns, 30x speed), not data.
+// Without JS, or with reduced motion, every line is simply there.
+import Direction from '../../layouts/Direction.astro';
+import DirSwitch from '../../components/DirSwitch.astro';
+import { owlAscii } from '../../data/owl-ascii';
+import {
+  EDGE_LINE, REWARD_SOVA, HALVING_EPOCHS, SLOW_START_EPOCHS, MIN_BURN_ZAT,
+  notClaims, placeholders,
+} from '../../data/sova';
+
+// "SOVA" in the figlet ANSI Shadow face.
+const logo = [
+  '███████╗ ██████╗ ██╗   ██╗ █████╗ ',
+  '██╔════╝██╔═══██╗██║   ██║██╔══██╗',
+  '███████╗██║   ██║██║   ██║███████║',
+  '╚════██║██║   ██║╚██╗ ██╔╝██╔══██║',
+  '███████║╚██████╔╝ ╚████╔╝ ██║  ██║',
+  '╚══════╝ ╚═════╝   ╚═══╝  ╚═╝  ╚═╝',
+].join('\n');
+
+const heroOwl = owlAscii('onchain-4.svg');
+const owlRow = ['onchain-1.svg', 'onchain-2.svg', 'onchain-8.svg'].map(owlAscii);
+const PS = 'anon@sova:~$';
+---
+<Direction
+  title="Sova: an EVM chain mined by burning ZEC"
+  description="Burn ZEC on Zcash, mint SOVA on Sova. One Sova block per Zcash block. No premine, no admin keys. Pre-release."
+  preload={['mono']}
+  theme="#0c0a07"
+>
+  <script is:inline slot="head">
+    // Hide not-yet-typed output before first paint, only when we will animate.
+    // Safety valve: if the page script never runs, show everything after 4 s.
+    if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      document.documentElement.classList.add('typing');
+      setTimeout(function () { if (!window.__sovaTerm) document.documentElement.classList.remove('typing'); }, 4000);
+    }
+  </script>
+
+  <div class="crt" aria-hidden="true"></div>
+  <main class="screen" id="main">
+    <div class="boot">
+      <pre class="logo" aria-label="SOVA">{logo}</pre>
+      <pre class="owl owl-hero" aria-hidden="true" set:html={heroOwl} />
+    </div>
+    <p class="sys">sova v0 · <span class="warn">pre-release</span> · no public network yet</p>
+
+    <section class="blk" aria-labelledby="what">
+      <p class="prompt"><span class="ps">{PS}</span> <span class="cmd" data-t="sova --what">sova --what</span></p>
+      <div class="out">
+        <h1 id="what">An EVM chain mined by burning ZEC.</h1>
+        <p class="lead">Burn ZEC on Zcash. Get SOVA, the gas token. Every SOVA traces to destroyed ZEC.</p>
+        <p class="dim"># {EDGE_LINE.toLowerCase()}</p>
+        <dl class="facts">
+          <div><dt>premine</dt><dd>0</dd></div>
+          <div><dt>admin keys</dt><dd>0</dd></div>
+          <div><dt>company running it</dt><dd>0</dd></div>
+          <div><dt>sova blocks per zcash block</dt><dd>1</dd></div>
+        </dl>
+      </div>
+    </section>
+
+    <section class="blk" aria-labelledby="how">
+      <p class="prompt"><span class="ps">{PS}</span> <span class="cmd" data-t="sova --how">sova --how</span></p>
+      <div class="out">
+        <h2 id="how" class="sr">How it works</h2>
+        <ol class="steps">
+          <li><span class="tag">[1] burn </span><span>send ZEC to <code>76a914 00…00 88ac</code>, a script nobody can spend. OP_RETURN names your 0x address.</span></li>
+          <li><span class="tag">[2] epoch</span><span>that Zcash block is one Sova epoch. One Sova block per Zcash block.</span></li>
+          <li><span class="tag">[3] mint </span><span>the Sova block pays {REWARD_SOVA} SOVA*, split by ZEC burned. Top burner seals it.</span></li>
+        </ol>
+        <p class="dim"># * after a {SLOW_START_EPOCHS}-epoch slow start. halves every {HALVING_EPOCHS} epochs, like zcash. min burn {MIN_BURN_ZAT} zat. no burns, no mint.</p>
+      </div>
+    </section>
+
+    <section class="blk" aria-labelledby="watch">
+      <p class="prompt"><span class="ps">{PS}</span> <span class="cmd" data-t="sova watch --demo">sova watch --demo</span></p>
+      <div class="out">
+        <h2 id="watch" class="sr">Block stream (simulated)</h2>
+        <p class="demo-tag">DEMO · simulated blocks, random burns · not a live network · 75 s blocks at 30×</p>
+        <div class="stream" id="stream" aria-hidden="true">
+          <span class="lane-l z">zcash</span>
+          <span class="lane-l s">sova</span>
+          <div class="cols" id="cols"></div>
+        </div>
+        <pre class="log" id="log" aria-hidden="true"></pre>
+        <p class="sr">An animated, simulated stream: each new Zcash block is followed by one Sova block, which mints {REWARD_SOVA} SOVA if that Zcash block carried burns and nothing if it did not.</p>
+      </div>
+    </section>
+
+    <section class="blk" aria-labelledby="verify">
+      <p class="prompt"><span class="ps">{PS}</span> <span class="cmd" data-t="sova --verify">sova --verify</span></p>
+      <div class="out">
+        <h2 id="verify" class="sr">Properties you can check</h2>
+        <ul class="checks">
+          <li><span class="ok">[ OK ]</span> every SOVA traces to a burn on Zcash</li>
+          <li><span class="ok">[ OK ]</span> every node re-derives every mint from its own zebrad</li>
+          <li><span class="ok">[ OK ]</span> no admin keys in consensus, no premine, no investor allocation</li>
+          <li><span class="ok">[ OK ]</span> <code>sova-miner report --verify-rpc</code> diffs your burns txid by txid</li>
+        </ul>
+        <p class="dim"># properties of the code. checkable yourself when the repo opens.</p>
+      </div>
+    </section>
+
+    <section class="blk" aria-labelledby="not">
+      <p class="prompt"><span class="ps">{PS}</span> <span class="cmd" data-t="sova --not">sova --not</span></p>
+      <div class="out">
+        <h2 id="not" class="sr">What we don’t claim</h2>
+        <ul class="checks">
+          {notClaims.map(([h, d]) => <li><span class="no">[ -- ]</span> {h.toLowerCase()}<span class="dim">. {d.toLowerCase()}</span></li>)}
+        </ul>
+      </div>
+    </section>
+
+    <section class="blk" aria-labelledby="owls">
+      <p class="prompt"><span class="ps">{PS}</span> <span class="cmd" data-t="cat ashwings.txt">cat ashwings.txt</span></p>
+      <div class="out">
+        <h2 id="owls" class="sr">Ashwings</h2>
+        <div class="owl-row" aria-hidden="true">
+          {owlRow.map((o) => <pre class="owl" set:html={o} />)}
+        </div>
+        <p>ashwings: pixel owls drawn by the contract itself. sova means owl.</p>
+        <p class="dim"># free mint, pay gas in SOVA. no owner, no admin, no image host. day-one mint at launch.</p>
+      </div>
+    </section>
+
+    <section class="blk" aria-labelledby="run">
+      <p class="prompt"><span class="ps">{PS}</span> <span class="cmd" data-t="./box/up.sh">./box/up.sh</span></p>
+      <div class="out">
+        <h2 id="run" class="sr">Run it yourself</h2>
+        <p>zebrad regtest + sova node + miner. one command, minting in under 30 s after the first build.</p>
+        <p class="dim"># repo opens at launch. point an agent at the MCP server and give it a budget.</p>
+      </div>
+    </section>
+
+    <section class="blk" aria-labelledby="links">
+      <p class="prompt"><span class="ps">{PS}</span> <span class="cmd" data-t="sova --links">sova --links</span></p>
+      <div class="out">
+        <h2 id="links" class="sr">Links</h2>
+        <ul class="links">
+          {placeholders.map((p) => <li><span aria-disabled="true" data-placeholder={p.key}>{p.label.toLowerCase()}</span></li>)}
+        </ul>
+        <p class="dim"># MIT or Apache-2.0</p>
+      </div>
+    </section>
+
+    <p class="prompt last"><span class="ps">{PS}</span> <span class="caret"></span></p>
+    <DirSwitch current="terminal" />
+  </main>
+  <footer class="bar" aria-label="Status">
+    <span class="bar-a">[0] sova</span>
+    <span class="bar-b">pre-release · no public network · stream is a demo</span>
+  </footer>
+</Direction>
+
+<style>
+  :global(:root) {
+    --bg: #0c0a07;
+    --g: #f4b728;
+    --g2: #cf9d2a;
+    --g3: #8a6a1f;
+    --cream: #fbf3dc;
+    --ember: #e0703f;
+    --mono: 'Roboto Mono', ui-monospace, Menlo, Consolas, monospace;
+    --blocks: ui-monospace, Menlo, 'DejaVu Sans Mono', Consolas, monospace;
+  }
+  :global(body) {
+    background: var(--bg) radial-gradient(ellipse at 50% 20%, #1c1710 0%, var(--bg) 70%) fixed;
+    color: var(--g);
+    font: 15px/1.6 var(--mono);
+    text-shadow: 0 0 1px rgba(244, 183, 40, 0.6), 0 0 9px rgba(244, 183, 40, 0.28);
+  }
+  :global(::selection) { background: var(--g); color: var(--bg); text-shadow: none; }
+  .crt {
+    position: fixed; inset: 0; pointer-events: none; z-index: 5;
+    background:
+      repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0) 0 2px, rgba(0, 0, 0, 0.22) 2px 3px),
+      radial-gradient(ellipse at center, rgba(0, 0, 0, 0) 60%, rgba(0, 0, 0, 0.55) 100%);
+    animation: flicker 6s infinite steps(1);
+  }
+  @keyframes flicker { 0%, 100% { opacity: 1; } 47% { opacity: 0.93; } 48% { opacity: 1; } 83% { opacity: 0.96; } }
+
+  .screen { max-width: 980px; margin: 0 auto; padding: 28px 16px 90px; }
+  pre { margin: 0; font-family: var(--blocks); }
+  .boot { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; }
+  .logo { font-size: 17px; line-height: 1; color: var(--g); }
+  .owl { font-size: 6.5px; line-height: 1.2; color: var(--g2); }
+  .owl-hero { font-size: 5px; }
+  .owl :global(.r0) { color: #6e5418; text-shadow: none; }
+  .owl :global(.r1) { color: #8a6a1f; }
+  .owl :global(.r2) { color: #b08421; }
+  .owl :global(.r3) { color: #cf9d2a; }
+  .owl :global(.r4) { color: #f4b728; }
+  .owl :global(.r5) { color: #ffd46e; }
+  .owl :global(.r6) { color: #fbf3dc; }
+  .sys { margin: 14px 0 26px; color: var(--g2); font-size: 13px; }
+  .warn { color: var(--ember); text-shadow: 0 0 8px rgba(224, 112, 63, 0.45); }
+  .dim { color: var(--g3); text-shadow: none; }
+
+  .blk { margin: 0 0 34px; }
+  .prompt { margin: 0 0 8px; color: var(--cream); }
+  .ps { color: var(--g2); }
+  .out > * { margin: 0 0 8px; }
+  h1 {
+    font-size: clamp(28px, 4.2vw, 44px); line-height: 1.12; font-weight: 700; color: var(--g);
+    letter-spacing: -0.02em; margin: 6px 0 12px !important;
+    text-shadow: 0 0 2px rgba(244, 183, 40, 0.8), 0 0 18px rgba(244, 183, 40, 0.45);
+  }
+  .lead { color: var(--cream); font-size: 17px; }
+  code { font-family: var(--mono); color: var(--cream); }
+
+  .facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 32px; max-width: 760px; margin-top: 14px !important; }
+  .facts div { display: flex; gap: 8px; align-items: baseline; }
+  .facts dt { color: var(--g2); white-space: nowrap; }
+  .facts div::after { content: ''; order: 1; flex: 1; border-bottom: 2px dotted var(--g3); transform: translateY(-4px); min-width: 12px; }
+  .facts dd { order: 2; margin: 0; color: var(--cream); font-size: 22px; font-weight: 700; }
+
+  .steps, .checks, .links { list-style: none; padding: 0; }
+  .steps li { display: grid; grid-template-columns: 9ch 1fr; gap: 10px; margin: 0 0 6px; }
+  .tag { color: var(--cream); white-space: pre; }
+  .ok { color: #9be27a; text-shadow: 0 0 8px rgba(155, 226, 122, 0.4); }
+  .no { color: var(--ember); text-shadow: 0 0 8px rgba(224, 112, 63, 0.4); }
+  .checks li { margin: 0 0 4px; padding-left: 7ch; text-indent: -7ch; }
+
+  .demo-tag {
+    display: inline-block; border: 1px solid var(--ember); color: var(--ember); padding: 1px 8px;
+    font-size: 12px; text-shadow: none;
+  }
+  .stream {
+    position: relative; height: 168px; overflow: hidden; border: 1px solid var(--g3);
+    background: rgba(244, 183, 40, 0.03);
+  }
+  .lane-l { position: absolute; left: 10px; font-size: 11px; color: var(--g3); text-transform: uppercase; letter-spacing: 0.1em; z-index: 2; }
+  .lane-l.z { top: 8px; }
+  .lane-l.s { top: 92px; }
+  .cols { position: absolute; inset: 0; }
+  .stream :global(.col) {
+    position: absolute; top: 0; right: 0; width: var(--cw, 150px); height: 100%;
+    transition: transform 0.6s cubic-bezier(0.2, 0.7, 0.2, 1), opacity 0.6s;
+    font-size: 12px; line-height: 1.35;
+  }
+  .stream :global(.zb), .stream :global(.sb) {
+    position: absolute; left: 8px; right: 8px; padding: 5px 7px; border: 1px solid var(--g2);
+  }
+  .stream :global(.zb) { top: 24px; animation: drop 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+  .stream :global(.sb) { top: 108px; opacity: 0; }
+  .stream :global(.sb.in) { animation: mint 0.45s ease-out both; }
+  .stream :global(.sb.mint) { border-color: var(--g); background: rgba(244, 183, 40, 0.12); color: var(--cream); }
+  .stream :global(.sb.empty) { border-style: dashed; border-color: var(--g3); color: var(--g3); text-shadow: none; }
+  .stream :global(.link) {
+    position: absolute; left: 50%; top: 72px; height: 34px; border-left: 1px dashed var(--g3); opacity: 0;
+  }
+  .stream :global(.link.in) { opacity: 1; transition: opacity 0.3s; }
+  .stream :global(.zb .n), .stream :global(.sb .n) { color: var(--cream); }
+  .stream :global(.zb .b) { color: var(--ember); }
+  @keyframes drop { from { transform: translateY(-40px); opacity: 0; } to { transform: none; opacity: 1; } }
+  @keyframes mint { from { transform: scale(0.9); opacity: 0; filter: brightness(2.2); } to { transform: none; opacity: 1; filter: none; } }
+  .log {
+    height: calc(4 * 1.5em + 16px); overflow: hidden; margin-top: 10px !important; padding: 8px 10px;
+    border-left: 2px solid var(--g3); font: 12px/1.5 var(--mono); color: var(--g2); white-space: pre;
+  }
+  .log :global(b) { color: var(--cream); font-weight: 400; }
+  .log :global(i) { color: var(--ember); font-style: normal; }
+
+  .owl-row { display: flex; gap: 28px; flex-wrap: wrap; }
+  .links li::before { content: '→ '; color: var(--g3); }
+  .links span { color: var(--g2); }
+
+  .caret { display: inline-block; width: 0.62em; height: 1.1em; vertical-align: -0.2em; background: var(--g); box-shadow: 0 0 10px rgba(244, 183, 40, 0.7); animation: blink 1.05s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .screen :global(.dirs) { margin-top: 30px; font-size: 12px; color: var(--g3); display: flex; gap: 12px; flex-wrap: wrap; text-shadow: none; }
+  .screen :global(.dirs a) { color: var(--g2); }
+  .screen :global(.dirs strong) { color: var(--cream); font-weight: 400; }
+
+  .bar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; display: flex; gap: 14px;
+    background: var(--g); color: var(--bg); font-size: 12px; padding: 3px 12px; text-shadow: none;
+    white-space: nowrap; overflow: hidden;
+  }
+  .bar-a { font-weight: 700; }
+  .bar-b { overflow: hidden; text-overflow: ellipsis; }
+
+  /* typing state: reserve every line's space, reveal by visibility only */
+  :global(.typing) .blk:not(.started) .cmd { visibility: hidden; }
+  :global(.typing) .blk:not(.done) .out > * { visibility: hidden; }
+  :global(.typing) .blk:not(.done) .out > .shown { visibility: visible; }
+  .cmd :global(.off) { visibility: hidden; }
+  .cmd :global(.on.cur)::after { content: ''; display: inline-block; width: 0.6em; height: 1.1em; vertical-align: -0.2em; margin-right: -0.6em; background: var(--g); }
+
+  @media (max-width: 720px) {
+    :global(body) { font-size: 13px; }
+    .screen { padding-top: 18px; }
+    .logo { font-size: 10.5px; }
+    .owl-hero { display: none; }
+    .sys { font-size: 11px; margin-bottom: 20px; }
+    .lead { font-size: 15px; }
+    .facts { grid-template-columns: 1fr; }
+    .facts dd { font-size: 18px; }
+    .steps li { grid-template-columns: 1fr; gap: 0; margin-bottom: 10px; }
+    .owl { font-size: 3.5px; }
+    .owl-row { gap: 10px; }
+    .log { font-size: 10.5px; }
+    .stream :global(.col) { font-size: 11px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .crt { animation: none; }
+    .caret { animation: none; }
+  }
+</style>
+
+<script>
+  // Typing: each section types its command when it scrolls into view, then its
+  // output lines appear one by one. Lines were laid out from the start (hidden
+  // by visibility), so nothing moves. Reduced motion: no typing, no stream loop.
+  const root = document.documentElement;
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  (window as any).__sovaTerm = true;
+  const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+  async function run(blk: HTMLElement) {
+    const cmd = blk.querySelector<HTMLElement>('.cmd')!;
+    const t = cmd.dataset.t || '';
+    cmd.innerHTML = '<span class="on cur"></span><span class="off"></span>';
+    blk.classList.add('started');
+    const on = cmd.firstElementChild as HTMLElement, off = cmd.lastElementChild as HTMLElement;
+    for (let n = 0; n <= t.length; n++) {
+      on.textContent = t.slice(0, n); off.textContent = t.slice(n);
+      await wait(n === 0 ? 120 : 32);
+    }
+    on.classList.remove('cur');
+    await wait(140);
+    for (const el of blk.querySelectorAll<HTMLElement>('.out > *')) {
+      el.classList.add('shown');
+      await wait(70);
+    }
+    blk.classList.add('done');
+  }
+
+  if (root.classList.contains('typing') && !reduce) {
+    const seen = new WeakSet<Element>();
+    let chain = Promise.resolve();
+    const io = new IntersectionObserver((es) => {
+      for (const e of es) {
+        if (!e.isIntersecting || seen.has(e.target)) continue;
+        seen.add(e.target); io.unobserve(e.target);
+        chain = chain.then(() => run(e.target as HTMLElement));
+      }
+    }, { rootMargin: '0px 0px -10% 0px' });
+    document.querySelectorAll('.blk').forEach((b) => io.observe(b));
+  }
+
+  // Simulated block stream. Random burns, clearly labelled DEMO on the page.
+  const cols = document.getElementById('cols')!;
+  const log = document.getElementById('log')!;
+  const stream = document.getElementById('stream')!;
+  const hex = (n: number) => Array.from({ length: n }, () => '0123456789abcdef'[(Math.random() * 16) | 0]).join('');
+  let zh = 103, sh = 1, running = true;
+  const lines: string[] = [];
+  const colW = () => (innerWidth < 720 ? 112 : 150);
+  const live: HTMLElement[] = [];
+
+  function addLog(s: string) {
+    lines.push(s);
+    while (lines.length > 4) lines.shift();
+    log.innerHTML = lines.join('\n');
+  }
+
+  function tick() {
+    const w = colW();
+    stream.style.setProperty('--cw', w + 'px');
+    const burns = Math.random() < 0.72 ? 1 + ((Math.random() * 4) | 0) : 0;
+    const zec = burns ? (burns * (0.001 + Math.random() * 0.02)).toFixed(4) : '0';
+    const col = document.createElement('div');
+    col.className = 'col';
+    col.innerHTML =
+      `<div class="zb"><span class="n">#${zh}</span><br>${burns ? `<span class="b">${burns} burn${burns > 1 ? 's' : ''}</span><br>${zec} ZEC` : 'no burns<br>&nbsp;'}</div>` +
+      `<span class="link"></span>` +
+      `<div class="sb ${burns ? 'mint' : 'empty'}"><span class="n">sova #${sh}</span><br>${burns ? '+6,250 SOVA' : '0 minted'}</div>`;
+    live.forEach((c, i) => { c.style.transform = `translateX(${-(live.length - i) * w}px)`; });
+    cols.appendChild(col);
+    live.push(col);
+    const max = Math.ceil(stream.clientWidth / w) + 1;
+    while (live.length > max) live.shift()!.remove();
+    const z = zh, s = sh;
+    addLog(`<b>zcash #${z}</b> ${burns ? `<i>${burns} burn${burns > 1 ? 's' : ''}</i> ${zec} ZEC destroyed` : 'no burns'}`);
+    setTimeout(() => {
+      col.querySelector('.link')!.classList.add('in');
+      col.querySelector('.sb')!.classList.add('in');
+      addLog(burns
+        ? `<b>sova  #${s}</b> sealed by 0x${hex(4)}…${hex(4)}  +6,250 SOVA to ${burns} burner${burns > 1 ? 's' : ''}`
+        : `<b>sova  #${s}</b> empty epoch, 0 minted`);
+    }, 900);
+    zh++; sh++;
+  }
+
+  if (reduce) {
+    for (let i = 0; i < 6; i++) tick();
+    cols.querySelectorAll('.sb, .link').forEach((e) => e.classList.add('in'));
+  } else {
+    let visible = false;
+    new IntersectionObserver(([e]) => { visible = e.isIntersecting; }).observe(stream);
+    for (let i = 0; i < 5; i++) tick();
+    cols.querySelectorAll('.sb, .link').forEach((e) => e.classList.add('in'));
+    setInterval(() => { if (running && visible && !document.hidden) tick(); }, 2500);
+  }
+</script>

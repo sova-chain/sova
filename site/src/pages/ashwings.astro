@@ -1,0 +1,77 @@
+---
+// Ashwings: the on-chain owl collection. Facts from contracts/src/Ashwings.sol
+// (NatSpec, _traits, SPECIES_W, SPECIES_RGB, _attributes, tokenURI; art spec
+// contracts/design/ashwing24.py) and docs/WORKPLAN.md G2.
+// The gallery is every sample the contract rendered (contracts/samples/,
+// copied to public/ashwings/). Sources: site/README.md.
+import Site from '../layouts/Site.astro';
+import { species, owlSamples } from '../data/sova';
+---
+<Site
+  title="Ashwings: on-chain owls"
+  description="Ashwings: pixel owls drawn entirely by their contract on Sova. No owner, no admin, no metadata server; free to mint, gas paid in SOVA. Day-one mint at launch."
+  current="/ashwings"
+  cmd="cat ashwings.txt"
+  status="pre-release · no public network yet"
+>
+  <h1>Ashwings</h1>
+  <p class="lead">Pixel owls drawn by their own contract. Sova means owl.</p>
+  <p class="pill">day-one mint at launch</p>
+
+  <ul class="gallery" aria-label="Twelve Ashwings rendered by the contract">
+    {owlSamples.map(([n, sp]) => (
+      <li>
+        <img src={`/ashwings/onchain-${n}.svg`} width="96" height="96" alt={`Ashwing sample ${n}, a ${sp} owl`} loading={n < 6 ? 'eager' : 'lazy'} decoding="async" />
+        <span>#{n} · {sp}</span>
+      </li>
+    ))}
+  </ul>
+  <p class="dim"># every owl above is the SVG the contract returned. None drawn by hand.</p>
+
+  <h2>fully on-chain</h2>
+  <ul class="bul">
+    <li>The contract builds each owl’s SVG and metadata itself, from a seed fixed at mint.</li>
+    <li>No owner, no admin, no mint fee, no metadata server. An owl lasts exactly as long as the chain.</li>
+    <li>Free to mint: you pay only gas, in SOVA. Symbol <code>ASHW</code>; each token is “Ashwing #N”.</li>
+  </ul>
+
+  <h2>minted with destroyed money</h2>
+  <p>Gas is paid in SOVA, and every SOVA traces back to burned ZEC. Every Ashwing is paid for with ZEC that no longer exists.</p>
+
+  <h2>traits</h2>
+  <p>A 24 × 24 pixel grid. The left half is drawn and mirrored; the pupils go in after the mirror, so both eyes look the same way. Owls can’t cross their eyes.</p>
+  <ul class="species" aria-label="Species and how often each is minted">
+    {species.map((s) => (
+      <li><span class="sw" style={`background:${s.body}`}></span><span class="sn">{s.name}</span><span class="sp">{s.w}%</span></li>
+    ))}
+  </ul>
+  <dl class="kv">
+    <dt>eyes</dt><dd>stare, wide stare, glance left, glance right, sleepy, zen, wink</dd>
+    <dt>iris</dt><dd>natural, amber, ember or void</dd>
+    <dt>chest</dt><dd>speckle, bars, chevrons or bib</dd>
+    <dt>tufts</dt><dd>none, tufts, horns, tall, crest or wild</dd>
+    <dt>beak</dt><dd>small, long, hooked or hoot</dd>
+    <dt>background</dt><dd>ash, slate, sage, cream, clay, night, gold or burn</dd>
+    <dt>accessory</dt><dd>none, gold chain, headband, bow tie, monocle, earring, pipe or halo</dd>
+  </dl>
+
+  <p class="next"><a href="/mine">Mine SOVA for gas</a><a href="/paper#fig5">The paper, Figure 5</a></p>
+</Site>
+
+<style>
+  .gallery { list-style: none; padding: 0; margin: 26px 0 10px; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 18px 14px; max-width: none; }
+  .gallery li { display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 12.5px; color: var(--g2); max-width: none; }
+  .gallery img { width: 100%; max-width: 104px; height: auto; aspect-ratio: 1 / 1; image-rendering: pixelated; border: 1px solid var(--line); }
+  .species { list-style: none; padding: 0; margin: 4px 0 18px; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px 18px; max-width: 720px; }
+  .species li { display: flex; align-items: center; gap: 9px; }
+  .sw { width: 14px; height: 14px; flex: 0 0 auto; border: 1px solid rgba(251, 243, 220, 0.25); }
+  .sn { color: var(--cream); }
+  .sp { color: var(--g3); margin-left: auto; font-variant-numeric: tabular-nums; }
+  @media (max-width: 720px) {
+    .gallery { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px 10px; }
+  }
+  @media (max-width: 420px) {
+    .gallery { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .species { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+</style>

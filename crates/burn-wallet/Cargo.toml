@@ -1,0 +1,98 @@
+# burn-wallet is intentionally its OWN nested Cargo workspace (the `members`
+# list below adds `miner` beside it), detached from the repo-root workspace.
+# See the long comment on `exclude = ["crates/burn-wallet"]` in the root
+# Cargo.toml for why: zcash_primitives 0.30.x hard-pins an exact pre-release
+# `crypto-common` version that is unresolvable alongside reth's dependency
+# graph in one Cargo.lock. This crate therefore carries its own committed
+# Cargo.lock (crates/burn-wallet/Cargo.lock) and its own target/ dir, and is
+# built/tested independently: `cd crates/burn-wallet && cargo build`.
+#
+# `miner` (crates/burn-wallet/miner, package name `sova-miner`) is the D2
+# miner CLI binary. It lives here rather than in the root workspace
+# (bin/sova-miner) because it links this crate's tx builder directly -- and
+# this crate can never coexist with reth in one dependency graph (see
+# above). This manifest doubles as the workspace root *and* the `burn-wallet`
+# package (a package manifest may also declare `[workspace]`; the root
+# package is implicitly a member alongside anything listed in `members`), so
+# adding `miner` here keeps everything -- burn-wallet the library, and the
+# miner CLI that drives it -- resolving against exactly one shared
+# Cargo.lock, with zero risk of ever touching reth's graph.
+#
+# `faucet` (package `sova-faucet`) is the project TAZ faucet (infra-2 D5),
+# here for the same reason: it reuses this crate's keystore, transparent
+# tx builder, ZIP-317 fee (`fee`) and RPC client.
+[workspace]
+members = ["miner", "faucet"]
+
+[package]
+name = "burn-wallet"
+description = "Transparent-only Zcash burn transaction builder"
+# Not inherited via `.workspace = true`: this crate is its own workspace
+# root (see above), so there is no parent `[workspace.package]` to inherit
+# from. Values below are kept identical to the repo-root workspace's.
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+authors = ["The Sova Contributors"]
+publish = false
+
+# Mirrors the repo-root workspace's `[workspace.lints]` verbatim (also not
+# inheritable across the workspace boundary described above).
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+unreachable_pub = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"
+
+[dependencies]
+# SIP-1 burn format constants and `extract_burn` -- path dependency so the
+# wire format stays defined in exactly one place (crates/consensus).
+consensus = { path = "../consensus" }
+
+# -- librustzcash family (all pulled from the same `zcash/librustzcash`
+# release train; versions verified current on crates.io as of 2026-09-21).
+# `zcash_primitives` is the ZIP-244-aware transaction-assembly crate: it
+# supplies TransactionData, the V5 sighash implementation, and the txid
+# digest machinery we use to sign correctly. We do NOT use its top-level
+# `transaction::builder::Builder`: that type's `build()` is generic over
+# `SpendProver`/`OutputProver` unconditionally (needed for Sapling/Orchard
+# proving), even when, as here, no shielded bundle is ever attached -- see
+# the doc comment on `tx::build_burn_transaction` for the full rationale.
+# Instead we drive `zcash_transparent`'s own bundle builder directly and
+# assemble the final `TransactionData` by hand, which is fully supported,
+# official, ZIP-244-correct API surface from the same crate family.
+zcash_primitives = { version = "0.30.1", features = ["transparent-inputs"] }
+zcash_protocol = { version = "0.10.6", features = ["local-consensus"] }
+zcash_transparent = { version = "0.10.0", features = ["transparent-inputs"] }
+zcash_address = "0.13.0"
+
+# secp256k1 0.29 (not the crates.io-latest 0.33) and rand 0.8 (not the
+# latest 0.10) are pinned deliberately, matching exactly what
+# zcash_transparent 0.10.0 itself depends on. zcash_transparent's public API
+# (`TransparentBuilder::add_p2pkh_input`, `TransparentSigningSet::add_key`,
+# `SpendInfo::P2pkh`) exposes `secp256k1::{SecretKey, PublicKey}` types
+# directly; Cargo cannot unify two semver-incompatible major versions of the
+# same crate into one type identity, so to construct values that type-check
+# against that API we must use the same major version it uses. Confirmed via
+# zcash_transparent-0.10.0's own Cargo.toml (`secp256k1 = "0.29"`,
+# `rand = "0.8"` dev-dependency and the `rand`-featured `SecretKey::new`
+# path).
+secp256k1 = { version = "0.29.1", features = ["rand", "serde"] }
+rand = "0.8"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hex = "0.4"
+thiserror = "2"
+ureq = { version = "3.4.2", features = ["json"] }
+# HTTP Basic auth for zebrad's RPC cookie (`RpcClient::with_cookie_file`).
+# 0.22 is already in this workspace's lockfile via ureq.
+base64 = "0.22"
+
+[dev-dependencies]
+tempfile = "3"

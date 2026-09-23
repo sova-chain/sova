@@ -1,0 +1,29 @@
+{
+  "name": "sova-miner-mcp",
+  "version": "0.1.0",
+  "description": "MCP server wrapping the sova-miner CLI: lets a Claude agent mine SOVA (init / fund-regtest / mine / status / stop / report) over stdio.",
+  "private": true,
+  "type": "module",
+  "license": "MIT OR Apache-2.0",
+  "engines": {
+    "node": ">=18.17"
+  },
+  "main": "dist/index.js",
+  "bin": {
+    "sova-miner-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "tsc -p tsconfig.json && node dist/index.js",
+    "driver": "tsc -p tsconfig.json && node dist/driver.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.5",
+    "typescript": "5.7.3"
+  }
+}

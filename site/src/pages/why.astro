@@ -1,0 +1,129 @@
+---
+// Why Sova: who it is for, how it compares with wrapped ZEC, what makes it
+// open, and what is new (each new thing linked to where the paper shows it).
+// Site v4: contracts that see Zcash lead, burn-mining second; positive
+// framing (Rob, 2026-09-23). Sources: docs/marketing/{positioning,angles,
+// agent-keeper}.md, docs/ROADMAP.md, sips/sip-{1,2,3,4}*.md, the paper's own
+// sources. Every claim is in site/README.md. The "what it isn't" list lives
+// on /press.
+import Site from '../layouts/Site.astro';
+import Tag from '../components/Tag.astro';
+
+const who = [
+  { h: 'ZEC holders.', t: 'Spend ZEC on contracts from the wallet you already use, shielded balance included. Or burn some and mine SOVA.' },
+  { h: 'Builders.', t: 'Contracts that verify ZEC payments, with Solidity and standard EVM tooling.' },
+  { h: 'Miners.', t: 'Any amount of ZEC mines. A laptop is enough.' },
+  { h: 'Agents.', t: 'Give an agent a budget: it mines its own gas and pays its own way.' },
+];
+
+const wrapped = [
+  'An IOU. The real ZEC sits with a bridge, a multisig or a custodian, and the IOU is worth exactly what they are.',
+  'It lives on someone else’s chain: their gas token, their sequencer, their upgrade keys.',
+];
+const sova = [
+  'Contracts see Zcash itself: every node runs its own Zcash node.',
+  'Self-custody. ZEC stays on Zcash, and SOVA is created by destroying ZEC.',
+  'Blocks follow Zcash’s proof-of-work, one for one.',
+  'Every node recomputes every mint from its own Zcash node.',
+];
+
+const grassroots = [
+  { h: 'Every SOVA is earned by burning ZEC.', t: 'The genesis is empty; the whole supply is mined.' },
+  { h: 'Anyone can mine, in any amount.', t: 'From 1,000 zatoshis up. Mining is burning.' },
+  { h: 'Every node verifies every mint.', t: 'Against its own Zcash node, history included.' },
+  { h: 'Rules change in the open.', t: 'Through SIPs, in the repository.' },
+  { h: 'Runs on a laptop and an SSD.', t: 'A full Zcash node and a full Sova node, on one machine.' },
+];
+
+const fresh = [
+  { h: 'Contracts that see Zcash.', t: 'A contract verifies that a ZEC payment landed, and how deep, then acts: a sale, a swap, a mint.', proof: 'paper §6', href: '/paper#s-zcash', k: 'testnet' },
+  { h: 'Burn-mining.', t: 'Issuance comes only from destroyed ZEC, split among that epoch’s burners.', proof: 'paper §4', href: '/paper#s4' },
+  { h: 'Anchored to Zcash.', t: 'One Sova block per Zcash block, ordered by Zcash’s proof-of-work.', proof: 'paper §3', href: '/paper#s3' },
+  { h: 'Every node checks every mint.', t: 'Against its own Zcash node, synced history included.', proof: 'paper §5', href: '/paper#s5' },
+  { h: 'The sealer ladder.', t: 'The top burner seals each block. If it is offline, the next in line seals after a short delay.', proof: 'paper §3.2', href: '/paper#s3-2' },
+  { h: 'Its own network protocol.', t: 'Peers announce and serve blocks. Only your own node moves its head.', proof: 'paper §7', href: '/paper#s6' },
+  { h: 'Agent-native mining.', t: 'An MCP server gives an agent six tools and a hard budget.', proof: 'mine', href: '/mine#agent' },
+];
+---
+<Site
+  title="Why Sova"
+  description="Sova is an EVM chain that can see Zcash: contracts verify ZEC payments on Zcash itself. Mined by burning ZEC, ordered by Zcash’s proof-of-work, run by anyone with a laptop."
+  current="/why"
+  cmd="sova --why"
+  status="pre-release · no public network yet"
+>
+  <h1>Why Sova</h1>
+  <p class="lead">Zcash is private money that works. Sova lets programs react to it: an EVM chain whose contracts verify ZEC payments on Zcash itself, mined by burning ZEC and ordered by Zcash’s proof-of-work.</p>
+
+  <h2>who it’s for</h2>
+  <ul class="rows">
+    {who.map((r) => <li><span class="mk">&gt;</span><p><b>{r.h}</b> {r.t}</p></li>)}
+  </ul>
+
+  <h2>wrapped ZEC, or Sova</h2>
+  <div class="diff">
+    <p class="dh old">wrapped ZEC</p>
+    <ul>{wrapped.map((t) => <li class="old"><span class="mk">-</span><p>{t}</p></li>)}</ul>
+    <p class="dh new">Sova</p>
+    <ul>{sova.map((t) => <li class="new"><span class="mk">+</span><p>{t}</p></li>)}</ul>
+  </div>
+  <p>Contracts that see Zcash: <Tag k="testnet" /> built, in review. Wrapped ZEC, custodied by NEAR and labelled that way: <Tag k="planned" /> <a href="/sips#sip-5">SIP-5</a>.</p>
+
+  <h2>open by construction</h2>
+  <ul class="rows">
+    {grassroots.map((r) => <li><span class="mk">[x]</span><p><b>{r.h}</b> {r.t}</p></li>)}
+  </ul>
+
+  <h2>what’s new</h2>
+  <ol class="reasons">
+    {fresh.map((r, i) => (
+      <li>
+        <span class="n">[{String(i + 1).padStart(2, '0')}]</span>
+        <div>
+          <p class="rh">{r.h} {r.k && <Tag k={r.k} />}</p>
+          <p class="rt">{r.t} <a class="proof" href={r.href}>→ {r.proof}</a></p>
+        </div>
+      </li>
+    ))}
+  </ol>
+
+  <p class="edge">The EVM is public. Privacy lives at the funding edge: burn from the shielded pool and your SOVA need not link to you. <a class="proof" href="/paper#s7">→ paper §8</a></p>
+
+  <p class="next"><a href="/paper">Read the paper</a><a href="/build">Build</a><a href="/mine">Mine</a><a href="/story">The story</a></p>
+</Site>
+
+<style>
+  .rows, .diff ul { list-style: none; padding: 0; margin: 0 0 14px; }
+  .rows li, .diff li { display: grid; grid-template-columns: 4ch 1fr; gap: 8px; margin: 0 0 8px; max-width: none; }
+  .rows li p, .diff li p { margin: 0; }
+  .rows .mk { color: var(--g3); }
+  .rows b { color: var(--g); font-weight: 700; }
+
+  .diff { background: #110e09; border: 1px solid var(--line); border-left: 2px solid var(--g2); padding: 12px 14px 4px; margin: 0 0 16px; max-width: 76ch; }
+  .diff .dh { margin: 0 0 6px; font-size: 13.5px; }
+  .diff .dh::before { content: '@@ '; color: var(--g3); }
+  .diff .dh::after { content: ' @@'; color: var(--g3); }
+  .diff .dh.old { color: var(--ember); }
+  .diff .dh.new { color: var(--g); }
+  .diff li.old .mk { color: var(--ember); }
+  .diff li.new .mk { color: var(--g); }
+  .diff li.new p { color: var(--cream); }
+
+  .reasons { list-style: none; padding: 0; margin: 0; }
+  .reasons li { display: grid; grid-template-columns: 7ch 1fr; gap: 12px; padding: 14px 0; border-top: 1px dashed var(--line); max-width: none; }
+  .reasons li:last-child { border-bottom: 1px dashed var(--line); }
+  .n { color: var(--g3); }
+  .rh .st { font-weight: 400; margin-left: 4px; }
+  .rh { color: var(--g); font-weight: 700; margin: 0 0 3px !important; font-size: 16px; }
+  .rt { margin: 0 !important; }
+  .proof { white-space: nowrap; font-size: 13px; margin-left: 4px; }
+
+  .edge { margin: 26px 0 40px !important; padding: 10px 14px; border-left: 2px solid var(--g); background: rgba(244, 183, 40, 0.04); color: var(--cream); }
+
+  @media (max-width: 600px) {
+    .rows li, .diff li { grid-template-columns: 3ch 1fr; gap: 6px; }
+    .reasons li { grid-template-columns: 6ch 1fr; gap: 8px; }
+    .rh { font-size: 15px; }
+    .diff { padding: 10px 10px 2px; }
+  }
+</style>

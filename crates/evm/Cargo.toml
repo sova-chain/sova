@@ -1,0 +1,15 @@
+[package]
+name = "evm"
+description = "Sova EVM extensions: settlement transactions, Zcash query precompile"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+reth-ethereum = { workspace = true, features = ["node"] }
+eyre.workspace = true

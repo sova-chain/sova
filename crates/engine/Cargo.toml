@@ -1,0 +1,46 @@
+[package]
+name = "engine"
+description = "Sova custom Engine API payload/node types (SovaPayloadAttributes, SovaNode)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+evm = { path = "../evm" }
+reth-ethereum = { workspace = true, features = ["node", "node-api", "pool", "network"] }
+reth-payload-builder.workspace = true
+reth-basic-payload-builder.workspace = true
+reth-ethereum-payload-builder.workspace = true
+alloy-primitives = { workspace = true, features = ["serde"] }
+alloy-rpc-types = { workspace = true, features = ["engine"] }
+alloy-rpc-types-eth.workspace = true
+serde = { workspace = true, features = ["derive", "std"] }
+thiserror.workspace = true
+eyre.workspace = true
+consensus = { path = "../consensus" }
+tokio = { workspace = true, features = ["sync", "time", "macros"] }
+tracing = "0.1"
+# sova/1 RLPx sub-protocol (src/p2p/): message codec (alloy-rlp), the
+# connection stream (futures), and the seen/announced LRUs (schnellru) --
+# all already in reth's dependency graph at these versions.
+alloy-rlp = { version = "0.3", features = ["derive"] }
+futures = "0.3"
+schnellru = "0.2"
+# gossip v1 relay task (src/relay.rs): signs outgoing engine_* calls
+# (reth-rpc-layer), assembles/parses their JSON-RPC bodies (serde_json),
+# and POSTs them over plain HTTP (ureq) — same blocking-client shape as
+# crates/consensus/src/zebrad.rs.
+reth-rpc-layer.workspace = true
+serde_json.workspace = true
+ureq.workspace = true
+
+[dev-dependencies]
+reth-ethereum = { workspace = true, features = ["node", "node-api", "pool", "network", "test-utils"] }
+reth-tracing.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time", "test-util"] }
+tracing = "0.1"

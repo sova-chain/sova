@@ -1,0 +1,67 @@
+name: Bug report
+description: Something is broken -- the box (./box/up.sh), the node, the miner, the contracts, or the docs.
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. **Security issues do not go here** -- see SECURITY.md.
+        If `./box/up.sh` failed, the most useful things are its full output and the logs under `box/up/.run/logs/`.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. git clone ... && git checkout v...
+        2. ./box/up.sh
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Release tag, or the output of `git rev-parse --short HEAD`.
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS (Apple Silicon)
+        - Linux x86_64
+        - Other (say which below)
+    validations:
+      required: true
+  - type: dropdown
+    id: binaries
+    attributes:
+      label: Where did the binaries come from?
+      description: Step [1/6] of ./box/up.sh prints `PREBUILT (...)` or `BUILDING FROM SOURCE`.
+      options:
+        - Prebuilt (release download)
+        - Prebuilt (Actions artifact)
+        - Built from source
+        - Not using the box
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output and logs
+      description: Full `./box/up.sh` output, `./box/up.sh status`, and the relevant lines of box/up/.run/logs/*.log. Remove anything private (keystores never belong here).
+      render: text
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: OS version, Docker version, `rustc --version` if you built from source, anything unusual (ports overridden, CARGO_TARGET_DIR, ...).

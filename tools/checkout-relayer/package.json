@@ -1,0 +1,22 @@
+{
+  "name": "sova-checkout-relayer",
+  "version": "0.1.0",
+  "description": "Relayer for the Ashwings ZEC checkout: reserves for buyers (pays gas), watches the seller's t-address on zebrad and claims.",
+  "private": true,
+  "type": "module",
+  "license": "MIT OR Apache-2.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "e2e": "node e2e/run.mjs"
+  },
+  "dependencies": {
+    "viem": "2.56.8"
+  },
+  "devDependencies": {
+    "jsqr": "1.4.0",
+    "playwright-core": "1.63.0"
+  }
+}

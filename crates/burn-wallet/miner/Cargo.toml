@@ -1,0 +1,65 @@
+# `sova-miner`: the D2 miner CLI. Lives beside `burn-wallet` in the nested
+# workspace (see the long comment on `crates/burn-wallet/Cargo.toml`'s
+# `[workspace]` table) because it links `burn-wallet` directly for keys,
+# transaction building, and RPC -- and per the standing rule in
+# `docs/WORKPLAN.md`, nothing that links `burn-wallet` may also link reth.
+# This crate speaks RPC only to the Zcash node (`burn_wallet::rpc::RpcClient`,
+# a `zebrad`-compatible JSON-RPC client with zero reth surface); it has no
+# path to, and must never gain, a dependency on reth or `crates/evm`.
+[package]
+name = "sova-miner"
+description = "Sova miner CLI: budget-capped per-epoch SIP-1 burn mining against a zebrad node"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+authors = ["The Sova Contributors"]
+publish = false
+
+[[bin]]
+name = "sova-miner"
+path = "src/main.rs"
+
+# Mirrors the repo-root workspace's `[workspace.lints]` verbatim (not
+# inheritable across the workspace boundary -- see burn-wallet's Cargo.toml).
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+unreachable_pub = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"
+
+[dependencies]
+# The wallet library: keys/keystore, the ZIP-244 tx builder, and the zebrad
+# RPC client. This is *why* the miner lives in this workspace at all.
+burn-wallet = { path = ".." }
+# SIP-1 constants and `extract_burn`, for `report`'s on-chain verification
+# pass (scans the chain for eater outputs the same way the e2e test does).
+# `consensus` has zero dependencies today (verified: crates/consensus/Cargo.toml
+# has an empty `[dependencies]` table) -- no reth surface to drag in.
+consensus = { path = "../../consensus" }
+# For constructing `OutPoint`s when reconstructing tracked UTXOs (our own
+# change outputs) from persisted state. Same version/features as burn-wallet
+# depends on, so it resolves to one copy in this workspace's shared lockfile.
+zcash_transparent = { version = "0.10.0", features = ["transparent-inputs"] }
+# Keccak-256, for the default EVM address: the keystore key's own Ethereum
+# address (`src/evm_address.rs`). RustCrypto's sha3 0.10 line, the same
+# version the repo-root workspace already locks (via alloy/reth); built on
+# digest 0.10, which this workspace's lockfile already carries.
+sha3 = "0.10.9"
+
+clap = { version = "4", features = ["derive", "env"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hex = "0.4"
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"
+# The fake node in the unit tests parses the burns it is handed to learn
+# their txids, like zebrad does. Same versions/features as burn-wallet.
+zcash_primitives = { version = "0.30.1", features = ["transparent-inputs"] }
+zcash_protocol = { version = "0.10.6", features = ["local-consensus"] }

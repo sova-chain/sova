@@ -1,0 +1,165 @@
+---
+// Layout for every page except the paper: the landing page at /, /why, /build,
+// /sips, /mine, /node, /story, /ashwings, /press (and the unlisted
+// /ashwings/buy): /v/terminal's gold-on-black CRT, made calm and scannable.
+// No script: static text, a faint scanline, one shared nav. The landing
+// page's terminal is its one CSS animation. Pages are indexable (only /v/*
+// and /ashwings/buy are noindex). Facts are sourced in site/README.md.
+import Direction from './Direction.astro';
+import { WORDMARK_PATHS, sitePages, placeholders, EDGE_LINE } from '../data/sova';
+
+interface Props {
+  title: string;
+  description: string;
+  /** Path of the current page, for aria-current in the nav. */
+  current: string;
+  /** The command shown in the page's prompt line. */
+  cmd: string;
+  /** Status line under the prompt (the page's one pre-release status line). */
+  status: string;
+  /** False for unlisted demo pages (/ashwings/buy): adds robots noindex. */
+  indexable?: boolean;
+}
+const { title, description, current, cmd, status, indexable = true } = Astro.props;
+---
+<Direction title={title} description={description} preload={['mono']} theme="#0c0a07" indexable={indexable}>
+  <div class="scan" aria-hidden="true"></div>
+  <header class="top">
+    <a class="mark" href="/" aria-label="Sova: home" aria-current={current === '/' ? 'page' : undefined}>
+      <svg viewBox="0 0 387 70" width="66" height="12" aria-hidden="true">
+        {WORDMARK_PATHS.map((d) => <path fill="currentColor" d={d} />)}
+      </svg>
+    </a>
+    <nav aria-label="Site">
+      <ul>
+        {sitePages.filter((p) => p.nav).map((p) => (
+          <li><a href={p.href} aria-current={p.href === current ? 'page' : undefined}>{p.nav}</a></li>
+        ))}
+      </ul>
+    </nav>
+  </header>
+
+  <main id="main" class="page">
+    <p class="prompt"><span class="ps">anon@sova:~$</span> {cmd}</p>
+    <slot />
+  </main>
+
+  <footer class="foot">
+    <p class="bar"><span class="bar-a">[0] sova</span> <span>{status}</span></p>
+    <p>
+      <a href="/">Home</a>
+      {sitePages.map((p) => <> · <a href={p.href}>{p.label}</a></>)}
+    </p>
+    <p class="dim">
+      {placeholders.map((p, i) => <>{i > 0 && ' · '}<span aria-disabled="true" data-placeholder={p.key}>{p.label}</span></>)}
+    </p>
+    <p class="dim">{EDGE_LINE} Code dual-licensed MIT or Apache-2.0.</p>
+  </footer>
+</Direction>
+
+<style is:global>
+  :root {
+    --bg: #0c0a07;
+    --g: #f4b728;
+    --g2: #cf9d2a;
+    --g3: #8a6a1f;
+    --cream: #fbf3dc;
+    --text: #e8dcbc;
+    --ember: #e0703f;
+    --line: #3a2f18;
+    --mono: 'Roboto Mono', ui-monospace, Menlo, Consolas, monospace;
+  }
+  body {
+    background: var(--bg) radial-gradient(ellipse at 50% 0%, #1a150d 0%, var(--bg) 60%) no-repeat;
+    color: var(--text);
+    font: 15px/1.65 var(--mono);
+    overflow-x: hidden;
+  }
+  ::selection { background: var(--g); color: var(--bg); }
+  a { color: var(--g); text-underline-offset: 3px; text-decoration-color: rgba(244, 183, 40, 0.45); }
+  a:hover { color: var(--cream); text-decoration-color: currentColor; }
+  a:focus-visible { outline: 2px solid var(--g); outline-offset: 2px; }
+  .scan {
+    position: fixed; inset: 0; pointer-events: none; z-index: 5;
+    background: repeating-linear-gradient(to bottom, transparent 0 2px, rgba(0, 0, 0, 0.16) 2px 3px);
+  }
+
+  .top {
+    max-width: 880px; margin: 0 auto; padding: 18px 16px 0;
+    display: flex; align-items: center; justify-content: space-between; gap: 10px 24px; flex-wrap: wrap;
+  }
+  .top .mark { color: var(--g); display: block; padding: 4px 0; }
+  .top ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 2px 4px; font-size: 13.5px; }
+  .top li a { display: block; padding: 1px 7px; color: var(--g2); text-decoration: none; }
+  .top li a:hover { color: var(--cream); }
+  .top li a[aria-current='page'] { background: var(--g); color: var(--bg); }
+
+  .page { max-width: 880px; margin: 0 auto; padding: 34px 16px 40px; }
+  .prompt { margin: 0 0 6px; color: var(--cream); font-size: 14px; }
+  .ps { color: var(--g3); }
+  .page h1 {
+    font-size: clamp(30px, 5vw, 46px); line-height: 1.1; letter-spacing: -0.02em; font-weight: 700;
+    color: var(--g); margin: 8px 0 14px;
+    text-shadow: 0 0 1px rgba(244, 183, 40, 0.6), 0 0 16px rgba(244, 183, 40, 0.3);
+  }
+  .lead { font-size: 17px; color: var(--cream); max-width: 62ch; margin: 0 0 16px; }
+  .pill {
+    display: inline-block; border: 1px solid var(--ember); color: var(--ember);
+    font-size: 12.5px; line-height: 1.5; padding: 2px 9px; margin: 0 0 8px;
+  }
+  .page h2 { font-size: 16px; color: var(--g); margin: 40px 0 12px; font-weight: 700; letter-spacing: 0.01em; }
+  .page h2::before { content: '## '; color: var(--g3); }
+  .page p, .page li { max-width: 72ch; }
+  .page p { margin: 0 0 12px; }
+  .dim { color: var(--g3); }
+  code { font-family: var(--mono); color: var(--cream); background: rgba(244, 183, 40, 0.07); padding: 0 3px; font-size: 0.94em; }
+  pre.sh {
+    margin: 0 0 16px; padding: 12px 14px; overflow-x: auto;
+    background: #110e09; border: 1px solid var(--line); border-left: 2px solid var(--g2);
+    font: 13.5px/1.6 var(--mono); color: var(--text); white-space: pre;
+  }
+  pre.sh code { background: none; padding: 0; color: inherit; font-size: inherit; }
+  pre.sh .c { color: var(--g3); }
+  pre.sh .p { color: var(--g3); user-select: none; }
+  pre.sh .o { color: var(--g2); }
+  pre.sh .ok { color: var(--g); }
+
+  ul.bul { list-style: none; padding: 0; margin: 0 0 14px; }
+  ul.bul > li { padding-left: 2ch; text-indent: -2ch; margin: 0 0 6px; }
+  ul.bul > li::before { content: '- '; color: var(--g3); }
+  ul.bul > li > * { text-indent: 0; }
+
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px; margin: 0 0 14px; }
+  .kv dt { color: var(--cream); }
+  .kv dd { margin: 0; }
+
+  /* Status tags (components/Tag.astro) */
+  .st { font-size: 12.5px; white-space: nowrap; letter-spacing: 0.02em; }
+  .st-local, .st-frozen, .st-accepted { color: var(--g); }
+  .st-testnet, .st-draft { color: var(--ember); }
+  .st-planned, .st-launch { color: var(--g3); }
+  .ph { color: var(--g3); }
+
+  .next { margin-top: 40px; display: flex; gap: 8px 18px; flex-wrap: wrap; }
+  .next a { border: 1px solid var(--g3); padding: 4px 10px; text-decoration: none; }
+  .next a:hover { border-color: var(--g); }
+
+  .foot { max-width: 880px; margin: 0 auto; padding: 10px 16px 44px; font-size: 13px; }
+  .foot p { margin: 0 0 8px; }
+  .bar { background: var(--g); color: var(--bg); padding: 2px 10px; display: flex; gap: 0 14px; flex-wrap: wrap; margin-bottom: 14px !important; }
+  .bar-a { font-weight: 700; }
+  .foot [data-placeholder] { color: var(--g3); }
+
+  @media (max-width: 600px) {
+    body { font-size: 14px; }
+    .page { padding-top: 24px; }
+    .lead { font-size: 15.5px; }
+    .top { padding-top: 12px; }
+    .top ul { font-size: 12.5px; }
+    .top li a { padding: 1px 5px; }
+    pre.sh { font-size: 12px; padding: 10px; }
+    .kv { grid-template-columns: 1fr; gap: 0; }
+    .kv dd { margin-bottom: 8px; }
+    .page h2 { margin-top: 32px; }
+  }
+</style>

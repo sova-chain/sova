@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main, release]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Recommended alongside Swatinem/rust-cache: incremental compilation adds
+  # bookkeeping overhead and bloats the cache with per-object incremental
+  # artifacts that a fresh `actions/checkout` each run rarely reuses anyway.
+  # Disabling it makes both compilation and cache restore/save faster.
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  # fmt + clippy: two static checks, one toolchain, one cache. fmt runs
+  # before the cache step since it needs no compiled dependencies at all
+  # (fails fast on formatting without waiting on a cache restore).
+  lint:
+    name: lint (fmt + clippy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --all --check
+      # crates/burn-wallet is its own nested Cargo workspace (see the
+      # `exclude` entry and comment in the root Cargo.toml), so
+      # `--all --check` above never reaches it -- run it explicitly.
+      - run: cargo fmt --all --check --manifest-path crates/burn-wallet/Cargo.toml
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: sova-lint
+          workspaces: |
+            . -> target
+            crates/burn-wallet -> target
+          cache-on-failure: true
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      # See above: burn-wallet is a separate workspace.
+      - run: cargo clippy --workspace --all-targets --manifest-path crates/burn-wallet/Cargo.toml -- -D warnings
+
+  # build + test: `cargo test --workspace` already compiles every workspace
+  # target (lib/bin/tests/benches) to run them, so a dedicated build-only
+  # job would just recompile the same graph a second time on a separate
+  # runner with its own cache restore. Keeping `cargo build` as an explicit
+  # step (rather than dropping it) preserves it as a distinct gating check,
+  # but running it in the same job as `cargo test` means the second command
+  # reuses the first's already-warm target dir for free instead of paying
+  # for another cache restore + dependency compile.
+  build-test:
+    name: build + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: sova-build
+          workspaces: |
+            . -> target
+            crates/burn-wallet -> target
+          cache-on-failure: true
+      - run: cargo build --workspace
+      # See the lint job's comment: burn-wallet is a separate workspace.
+      - run: cargo build --workspace --manifest-path crates/burn-wallet/Cargo.toml
+      - run: cargo test --workspace
+      # This does not run `e2e_regtest_burn` -- it's #[ignore]d by default
+      # because it needs the box/regtest Docker harness (see
+      # box/regtest/e2e-burn.sh), which this job does not start.
+      - run: cargo test --workspace --manifest-path crates/burn-wallet/Cargo.toml

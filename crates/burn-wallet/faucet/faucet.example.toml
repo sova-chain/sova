@@ -1,0 +1,31 @@
+# sova-faucet config (testnet). Every limit shown is the built-in default;
+# delete a line to keep the default. See docs/ops/faucet.md.
+
+# "test" or "regtest". "main" is refused, and the faucet also refuses to
+# start if zebrad reports mainnet (chain name or genesis hash).
+network = "test"
+
+# Loopback only: the public reaches it through a Cloudflare Tunnel.
+listen = "127.0.0.1:18790"
+
+# The operator's own zebrad, on loopback, with cookie auth on.
+zebrad_rpc = "http://127.0.0.1:18232"
+zebrad_cookie_file = "/var/lib/zebrad/.cookie"
+
+# The faucet's OWN keystore (sova-faucet init). Mode 0600. Never a miner key.
+keystore = "/var/lib/sova-faucet/keystore.json"
+# Cooldowns, today's spend, in-flight drips. Nothing else is stored.
+state_file = "/var/lib/sova-faucet/state.json"
+
+drip_zat = 10000000               # 0.1 TAZ per drip
+address_cooldown_secs = 86400     # one drip per address per 24h
+ip_cooldown_secs = 86400          # one drip per client IP (IPv6: per /64) per 24h
+daily_cap_zat = 200000000         # 2 TAZ/day total, drips + fees; resets 00:00 UTC
+max_balance_multiple = 5          # warn if the hot wallet holds > 5 x daily cap
+
+# Behind Cloudflare: believe this header, but only from these socket peers
+# (cloudflared on the same host). Leave unset when not behind a proxy.
+# trusted_proxy_header = "CF-Connecting-IP"
+# trusted_proxy_peers = ["127.0.0.1", "::1"]
+
+status_cache_secs = 10

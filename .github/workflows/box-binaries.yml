@@ -1,0 +1,215 @@
+name: Box binaries
+
+# E1c: release builds of the two host binaries sova-in-a-box runs
+# (`bin/sova` and `sova-miner`), so `box/up.sh` can fetch them instead of
+# spending 11-25 minutes compiling reth on a stranger's first run (see
+# docs/reports/e1-stranger-test.md and box/up/README.md, "Prebuilt
+# binaries"). Two modes:
+#
+# 1. workflow_dispatch -> an Actions *artifact* per platform, as before.
+#    Artifacts inherit the repo's visibility, need `gh` (logged in) to
+#    download, and expire on the repo's retention setting; when they do,
+#    `box/up.sh` just falls back to building from source.
+# 2. push of a `v*` tag -> the same builds, packed as one tarball per
+#    platform and attached to that tag's GitHub Release together with a
+#    release-level SHA256SUMS and BUILD-INFO. Release assets never expire
+#    and download with plain curl, no login: this is the M0 path a
+#    stranger's `./box/up.sh` uses first.
+#
+# Artifact layout, one per platform, named `sova-box-bin-<platform>`
+# (<platform> = darwin-arm64 | linux-x86_64 -- the same strings
+# `box/up.sh`'s `box_platform` produces):
+#   sova          release binary (bin/sova)
+#   sova-miner    release binary (crates/burn-wallet, a nested workspace)
+#   SHA256SUMS    `sha256sum` format, both binaries
+#   BUILD-INFO    key=value: commit, platform, ref, rustc, run id
+# Upload zips files and drops the executable bit; `box/up.sh` verifies
+# SHA256SUMS and marks the binaries executable when it installs them. It
+# only uses an artifact whose BUILD-INFO commit has the same Rust sources
+# (bin/, crates/, Cargo.toml, Cargo.lock, .cargo/, rust-toolchain*) as the
+# checkout it runs in.
+#
+# Release layout (tag vX.Y.Z), assets at
+# https://github.com/<owner>/<repo>/releases/download/vX.Y.Z/<asset>:
+#   sova-box-bin-darwin-arm64.tar.gz   the four artifact files above
+#   sova-box-bin-linux-x86_64.tar.gz   the four artifact files above
+#   SHA256SUMS                         `sha256sum` format, both tarballs
+#   BUILD-INFO                         commit, tag, platforms, run id
+# The release job only runs if BOTH platforms built, so a release never
+# carries one platform's binaries without the other's. If the release
+# already exists (e.g. drafted with notes by hand), assets are uploaded
+# to it (--clobber); otherwise it is created.
+#
+# Does not replace or gate anything in ci.yml: it is a separate, non-
+# required workflow with its own cache keys, so it never evicts the lint /
+# build-test caches.
+
+# No branch pushes: the macos-14 leg bills at 10x Actions minutes on a
+# private repo, so building on every Rust push to `release` would burn the
+# quota. Dispatch it when a demo build is wanted (gh workflow run
+# box-binaries.yml --ref release), or push a `v*` tag to cut a release.
+# box/up.sh's source-match check still decides whether an artifact fits
+# the checkout. The Rust build inputs are RUST_INPUT_PATHS in box/up.sh.
+on:
+  workflow_dispatch: {}
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+# A newer dispatch/tag push of the same ref supersedes an in-flight build.
+concurrency:
+  group: box-binaries-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Same reasoning as ci.yml: incremental artifacts bloat the cache and a
+  # fresh checkout rarely reuses them.
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  build:
+    name: build (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    # Cold reth release build is ~11 min on an M3; hosted runners are
+    # slower. Generous so a cold cache never times out.
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            platform: darwin-arm64
+          - runner: ubuntu-latest
+            platform: linux-x86_64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # Same conventions as ci.yml (two workspaces, cache-on-failure), with
+      # a release-profile, per-platform shared key of its own.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: sova-box-release-${{ matrix.platform }}
+          workspaces: |
+            . -> target
+            crates/burn-wallet -> target
+          cache-on-failure: true
+      - name: Build bin/sova (release)
+        run: cargo build --release -p sova
+      # crates/burn-wallet is its own nested workspace (see ci.yml).
+      - name: Build sova-miner (release)
+        run: cargo build --release -p sova-miner --manifest-path crates/burn-wallet/Cargo.toml
+      - name: Stage artifact
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          out="${RUNNER_TEMP}/sova-box-bin-${PLATFORM}"
+          mkdir -p "${out}"
+          cp target/release/sova "${out}/sova"
+          cp crates/burn-wallet/target/release/sova-miner "${out}/sova-miner"
+          # Fails the job here, not on a stranger's machine, if the
+          # binary can't even start on the platform it was built for.
+          "${out}/sova-miner" --version
+          cd "${out}"
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum sova sova-miner >SHA256SUMS
+          else
+            shasum -a 256 sova sova-miner >SHA256SUMS
+          fi
+          {
+            echo "commit=${GITHUB_SHA}"
+            echo "platform=${PLATFORM}"
+            echo "ref=${GITHUB_REF_NAME}"
+            echo "rustc=$(rustc --version)"
+            echo "run_id=${GITHUB_RUN_ID}"
+          } >BUILD-INFO
+          cat SHA256SUMS BUILD-INFO
+          echo "ARTIFACT_DIR=${out}" >>"${GITHUB_ENV}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sova-box-bin-${{ matrix.platform }}
+          path: ${{ env.ARTIFACT_DIR }}
+          if-no-files-found: error
+          compression-level: 6
+      # Tag builds only: the same four files as one tarball (keeps the
+      # executable bit, one download per platform) for the release job.
+      - name: Pack release tarball
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          # macOS tar: no AppleDouble `._*` entries for extended attributes.
+          COPYFILE_DISABLE: "1"
+        run: |
+          set -euo pipefail
+          tarball="${RUNNER_TEMP}/sova-box-bin-${PLATFORM}.tar.gz"
+          tar -czf "${tarball}" -C "${ARTIFACT_DIR}" sova sova-miner SHA256SUMS BUILD-INFO
+          tar -tzf "${tarball}"
+          echo "TARBALL=${tarball}" >>"${GITHUB_ENV}"
+      - if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: sova-box-release-${{ matrix.platform }}
+          path: ${{ env.TARBALL }}
+          if-no-files-found: error
+          compression-level: 0
+
+  release:
+    name: attach to GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The only job that writes: creating/updating this tag's release.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: sova-box-release-*
+          path: dist
+          merge-multiple: true
+      - name: Release SHA256SUMS + BUILD-INFO
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          cd dist
+          platforms="darwin-arm64 linux-x86_64"
+          for p in ${platforms}; do
+            test -f "sova-box-bin-${p}.tar.gz"
+            # Each tarball's own BUILD-INFO must name this commit.
+            inner="$(tar -xzOf "sova-box-bin-${p}.tar.gz" BUILD-INFO)"
+            printf '%s\n' "${inner}"
+            test "$(printf '%s\n' "${inner}" | sed -n 's/^commit=//p')" = "${GITHUB_SHA}"
+            test "$(printf '%s\n' "${inner}" | sed -n 's/^platform=//p')" = "${p}"
+          done
+          sha256sum sova-box-bin-*.tar.gz >SHA256SUMS
+          {
+            echo "commit=${GITHUB_SHA}"
+            echo "tag=${TAG}"
+            echo "platforms=${platforms}"
+            echo "run_id=${GITHUB_RUN_ID}"
+          } >BUILD-INFO
+          cat SHA256SUMS BUILD-INFO
+      - name: Create or update the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          files=(dist/sova-box-bin-darwin-arm64.tar.gz dist/sova-box-bin-linux-x86_64.tar.gz dist/SHA256SUMS dist/BUILD-INFO)
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" "${files[@]}" --clobber
+          else
+            gh release create "${TAG}" "${files[@]}" --verify-tag --title "${TAG}" \
+              --notes "sova-in-a-box prebuilt binaries for ${TAG} (macOS arm64, Linux x86_64). \`./box/up.sh\` in a checkout of this tag downloads and verifies them automatically; see box/up/README.md."
+          fi

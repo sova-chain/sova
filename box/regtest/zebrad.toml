@@ -1,0 +1,55 @@
+# zebrad Regtest configuration for the Sova regtest harness.
+#
+# Loaded into the container at /home/zebra/.config/zebrad.toml.
+#
+# Reference (confirmed against the zodl-zebra source tree used for this
+# harness, research/zodl-zebra):
+#   - book/src/user/regtest.md            (documented Regtest usage)
+#   - zebra-network/src/config.rs         (network / testnet_parameters parsing)
+#   - zebra-chain/src/parameters/network/testnet.rs (Parameters::new_regtest,
+#     ConfiguredActivationHeights::for_regtest -- NU5=1 here also pins
+#     Overwinter/Sapling/Blossom/Heartwood/Canopy to height 1)
+#   - zebra-rpc/src/config/mining.rs      (hard-coded default Regtest miner
+#     address `tmJymvcUCn1ctbghvTJpXBwHiMEB8P6wxNV` used below)
+#   - zebra-rpc/src/config/rpc.rs         (enable_cookie_auth defaults to
+#     true; disabled below so the harness scripts can call the RPC with
+#     plain curl, no cookie file plumbing needed across the container
+#     boundary)
+
+[network]
+network = "Regtest"
+# Regtest nodes don't connect to any peers, so this only matters if you
+# choose to publish the P2P port from docker-compose.yml.
+listen_addr = "0.0.0.0:18233"
+
+# Network upgrade activation heights for Regtest. Setting NU5 = 1 also
+# defaults Overwinter/Sapling/Blossom/Heartwood/Canopy to height 1
+# (see ConfiguredActivationHeights::for_regtest in
+# zebra-chain/src/parameters/network/testnet.rs). NU6/NU6.1/NU6.2 are left
+# unset (never active) here; add them below if a test needs them, e.g.
+# NU6 = 1
+[network.testnet_parameters.activation_heights]
+NU5 = 1
+
+[state]
+# Ephemeral state gives every `docker compose up` a fresh, empty chain --
+# deterministic starting point for burn-tx / reorg tests. Set to false (and
+# add a named volume) if you want state to survive a restart, e.g. to snapshot
+# it for reorg testing by copying the volume directory (see README.md).
+ephemeral = true
+
+[rpc]
+listen_addr = "0.0.0.0:18232"
+# Disabled for harness convenience: this node is only reachable on
+# 127.0.0.1 via the docker-compose port mapping, so cookie auth adds no
+# real security here, only friction for curl-based mine.sh / smoke.sh.
+enable_cookie_auth = false
+
+[mining]
+# Hard-coded well-known Regtest address from
+# zebra-rpc/src/config/mining.rs (MINER_ADDRESS map, NetworkKind::Regtest,
+# MinerAddressType::Transparent). Coinbase rewards from `generate` land here.
+miner_address = "tmJymvcUCn1ctbghvTJpXBwHiMEB8P6wxNV"
+
+[tracing]
+use_color = false

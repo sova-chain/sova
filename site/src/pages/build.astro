@@ -1,0 +1,121 @@
+---
+// /build: for developers. What the SIP-4 precompile answers, the IZcash
+// interface, the rules a contract relies on, what stays private, the patterns
+// it enables, how to try it locally, and how to contribute (merged here rather
+// than a separate /contribute: one developer page, one nav slot).
+// Sources: sips/sip-4-draft-zcash-state-precompile.md, contracts/src/zcash/
+// (IZcash.sol, ZcashLib.sol, ZecEscrow.sol, ZecCheckout.sol),
+// docs/design/ashwing-zec-checkout.md, CONTRIBUTING.md, SECURITY.md,
+// README.md (license). Every claim is in site/README.md.
+import Site from '../layouts/Site.astro';
+import Tag from '../components/Tag.astro';
+
+const methods = [
+  ['anchor()', 'The Zcash block this Sova block commits to: height and hash.'],
+  ['blockAt(h)', 'A Zcash block’s hash and header time.'],
+  ['txInfo(txid)', 'Where a transaction was mined and how deep. Fully shielded transactions too.'],
+  ['txOutput(txid, vout)', 'What a transparent output pays, and to which script.'],
+  ['burnInfo(txid)', 'The SIP-1 burn a transaction carries: who it credits and how much ZEC it destroyed.'],
+];
+
+const patterns = [
+  { id: 'sell', h: 'Sell for ZEC.', t: 'The buyer reserves an order, pays the seller’s own Zcash address from any wallet, and anyone calls claim. The contract verifies the payment and delivers.', src: 'ZecCheckout.sol', k: 'testnet' },
+  { id: 'swap', h: 'Swap ZEC for SOVA.', t: 'A maker locks SOVA and names a price. A taker reserves with a small bond, pays the ZEC straight to the maker on Zcash, and claims the SOVA.', src: 'ZecEscrow.sol', k: 'testnet' },
+  { id: 'burn', h: 'Proof-of-burn.', t: 'Apps recognize their own burns, marked with their own payload: names, Sybil-resistant badges, spam fees that burn.', src: 'SIP-4 §9', k: 'testnet' },
+] as const;
+---
+<Site
+  title="Build on Sova"
+  description="Build on Sova: contracts that verify ZEC payments on Zcash itself, through the SIP-4 precompile. The IZcash interface, the rules, a local demo, and how to contribute."
+  current="/build"
+  cmd="cat contracts/src/zcash/IZcash.sol"
+  status="pre-release · SIP-4 ships with the public testnet"
+>
+  <h1>Build on Sova</h1>
+  <p class="lead">A Sova contract can ask Zcash questions. Every node answers from its own Zcash node, identically.</p>
+  <p class="tags">SIP-4 · <Tag k="draft" /> build approved · code in review · <Tag k="testnet" /></p>
+
+  <h2>what a contract can ask</h2>
+  <dl class="kv methods">
+    {methods.map(([m, d]) => <><dt><code>{m}</code></dt><dd>{d}</dd></>)}
+  </dl>
+  <p class="dim"># spentBy(txid, vout), for "has this output been spent", follows in v1.1.</p>
+
+  <h2>the interface</h2>
+  <pre class="sh"><code><span class="c">// contracts/src/zcash/IZcash.sol: draft ABI, address provisional</span>
+address constant ZCASH_PRECOMPILE = 0x0000000000000000000000000000000000005a00;
+
+interface IZcash {'{'}
+    function anchor() external view returns (uint64 height, bytes32 hash);
+    function blockAt(uint64 h) external view returns (uint8 status, bytes32 hash, uint32 time);
+    function txInfo(bytes32 txid) external view returns (uint8 status, uint64 height,
+        uint32 index, uint64 confirmations, uint16 nOut, uint32 version);
+    function txOutput(bytes32 txid, uint32 vout) external view
+        returns (uint8 status, uint64 valueZat, bytes memory script);
+    function burnInfo(bytes32 txid) external view
+        returns (uint8 status, address credited, uint32 signal, uint64 weightZat);
+{'}'}
+<span class="c">// status: OK 0 · NOT_FOUND 1 · NOT_YET 2 · OUT_OF_RANGE 3 · NO_SUCH_OUTPUT 4</span></code></pre>
+  <p>Most contracts use <code>ZcashLib</code>, which turns a check into one call:</p>
+  <pre class="sh"><code><span class="c">// paid at least `price` zatoshis to the seller, 3 or more blocks deep?</span>
+ZcashLib.Payment memory p = ZcashLib.requireOutputPays(
+    txid, vout, ZcashLib.p2pkh(sellerHash), price, 3);</code></pre>
+  <p class="dim"># txids and hashes are display order, as explorers print them. Values are integer zatoshis.</p>
+
+  <h2>the rules</h2>
+  <dl class="kv rules">
+    <dt>deterministic</dt><dd>Every answer is a pure function of the Zcash chain the block commits to. Two nodes that accept the same block give the same answers, whatever their own Zcash tip.</dd>
+    <dt>not found is a result</dt><dd>A status, identical on every honest node. A node that can’t answer yet holds the block and retries.</dd>
+    <dt>confirmations</dt><dd>Counted from the committed Zcash block. <code>ZcashLib</code> asks for a minimum depth on every check: 3 on testnet, 10 on mainnet (about 12.5 minutes), more for large amounts.</dd>
+    <dt>reorgs</dt><dd>A Zcash reorg deeper than a payment reorgs Sova with it, identically on every node. Your minimum depth protects whatever happens off Sova.</dd>
+    <dt>txids</dt><dd>Pre-v5 txids can change before they are mined. Key on what an output pays, or reserve the order before payment.</dd>
+  </dl>
+
+  <h2>shielded stays shielded</h2>
+  <p>The precompile reads transparent Zcash state. Shielded amounts, recipients, senders and memos stay private, from contracts as from everyone. A shielded wallet pays a transparent address with a z→t send; that one output is public, and it is what a contract verifies.</p>
+
+  <h2 id="patterns">patterns</h2>
+  <ul class="pats">
+    {patterns.map((p) => (
+      <li id={p.id}><Tag k={p.k} /><p><b>{p.h}</b> {p.t} <span class="dim">{p.src}</span></p></li>
+    ))}
+  </ul>
+  <p>The first demo runs on a local devnet today: buy an Ashwing with ZEC from any Zcash wallet.</p>
+
+  <h2 id="try">try it locally <Tag k="local" /></h2>
+  <p>The contracts, a stand-in for the precompile, the checkout page and its relayer, all on your machine. Needs Foundry, Node 22 and a Chromium (<code>CHROME=/path</code>).</p>
+  <pre class="sh"><code><span class="p">$ </span>(cd contracts &amp;&amp; forge build &amp;&amp; forge test)
+<span class="p">$ </span>(cd site &amp;&amp; npm ci &amp;&amp; npm run build)
+<span class="p">$ </span>cd tools/checkout-relayer &amp;&amp; npm ci
+<span class="p">$ </span>npm run e2e</code></pre>
+  <p class="dim"># e2e starts anvil, puts a mock at 0x…5a00, deploys the checkout, and drives a headless browser through a ZEC purchase: reserve, pay, confirm, claim, owl.</p>
+  <p>Source: <span class="ph" data-placeholder="source-repo">contracts/src/zcash/</span> <Tag k="launch" /> · SIP-4 text: <span class="ph" data-placeholder="docs">sips/sip-4</span> <Tag k="launch" /></p>
+
+  <h2 id="contribute">contribute</h2>
+  <p>Sova is open source, MIT or Apache-2.0 at your option. The repository opens at launch. <span class="ph" data-placeholder="source-repo">GitHub</span> <Tag k="launch" /></p>
+  <dl class="kv">
+    <dt>run a node</dt><dd><a href="/node">One command</a>. “It didn’t work on my machine” is a useful issue.</dd>
+    <dt>change the protocol</dt><dd>Float the idea in the SIPs category of Discussions, then open the SIP as a pull request to <code>sips/</code>. <a href="/sips">The SIPs</a>.</dd>
+    <dt>send code</dt><dd>Human and AI pairs are the default; the author explains the change. Consensus code merges with simulation coverage in <code>box/sim</code>.</dd>
+    <dt>report a bug</dt><dd>Issue templates, in the repository. <span class="ph" data-placeholder="source-repo">Issues</span> <Tag k="launch" /></dd>
+    <dt>security</dt><dd>Report privately, through GitHub’s private vulnerability reporting or the security address in <code>SECURITY.md</code>. Public issues are for everything else. <span class="ph" data-placeholder="security">Advisories</span> <Tag k="launch" /></dd>
+  </dl>
+
+  <p class="next"><a href="/sips">The SIPs</a><a href="/paper#s-zcash">The paper, §6</a><a href="/node">Run a node</a></p>
+</Site>
+
+<style>
+  .tags { font-size: 13.5px; color: var(--g2); }
+  .methods dt code, .rules dt { white-space: nowrap; }
+  .methods dt code { background: none; padding: 0; color: var(--g); }
+  .rules dt { color: var(--g); }
+  .pats { list-style: none; padding: 0; margin: 0 0 12px; }
+  .pats li { display: grid; grid-template-columns: 10ch 1fr; gap: 10px; margin: 0 0 10px; max-width: none; }
+  .pats p { margin: 0; }
+  .pats b { color: var(--cream); }
+  :global(.page) h2 .st { font-weight: 400; margin-left: 6px; }
+  @media (max-width: 600px) {
+    .pats li { grid-template-columns: 1fr; gap: 0; }
+    .methods dt code, .rules dt { white-space: normal; }
+  }
+</style>

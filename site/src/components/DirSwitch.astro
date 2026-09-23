@@ -1,0 +1,18 @@
+---
+// Small cross-link between the design directions, so the owner can
+// flip between them. Each page styles `.dirs` itself.
+interface Props { current: '2009' | 'terminal' | 'burn' | 'paper' }
+const { current } = Astro.props;
+const dirs = [
+  { id: '2009', href: '/v/2009' },
+  { id: 'terminal', href: '/v/terminal' },
+  { id: 'burn', href: '/v/burn' },
+  { id: 'paper', href: '/v/paper' },
+];
+---
+<nav class="dirs" aria-label="Design directions">
+  <span>Design directions:</span>
+  {dirs.map((d) => d.id === current
+    ? <strong aria-current="page">{d.id}</strong>
+    : <a href={d.href}>{d.id}</a>)}
+</nav>

@@ -1,0 +1,28 @@
+services:
+  zebrad:
+    image: zfnd/zebra:6.3.0
+    # Both overridable so box/up.sh can run a second box beside this one
+    # (SOVA_BOX_ZEBRAD_CONTAINER / SOVA_BOX_ZEBRAD_PORT); the defaults are
+    # what every other script in box/ expects.
+    container_name: ${SOVA_BOX_ZEBRAD_CONTAINER:-sova-zebrad-regtest}
+    restart: "no"
+    # Publish RPC only on loopback -- this node has no auth (see zebrad.toml)
+    # and is meant strictly as a local, disposable test harness.
+    ports:
+      - "127.0.0.1:${SOVA_BOX_ZEBRAD_PORT:-18232}:18232"
+    volumes:
+      - ./zebrad.toml:/home/zebra/.config/zebrad.toml:ro
+    environment:
+      - RUST_LOG=info
+    healthcheck:
+      # zebrad's RPC server accepts JSON-RPC before the node is done with
+      # startup housekeeping, so getblockcount is a reasonable readiness probe.
+      test:
+        [
+          "CMD-SHELL",
+          "curl -s -X POST -H 'Content-Type: application/json' --data '{\"jsonrpc\":\"2.0\",\"id\":\"health\",\"method\":\"getblockcount\",\"params\":[]}' http://127.0.0.1:18232/ | grep -q result",
+        ]
+      interval: 2s
+      timeout: 2s
+      retries: 60
+      start_period: 5s

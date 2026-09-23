@@ -1,0 +1,113 @@
+---
+// The story: how Sova got here, told impersonally as a log. Public level of
+// detail from docs/marketing/comeback-thread.md (old chain, custody, the
+// audit, the pivot); dates from the audit of the old chain; the road from
+// docs/ROADMAP.md. Site v4: the rebuild beats lead with the vision (contracts
+// that see Zcash) and use positive framing. Sources: site/README.md.
+import Site from '../layouts/Site.astro';
+
+// Each beat is a log line: a timestamp (dates only where the record has one)
+// and the event, then a few short paragraphs.
+const beats = [
+  {
+    ts: '2025-09', ev: 'v1 on Bitcoin',
+    p: [
+      'Sova launched in September 2025 as an EVM chain on the OP Stack with native BTC. It ran on mainnet until November 2025.',
+    ],
+  },
+  {
+    ts: '2025-11', ev: 'the flaw',
+    p: [
+      'Native BTC meant someone held the BTC. On Sova v1, a single operator key did, and the chain leaned on outside services to keep running.',
+      'A chain that holds other people’s coins is only as strong as whoever holds them. Sova v1 was shut down.',
+    ],
+  },
+  {
+    ts: 'audit', ev: 'nothing left behind',
+    p: [
+      'After shutdown, every derivable custody address was checked. Zero BTC remained.',
+    ],
+  },
+  {
+    ts: '2026', ev: 'rebuilt beside Zcash',
+    p: [
+      'Zcash is private money that works. Money gets useful when programs can react to it.',
+      'The usual answer is to wrap ZEC onto another chain, which brings the custody problem straight back. Sova takes the other path: self-custody. The ZEC stays on Zcash, and Sova’s contracts look at it there.',
+    ],
+  },
+  {
+    ts: 'design', ev: 'contracts that see Zcash',
+    p: [
+      'Every Sova node runs its own Zcash node, so a contract can verify a ZEC payment against Zcash itself.',
+    ],
+  },
+  {
+    ts: 'design', ev: 'burn to mine',
+    p: [
+      'Destroy ZEC on Zcash and the next Sova block mints SOVA, the gas, to your EVM address.',
+      'One Sova block per Zcash block, ordered by Zcash’s proof-of-work. Every node checks every mint against its own Zcash node.',
+    ],
+  },
+  {
+    ts: 'now', ev: 'running',
+    p: [
+      'One command runs a Zcash node, a Sova node and a miner on a laptop. Nodes find each other over their own protocol, sync, and reject any history with a bad mint.',
+    ],
+  },
+];
+
+const next = [
+  'Source, specs and the one-command chain go public.',
+  'A public testnet, mined with testnet ZEC, where contracts see Zcash (SIP-4).',
+  'Mainnet when the testnet has earned it.',
+  'Later, wrapped ZEC, custodied by NEAR and labelled that way (SIP-5).',
+];
+---
+<Site
+  title="The Sova story"
+  description="Sova started on Bitcoin, where a single key held the BTC. It was shut down, an audit found zero BTC left, and Sova was rebuilt beside Zcash: self-custody, with contracts that see Zcash."
+  current="/story"
+  cmd="git log --reverse sova"
+  status="pre-release · no public network yet"
+>
+  <h1>The story</h1>
+  <p class="lead">Sova started on Bitcoin, learned what custody costs, and was rebuilt beside Zcash: self-custody, with contracts that see Zcash.</p>
+
+  <ol class="beats">
+    {beats.map((b) => (
+      <li>
+        <h2 class="log"><span class="ts">[{b.ts}]</span> <span class="ev">{b.ev}</span></h2>
+        {b.p.map((t) => <p>{t}</p>)}
+      </li>
+    ))}
+    <li>
+      <h2 class="log"><span class="ts">[next]</span> <span class="ev">the road</span></h2>
+      <ul class="bul">
+        {next.map((t) => <li>{t}</li>)}
+      </ul>
+    </li>
+  </ol>
+
+  <p class="next"><a href="/paper">Read the paper</a><a href="/why">Why Sova</a><a href="/node">Run a node</a></p>
+</Site>
+
+<style>
+  .beats { list-style: none; padding: 0; margin: 30px 0 0; border-left: 1px solid var(--line); }
+  .beats > li { position: relative; padding: 0 0 26px 22px; max-width: none; }
+  .beats > li::before {
+    content: ''; position: absolute; left: -4px; top: 0.72em; width: 7px; height: 7px;
+    background: var(--g); box-shadow: 0 0 8px rgba(244, 183, 40, 0.5);
+  }
+  .beats > li:last-child { padding-bottom: 4px; }
+  :global(.page) .beats h2.log { margin: 0 0 8px; font-size: 17px; font-weight: 700; letter-spacing: 0; }
+  :global(.page) .beats h2.log::before { content: none; }
+  .ts { color: var(--g3); font-weight: 400; }
+  .ev { color: var(--g); }
+  .beats p { font-size: 16px; line-height: 1.75; max-width: 64ch; margin: 0 0 12px; }
+  .beats .bul li { font-size: 16px; line-height: 1.7; max-width: 64ch; }
+  @media (max-width: 600px) {
+    .beats > li { padding-left: 16px; }
+    :global(.page) .beats h2.log { font-size: 15.5px; }
+    .beats p, .beats .bul li { font-size: 15px; line-height: 1.7; }
+  }
+</style>

@@ -1,0 +1,99 @@
+---
+// How to mine: the flow, the CLI (crates/burn-wallet/miner/README.md,
+// crates/burn-wallet/miner/src/{main,mine}.rs), the agent path (mcp/README.md,
+// mcp/docs/walkthrough.md), budgets, and funding privacy with its limits.
+// Regtest values are from mcp/docs/walkthrough.md. Sources: site/README.md.
+import Site from '../layouts/Site.astro';
+import { MIN_BURN_ZAT, REWARD_SOVA } from '../data/sova';
+
+const tools = [
+  ['sova_init', 'create or load the keystore; returns the t-addr to fund and the EVM address burns credit'],
+  ['sova_fund_regtest', 'regtest only: mine 101 blocks to that t-addr (one mature coinbase)'],
+  ['sova_mine', 'start the budget-capped burn loop in the background'],
+  ['sova_status', 'epochs done, last burn, and why it stopped'],
+  ['sova_stop', 'stop a running loop'],
+  ['sova_report', 'spend and earnings, optionally verified against the chain'],
+];
+---
+<Site
+  title="Mine SOVA"
+  description="How to mine SOVA: burn ZEC with sova-miner, by hand or through an agent via MCP, under a budget you set. Regtest today; testnet at launch."
+  current="/mine"
+  cmd="sova-miner --help"
+  status="pre-release · no public network yet"
+>
+  <h1>Mine SOVA</h1>
+  <p class="why1">Mining issues SOVA, the gas that runs every contract on Sova, including the ones that verify ZEC payments.</p>
+  <p class="lead">Burn ZEC on Zcash. The next Sova block pays you SOVA. That’s mining: any amount, from a laptop.</p>
+
+  <h2>the flow</h2>
+  <ol class="flow">
+    <li><span class="tag">[1] get ZEC</span><span>Fund a transparent address your miner controls. For privacy, fund it from your own shielded wallet (below).</span></li>
+    <li><span class="tag">[2] burn</span><span><code>sova-miner</code> sends one burn per Zcash block: at least {MIN_BURN_ZAT} zatoshis to a script nobody can spend, with your EVM address in the OP_RETURN.</span></li>
+    <li><span class="tag">[3] SOVA</span><span>That epoch’s Sova block pays every burner, split by ZEC burned: {REWARD_SOVA} SOVA per epoch after the slow start. The top burner seals the block and takes a one-tenth tip.</span></li>
+  </ol>
+
+  <h2>by hand</h2>
+  <pre class="sh"><code><span class="c"># 1. create a keystore: prints the t-addr to fund and the EVM address your burns credit</span>
+<span class="p">$ </span>sova-miner --network regtest init
+<span class="o">t-addr to fund:              tmVqDars4LD8DV1pUZAKshsmL6S2doWUXHR</span>
+<span class="o">evm address (SIP-1 credit):  0x9e5fbb17c5b5f13b9f5f6b9fe0695f18c0d29c6d</span>
+<span class="o">import this key into an EVM wallet to spend your SOVA (`sova-miner export-evm-key`)</span>
+
+<span class="c"># 2. fund the t-addr (on regtest the box does this for you)</span>
+
+<span class="c"># 3. burn once per new Zcash block, inside a budget</span>
+<span class="p">$ </span>sova-miner --network regtest mine --rpc http://127.0.0.1:18232 \
+    --budget-zat 2000000 --per-epoch-zat 100000
+<span class="o">epoch 1: height=103 burn=100000zat fee=20000zat change=624880000zat txid=c5632d5e…</span>
+
+<span class="c"># 4. check your burns against the chain, txid by txid</span>
+<span class="p">$ </span>sova-miner --network regtest report --verify-rpc http://127.0.0.1:18232
+<span class="ok">MATCH: yes</span>
+
+<span class="c"># 5. spend your SOVA: the keystore key is also your EVM key. Import it into any EVM wallet</span>
+<span class="p">$ </span>sova-miner export-evm-key --i-understand</code></pre>
+  <p class="dim"># output from a logged regtest run, shortened. Need a regtest chain? <a href="/node">The box</a> starts one.</p>
+
+  <h2>budgets</h2>
+  <dl class="kv">
+    <dt><code>--budget-zat</code></dt><dd>This run’s cap, burns plus fees. Mining stops when the next epoch won’t fit.</dd>
+    <dt><code>--lifetime-budget-zat</code></dt><dd>Optional ceiling across every run from this keystore.</dd>
+    <dt><code>--max-epochs</code></dt><dd>Stop after this many burns.</dd>
+    <dt>per epoch</dt><dd>The burn (at least {MIN_BURN_ZAT} zat) plus a ZIP-317 fee, about 20,000 zat for a burn. The fee goes to Zcash miners and never counts as burn weight.</dd>
+  </dl>
+
+  <h2 id="agent">let an agent mine</h2>
+  <p>The MCP server wraps the miner in six tools. Register it with Claude Code, set a budget, and ask.</p>
+  <pre class="sh"><code><span class="p">$ </span>claude mcp add sova-miner -- node "$(pwd)/mcp/dist/index.js"</code></pre>
+  <blockquote class="ask">“Initialize a sova miner, fund it on regtest, then mine for 10 epochs at 100,000 zat each with a 2,000,000 zat budget, and give me a report when it’s done.”</blockquote>
+  <dl class="kv tools">
+    {tools.map(([t, d]) => <><dt><code>{t}</code></dt><dd>{d}</dd></>)}
+  </dl>
+
+  <h2>privacy</h2>
+  <p>The burn itself is always public. Where its ZEC came from doesn’t have to be: fund the miner’s t-addr with a z→t send from your own shielded wallet, and the trail to you ends at the shielded pool. Three things stay visible:</p>
+  <ul class="bul">
+    <li>Burns from one miner address link to each other.</li>
+    <li>The deshielding transaction is visible: amount, address, height.</li>
+    <li>Payouts to your EVM address are public, like everything on the EVM.</li>
+  </ul>
+  <p>Use a fresh miner per session (<code>sova-miner init --data-dir &lt;new-dir&gt;</code>) and avoid round deshield amounts.</p>
+
+  <h2>testnet</h2>
+  <p>Point the miner at a zebrad on Zcash testnet with <code>--network test</code>, and use <code>--rpc-cookie-file</code> for its cookie auth. <span class="ph" data-placeholder="testnet">The testnet guide goes live at launch.</span></p>
+
+  <p class="next"><a href="/node">Run a node</a><a href="/paper#s2">How burns work (paper §2)</a></p>
+</Site>
+
+<style>
+  .flow { list-style: none; padding: 0; margin: 0; }
+  .flow li { display: grid; grid-template-columns: 13ch 1fr; gap: 12px; margin: 0 0 10px; max-width: none; }
+  .tag { color: var(--cream); white-space: nowrap; }
+  .ask { margin: 0 0 16px; padding: 8px 14px; border-left: 2px solid var(--g3); color: var(--cream); max-width: 72ch; }
+  .tools dt code { background: none; padding: 0; }
+  .why1 { color: var(--g2); margin-bottom: 8px !important; }
+  @media (max-width: 600px) {
+    .flow li { grid-template-columns: 1fr; gap: 0; margin-bottom: 12px; }
+  }
+</style>

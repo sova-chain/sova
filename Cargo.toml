@@ -1,0 +1,99 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/chainspec",
+    "crates/consensus",
+    "crates/engine",
+    "crates/evm",
+    "crates/miner",
+    "bin/sova",
+    "bin/sova-miner",
+]
+# `crates/burn-wallet` is deliberately NOT a member here (and is listed in
+# `exclude` below): it depends on `zcash_primitives` 0.30.x, whose manifest
+# hard-pins `crypto-common = "=0.2.0-rc.1"` (an exact, non-optional
+# dependency, still un-updated on crates.io as of 2026-09-21). That pin is
+# semver-incompatible with the stable `crypto-common ^0.2` (0.2.1/0.2.2)
+# pulled in transitively by reth (revm-precompile -> sha2 0.11 -> digest
+# 0.11.2) via `reth-ethereum` above, and a single workspace can only resolve
+# one dependency graph / one Cargo.lock across all members. Rather than
+# force an incompatible resolution (impossible) or destabilize reth's graph
+# with a `[patch]`, burn-wallet is detached into its own nested workspace
+# (see `crates/burn-wallet/Cargo.toml`'s `[workspace]` table and its own
+# committed `Cargo.lock`) so its dependency resolution never touches reth's.
+# Build/test it via `cargo build`/`cargo test` from inside crates/burn-wallet,
+# not `cargo build --workspace` at the repo root.
+exclude = ["crates/burn-wallet"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+authors = ["The Sova Contributors"]
+publish = false
+
+# reth is pinned to the v2.6.0 git tag (no reth crates are published to
+# crates.io; the SDK is git-only). `reth-ethereum` is the recommended facade
+# crate: it re-exports the node/builder/chainspec/tasks surface needed to
+# assemble a node without depending on reth's dozens of internal crates
+# directly. See bin/sova for the dev-chain spike that exercises this.
+[workspace.dependencies]
+hex = "0.4"
+ureq = { version = "2", default-features = false }
+reth-ethereum = { git = "https://github.com/paradigmxyz/reth", tag = "v2.6.0" }
+reth-tracing = { git = "https://github.com/paradigmxyz/reth", tag = "v2.6.0" }
+# `reth-ethereum`'s facade re-exports the node-assembly surface (crates/evm,
+# crates/engine's `Node`/`DebugNode`/`NodeTypes` impls) but does NOT re-export
+# the payload-builder crates (crates/engine's custom `PayloadBuilder` needs
+# these directly, per reth's own `examples/custom-engine-types`). Pinned to
+# the same v2.6.0 tag as `reth-ethereum` above so they resolve against one
+# dependency graph.
+reth-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v2.6.0" }
+reth-basic-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v2.6.0" }
+reth-ethereum-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v2.6.0" }
+# `reth-rpc-layer` re-exports the Engine API's `JwtSecret`/`Claims`
+# (`alloy-rpc-types-engine`, with its `jwt-aws-lc-rs` crypto backend
+# feature already enabled) — the gossip v1 relay task
+# (`crates/engine/src/relay.rs`) uses it to sign each outgoing `engine_*`
+# call to a peer's authrpc. Same v2.6.0 tag as the rest of reth's crates
+# above, for one resolved dependency graph.
+reth-rpc-layer = { git = "https://github.com/paradigmxyz/reth", tag = "v2.6.0" }
+# `NodeRecord` (enode URL parsing) for `sova/1` static peers
+# (`SOVA_P2P_PEERS`, bin/sova) -- reth's facade does not re-export
+# `reth-network-peers`. Same v2.6.0 tag, one resolved graph.
+reth-network-peers = { git = "https://github.com/paradigmxyz/reth", tag = "v2.6.0" }
+# alloy crates used directly for engine-API wire types (`ExecutionData`,
+# engine payload envelopes, RPC block type for `DebugNode`). Versions match
+# what reth v2.6.0's own workspace pins them to, so Cargo resolves a single
+# compatible set alongside reth's transitive alloy dependencies.
+alloy-primitives = { version = "1.6.1", default-features = false }
+alloy-rpc-types = { version = "2.4.2", default-features = false }
+alloy-rpc-types-eth = { version = "2.4.2", default-features = false }
+serde = { version = "1.0", default-features = false }
+serde_json = { version = "1.0", default-features = false, features = ["std"] }
+thiserror = { version = "2.0.0", default-features = false, features = ["std"] }
+eyre = "0.6"
+tokio = { version = "1.52.3", default-features = false }
+
+# reth's own dependency graph is large enough that full debuginfo on `dev`
+# builds blows past reasonable disk budgets (we hit "No space left on
+# device" during the linker step of a full workspace debug build before
+# adding this). reth's own root Cargo.toml tunes `[profile.dev]` down for
+# exactly this reason, but profile settings are NOT inherited from a git
+# dependency's manifest — only the top-level workspace's profile applies
+# to the whole build graph, reth crates included. So we replicate reth's
+# own tuning here.
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+unreachable_pub = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"

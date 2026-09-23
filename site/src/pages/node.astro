@@ -1,0 +1,72 @@
+---
+// Run it yourself: sova-in-a-box. Everything here is from box/README.md and
+// box/up/README.md (prerequisites, quickstart, "What you're seeing", evidence,
+// troubleshooting). Sources: site/README.md.
+import Site from '../layouts/Site.astro';
+---
+<Site
+  title="Run a Sova node"
+  description="Run Sova yourself: one command starts a Zcash regtest node, a Sova node and a miner on your machine. Local devnet today; testnet node guide at launch."
+  current="/node"
+  cmd="./box/up.sh"
+  status="pre-release · no public network yet"
+>
+  <h1>Run it yourself</h1>
+  <p class="lead">One command starts a Zcash regtest node, a Sova node and a miner on your machine. Then you watch burns turn into SOVA.</p>
+  <p>Every Sova node runs beside its own Zcash node. That is how each node verifies every mint, and how contracts see Zcash.</p>
+
+  <h2>you need</h2>
+  <ul class="bul">
+    <li><b>Docker</b>, running. zebrad runs in a container (<code>zfnd/zebra:6.3.0</code>, about 120 MB).</li>
+    <li><b>Rust</b> stable, with <code>cargo</code> on your PATH.</li>
+    <li><b>curl</b>, and <b>python3</b> for decimal balances in <code>status</code>.</li>
+    <li><b>Disk</b>: about 4 GB for the first build (2.3 GB of build output, 1.7 GB of Cargo caches).</li>
+    <li><b>Free ports</b>: 18232 (zebrad), 8545 (Sova RPC), 8551 (Engine API), 30303 (p2p). Each has an override.</li>
+  </ul>
+
+  <h2>start</h2>
+  <pre class="sh"><code><span class="p">$ </span>git clone <span class="ph" data-placeholder="source-repo">&lt;repo, at launch&gt;</span> sova-chain
+<span class="p">$ </span>cd sova-chain
+<span class="p">$ </span>./box/up.sh</code></pre>
+  <p>The first run compiles the node and the miner: 11 minutes on an idle Apple Silicon laptop, closer to 25 on a busy one. After that, <code>up</code> takes under a minute, and the first epoch settles seconds later.</p>
+
+  <h2>what you’ll see</h2>
+  <pre class="sh"><code><span class="p">$ </span>./box/up.sh status
+<span class="o">=== sova chain (http://127.0.0.1:8545) ===
+block height: 136 (0x88)
+miner 0x0aff...907c balance: <span class="ok">106,250 SOVA</span> (0x167fd2f45f5fa5e80000 wei)
+settled epochs (this run): 17</span></code></pre>
+  <dl class="kv">
+    <dt>zebrad</dt><dd>A throwaway Zcash regtest node. A script mines a block every few seconds.</dd>
+    <dt>the miner</dt><dd>One SIP-1 burn transaction per new Zcash block, until its budget runs out.</dd>
+    <dt>the Sova node</dt><dd>Follows zebrad, one Sova block per Zcash block. When an epoch has a burn, its block pays the reward to the miner as a withdrawal, which every node re-derives and checks.</dd>
+  </dl>
+  <pre class="sh"><code><span class="p">$ </span>grep 'settled=true' box/up/.run/logs/sova-node.log
+<span class="o">INFO sova epoch trigger height=109 settled=true
+INFO sova epoch trigger height=111 settled=true</span></code></pre>
+  <p class="dim"># settled=false on the heights between is expected: the miner burns every other Zcash block.</p>
+  <p>Balances come back in wei: <code>0x152d02c7e14af680000</code> is 6,250 SOVA, one settled epoch.</p>
+
+  <h2>optional: the day-one dapps</h2>
+  <p>With Foundry installed, <code>./box/deploy-dapps.sh</code> deploys WSOVA, a Uniswap-v2-style factory and router, Multicall3 and <a href="/ashwings">the Ashwings mint</a>, then launches a token, seeds a pool, swaps and mints an owl.</p>
+
+  <h2>tear down</h2>
+  <pre class="sh"><code><span class="p">$ </span>./box/up.sh down                          <span class="c"># stop everything</span>
+<span class="p">$ </span>./box/up.sh down &amp;&amp; rm -rf box/up/.run   <span class="c"># start over completely</span></code></pre>
+
+  <h2>if something’s off</h2>
+  <dl class="kv">
+    <dt>port in use</dt><dd>The message names the variable to override, such as <code>SOVA_BOX_RPC_PORT</code>.</dd>
+    <dt>miner stopped</dt><dd>Usually it hit its budget; the last line of <code>box/up/.run/logs/miner.log</code> says why. Raise <code>SOVA_BOX_BUDGET_ZAT</code> and run <code>up</code> again.</dd>
+    <dt>zebrad unhealthy</dt><dd>Check that Docker is running and has memory and disk to spare.</dd>
+  </dl>
+
+  <h2>testnet</h2>
+  <p>The public testnet will run this same node, with its own genesis and pinned bootnodes. <span class="ph" data-placeholder="testnet">The testnet node guide goes live at launch.</span></p>
+
+  <p class="next"><a href="/mine">Mine</a><a href="/build">Build</a><a href="/paper#s9">The paper, §10</a></p>
+</Site>
+
+<style>
+  b { color: var(--cream); font-weight: 400; }
+</style>

@@ -1,0 +1,58 @@
+---
+// Head for the /v/* design-direction pages. Unlike Base.astro it pulls in no
+// shared stylesheet: each direction page carries its own styles and scripts.
+interface Props {
+  title: string;
+  description: string;
+  preload?: ('serif' | 'mono')[];
+  theme?: string;
+  /** Only the public homepage is indexable; the /v/* explorations are not. */
+  indexable?: boolean;
+}
+const { title, description, preload = [], theme = '#1C1914', indexable = false } = Astro.props;
+const canonical = new URL(Astro.url.pathname, Astro.site);
+const fontFiles = { serif: '/fonts/newsreader-latin-opsz.woff2', mono: '/fonts/roboto-mono-latin-wght.woff2' };
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+    <meta name="theme-color" content={theme} />
+    {!indexable && <meta name="robots" content="noindex" />}
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    {preload.map((f) => <link rel="preload" href={fontFiles[f]} as="font" type="font/woff2" crossorigin />)}
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content={canonical} />
+    <slot name="head" />
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>
+<style is:global>
+  @font-face {
+    font-family: 'Newsreader';
+    font-style: normal;
+    font-weight: 200 800;
+    font-display: optional;
+    src: url('/fonts/newsreader-latin-opsz.woff2') format('woff2-variations');
+  }
+  @font-face {
+    font-family: 'Roboto Mono';
+    font-style: normal;
+    font-weight: 100 700;
+    font-display: optional;
+    src: url('/fonts/roboto-mono-latin-wght.woff2') format('woff2-variations');
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+  body { margin: 0; }
+  img, svg, canvas { display: block; max-width: 100%; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+</style>

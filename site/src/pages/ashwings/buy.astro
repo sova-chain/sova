@@ -1,0 +1,140 @@
+---
+// /ashwings/buy: buy an Ashwing with ZEC (SIP-4 demo 1). Unlisted demo:
+// noindex, not in sitePages (nav, footer, sitemap). Runbook:
+// docs/design/ashwing-zec-checkout.md. Logic: src/scripts/checkout/.
+import Site from '../../layouts/Site.astro';
+
+// Defaults target a local anvil devnet deployed by
+// tools/checkout-relayer/e2e (account 0 deploys Ashwings, then the checkout).
+// Override per visit: ?rpc=&co=&listing=&relayer=<url|none>&net=test|main
+const config = {
+  rpc: 'http://127.0.0.1:8545',
+  checkout: '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512',
+  listing: 1,
+  relayer: 'http://127.0.0.1:8787',
+  net: 'test',
+};
+---
+<Site
+  title="Buy an Ashwing with ZEC"
+  description="Pay ZEC from any Zcash wallet, get an on-chain owl on Sova. No bridge: Sova reads the payment itself."
+  current="/ashwings"
+  cmd="./buy-owl --pay zec"
+  status="demo · unlisted"
+  indexable={false}
+>
+  <div id="buy" data-config={JSON.stringify(config)}>
+    <h1>Pay ZEC. Get an owl.</h1>
+    <p class="lead">Any Zcash wallet. No bridge. Sova sees the payment.</p>
+
+    <ol class="track" aria-label="Progress">
+      <li data-s="cur">reserve</li>
+      <li data-s="todo">pay</li>
+      <li data-s="todo" id="trk-conf">0/? conf</li>
+      <li data-s="todo">claim</li>
+      <li data-s="todo">owl</li>
+    </ol>
+
+    <p id="status" class="status" data-k="wait" role="status" aria-live="polite"><span id="st">loading</span><span class="cur" aria-hidden="true"></span></p>
+
+    <figure id="owl" hidden>
+      <img id="owl-img" width="192" height="192" alt="" />
+      <figcaption><span id="owl-name"></span> · yours</figcaption>
+    </figure>
+
+    <section id="s1">
+      <h2>your sova address</h2>
+      <div class="row">
+        <input id="addr" type="text" placeholder="0x…" spellcheck="false" autocomplete="off" aria-label="Sova address that receives the owl" />
+        <button id="connect" type="button" hidden>connect wallet</button>
+        <button id="reserve" type="button" class="go">reserve</button>
+      </div>
+    </section>
+
+    <section id="s2" hidden>
+      <h2 id="s2h">pay exactly</h2>
+      <div class="pay">
+        <div id="qr" class="qr" role="img"></div>
+        <dl class="kv">
+          <dt>amount</dt><dd><b id="amt" class="amt"></b> ZEC <button type="button" data-copy="amt">copy</button></dd>
+          <dt>to</dt><dd><code id="taddr" class="brk"></code> <button type="button" data-copy="taddr">copy</button></dd>
+          <dt class="live">uri</dt><dd class="live"><a id="uri" class="brk" href="#">…</a> <button type="button" data-copy="uri">copy</button></dd>
+          <dt class="live">by</dt><dd class="live">zcash block <span id="dl">…</span> <span class="dim">(<span id="dl-min">…</span>)</span></dd>
+          <dt>order</dt><dd>#<span id="rid"></span> <span class="dim">→ <span id="to"></span></span></dd>
+        </dl>
+      </div>
+      <p class="dim live"># exact to the zatoshi. a shielded balance is fine.</p>
+    </section>
+
+    <section id="s3" hidden>
+      <h2>sent it? paste the txid</h2>
+      <div class="row">
+        <input id="txid" type="text" placeholder="txid from your wallet" spellcheck="false" autocomplete="off" aria-label="Zcash transaction id" />
+        <button id="check" type="button">check</button>
+        <button id="claim" type="button" class="go" disabled>claim</button>
+      </div>
+    </section>
+
+    <p id="cfg" class="dim cfg"></p>
+  </div>
+</Site>
+
+<script>
+  import '../../scripts/checkout/app';
+</script>
+
+<style>
+  [hidden] { display: none !important; }
+  .track { list-style: none; padding: 0; margin: 18px 0 10px; display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 13.5px; }
+  .track li { color: var(--g3); }
+  .track li::before { content: '[ ] '; }
+  .track li[data-s='done'] { color: var(--g2); }
+  .track li[data-s='done']::before { content: '[x] '; }
+  .track li[data-s='cur'] { color: var(--g); font-weight: 700; }
+  .track li[data-s='cur']::before { content: '[>] '; }
+
+  .status { background: #110e09; border: 1px solid var(--line); border-left: 2px solid var(--g); padding: 8px 12px; margin: 0 0 8px; color: var(--cream); max-width: none !important; }
+  .status::before { content: '$ '; color: var(--g3); }
+  .status[data-k='ok'] { border-left-color: var(--g); color: var(--g); }
+  .status[data-k='err'] { border-left-color: var(--ember); color: var(--ember); }
+  .status[data-k='err']::before { content: '! '; }
+  .cur { display: inline-block; width: 0.6em; height: 1.05em; margin-left: 4px; vertical-align: -0.18em; background: currentColor; animation: blink 1.1s steps(1) infinite; }
+  .status[data-k='ok'] .cur, .status[data-k='err'] .cur { display: none; }
+  @keyframes blink { 50% { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .cur { animation: none; } }
+
+  .row { display: flex; flex-wrap: wrap; gap: 8px; }
+  input { flex: 1 1 320px; min-width: 0; background: #110e09; border: 1px solid var(--g3); color: var(--cream); font: 14px/1.4 var(--mono); padding: 8px 10px; }
+  input:focus { outline: none; border-color: var(--g); }
+  button { background: none; border: 1px solid var(--g3); color: var(--g); font: 13.5px/1.4 var(--mono); padding: 7px 12px; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--g); color: var(--cream); }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button.go { background: var(--g); border-color: var(--g); color: var(--bg); font-weight: 700; }
+  button.go:hover:not(:disabled) { background: var(--cream); border-color: var(--cream); color: var(--bg); }
+  dd button { font-size: 11.5px; padding: 0 6px; margin-left: 4px; }
+  #s1.done .row { opacity: 0.55; }
+
+  .pay { display: grid; grid-template-columns: 208px 1fr; gap: 20px; align-items: start; }
+  /* Above the page's scanline overlay (z-index 5): stripes hurt scanning from a screen. */
+  .qr { width: 208px; height: 208px; border: 1px solid var(--g2); position: relative; z-index: 6; }
+  .qr :global(svg) { width: 100%; height: 100%; }
+  .pay .kv { margin: 0; align-content: start; }
+  .amt { color: var(--g); font-size: 20px; letter-spacing: 0.01em; }
+  .brk { word-break: break-all; }
+  a.brk { font-size: 0.94em; }
+  /* Once minted, section 2 is a receipt: nothing left to scan or pay. */
+  #s2.paid .live, #s2.paid .qr { display: none; }
+  #s2.paid .pay { grid-template-columns: 1fr; }
+
+  figure { margin: 18px 0 8px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+  figure img { width: 192px; height: 192px; image-rendering: pixelated; border: 1px solid var(--g); box-shadow: 0 0 24px rgba(244, 183, 40, 0.25); animation: rise 0.6s ease-out; }
+  figcaption { color: var(--g); }
+  @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+  @media (prefers-reduced-motion: reduce) { figure img { animation: none; } }
+  .cfg { font-size: 11.5px; margin-top: 36px; overflow-wrap: anywhere; }
+
+  @media (max-width: 600px) {
+    .pay { grid-template-columns: 1fr; }
+    .qr { width: 100%; max-width: 260px; height: auto; aspect-ratio: 1 / 1; }
+  }
+</style>

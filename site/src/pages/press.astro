@@ -1,0 +1,111 @@
+---
+// Press kit: one-liners and short description (docs/marketing/positioning.md),
+// logos (brand/, copied to public/brand/), palette (brand/readme.md), name
+// usage (positioning.md "What we never claim" and "Terminology", Ashwings from
+// contracts/src/Ashwings.sol), and the "what it isn't" list (notClaims, the
+// same positioning rules). Sources: site/README.md.
+import Site from '../layouts/Site.astro';
+import { notClaims } from '../data/sova';
+
+const logos = [
+  { name: 'Wordmark, gold', use: 'on dark backgrounds', bg: 'dark', img: '/brand/sova-wordmark-gold.svg', files: [['SVG', '/brand/sova-wordmark-gold.svg'], ['PNG', '/brand/sova-wordmark-gold.png']] },
+  { name: 'Wordmark, deep gold', use: 'on light backgrounds', bg: 'light', img: '/brand/sova-wordmark-deep-gold.svg', files: [['SVG', '/brand/sova-wordmark-deep-gold.svg']] },
+  { name: 'Wordmark, white', use: 'one colour, dark', bg: 'dark', img: '/brand/sova-wordmark-white.svg', files: [['SVG', '/brand/sova-wordmark-white.svg'], ['PNG', '/brand/sova-wordmark-white.png']] },
+  { name: 'Wordmark, black', use: 'one colour, light', bg: 'light', img: '/brand/sova-wordmark-black.svg', files: [['SVG', '/brand/sova-wordmark-black.svg'], ['PNG', '/brand/sova-wordmark-black.png']] },
+  { name: 'Mark, gold on black', use: 'avatars and icons, dark', bg: 'dark', mark: true, img: '/brand/sova-mark-gold-round.svg', files: [['SVG round', '/brand/sova-mark-gold-round.svg'], ['SVG square', '/brand/sova-mark-gold-square.svg']] },
+  { name: 'Mark, deep gold on white', use: 'avatars and icons, light', bg: 'light', mark: true, img: '/brand/sova-mark-deep-gold-round.svg', files: [['SVG round', '/brand/sova-mark-deep-gold-round.svg'], ['SVG square', '/brand/sova-mark-deep-gold-square.svg']] },
+  { name: 'Mark, inverted', use: 'large avatars', bg: 'dark', mark: true, img: '/brand/sova-mark-inverted-round.png', files: [['PNG round', '/brand/sova-mark-inverted-round.png'], ['PNG square', '/brand/sova-mark-inverted-square.png']] },
+];
+const palette = [
+  { name: 'Gold', hex: '#F4B728', use: 'accent on dark' },
+  { name: 'Deep gold', hex: '#B0841D', use: 'accent on light' },
+  { name: 'Deep gold 600', hex: '#967019', use: 'hover on light' },
+  { name: 'Gold 50', hex: '#FBF3DC', use: 'light tint' },
+  { name: 'Warm black', hex: '#1C1914', use: 'backgrounds' },
+];
+---
+<Site
+  title="Sova press kit"
+  description="Sova press kit: one-liners, a short description, background, what Sova isn’t, logo files, colours and how to write the names Sova, SOVA, SIP and Ashwings."
+  current="/press"
+  cmd="ls press/"
+  status="pre-release · no public network yet"
+>
+  <h1>Press kit</h1>
+  <p class="lead">Words, logos and colours for writing about Sova.</p>
+
+  <h2>one-liners</h2>
+  <blockquote class="q">Sova is the programmable edge of the shielded pool: an EVM sidechain of Zcash, mined by burning real ZEC.</blockquote>
+  <blockquote class="q short">Sova is the EVM that can see Zcash.</blockquote>
+  <blockquote class="q short">Zcash’s programmable edge.</blockquote>
+
+  <h2>short description</h2>
+  <blockquote class="q">Sova is an EVM sidechain of Zcash whose contracts can see Zcash. Every Sova node runs its own Zcash node, so a contract can verify a real ZEC payment on Zcash itself, and the ZEC stays on Zcash. SOVA, the chain’s gas token, is issued only by burn-mining: anyone who destroys ZEC in a Zcash block earns SOVA in the matching Sova block, and every node checks every mint against its own Zcash node. Contracts that see Zcash ship with the public testnet.</blockquote>
+
+  <h2>background</h2>
+  <blockquote class="q">Sova launched in September 2025 as an EVM chain on the OP Stack with native BTC, held under a single operator key. It ran on mainnet until November 2025 and was shut down. An audit of every derivable custody address found zero BTC remaining. Sova was rebuilt beside Zcash as an EVM chain mined by burning ZEC, in self-custody: the ZEC stays on Zcash. <a href="/story">The full story</a>.</blockquote>
+
+  <h2>what it isn’t</h2>
+  <ul class="not">
+    {notClaims.map(([h, d]) => <li><span class="x">[ -- ]</span> <span><b>{h}.</b> <span class="dim">{d}</span></span></li>)}
+    <li><span class="x">[ -- ]</span> <span><b>Not a PoW chain.</b> <span class="dim">Burn-mined, and ordered by Zcash’s proof of work.</span></span></li>
+    <li><span class="x">[ -- ]</span> <span><b>No price talk.</b> <span class="dim">SOVA pays gas. Write about what it does.</span></span></li>
+  </ul>
+
+  <h2>logos</h2>
+  <ul class="logos">
+    {logos.map((l) => (
+      <li>
+        <div class={`pv ${l.bg}${l.mark ? ' mk' : ''}`}><img src={l.img} alt="" loading="lazy" decoding="async" /></div>
+        <p class="ln">{l.name} <span class="dim">· {l.use}</span></p>
+        <p class="dl">{l.files.map(([k, f], i) => <>{i > 0 && ' · '}<a href={f} download>{k}</a></>)}</p>
+      </li>
+    ))}
+  </ul>
+  <p class="dim"># use the files as they are: don’t recolour, stretch or add effects. Gold on dark, deep gold on light.</p>
+
+  <h2>colours</h2>
+  <ul class="pal">
+    {palette.map((c) => (
+      <li><span class="sw" style={`background:${c.hex}`}></span><span><span class="pn">{c.name}</span><br /><code>{c.hex}</code> <span class="dim">{c.use}</span></span></li>
+    ))}
+  </ul>
+
+  <h2>names</h2>
+  <dl class="kv">
+    <dt>Sova</dt><dd>The network. Capital S, then lowercase.</dd>
+    <dt>SOVA</dt><dd>The asset, all caps. It pays gas. It isn’t governance, staking or a claim on anything.</dd>
+    <dt>Ashwings</dt><dd>The on-chain owl collection. One of them is an Ashwing.</dd>
+    <dt>burn-mined</dt><dd>How SOVA is issued (formally, Proof of Burn), anchored to Zcash’s proof of work.</dd>
+    <dt>SIP</dt><dd>Sova Improvement Proposal. SIP-4 is the Zcash state precompile behind contracts that see Zcash.</dd>
+  </dl>
+
+  <h2>contact</h2>
+  <p><span class="ph" data-placeholder="press-contact">A press contact goes live at launch.</span></p>
+</Site>
+
+<style>
+  .q { margin: 0 0 12px; padding: 10px 14px; border-left: 2px solid var(--g); color: var(--cream); max-width: 72ch; background: rgba(244, 183, 40, 0.04); }
+  .q.short { color: var(--g); }
+  .logos { list-style: none; padding: 0; margin: 0 0 10px; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 18px; max-width: none; }
+  .logos li { max-width: none; }
+  .pv { height: 104px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--line); padding: 18px 26px; }
+  .pv.dark { background: #1c1914; }
+  .pv.light { background: #fffefb; }
+  .pv img { max-height: 100%; width: auto; max-width: 100%; }
+  .pv:not(.mk) img { width: 100%; height: auto; }
+  .ln { margin: 8px 0 2px !important; color: var(--cream); font-size: 13.5px; }
+  .dl { margin: 0 !important; font-size: 13.5px; }
+  .pal { list-style: none; padding: 0; margin: 0 0 8px; display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px 18px; max-width: none; }
+  .pal li { display: flex; gap: 12px; align-items: center; font-size: 13.5px; max-width: none; }
+  .pal .sw { width: 46px; height: 46px; flex: 0 0 auto; border: 1px solid rgba(251, 243, 220, 0.25); }
+  .pn { color: var(--cream); }
+  .ph { color: var(--g3); }
+  .not { list-style: none; padding: 0; margin: 0; }
+  .not li { display: grid; grid-template-columns: 7ch 1fr; gap: 6px; margin: 0 0 6px; max-width: none; }
+  .not b { color: var(--cream); font-weight: 400; }
+  .x { color: var(--ember); }
+  @media (max-width: 600px) {
+    .not li { grid-template-columns: 1fr; gap: 0; margin-bottom: 10px; }
+  }
+</style>

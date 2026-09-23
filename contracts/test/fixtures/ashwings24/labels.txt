@@ -1,0 +1,155 @@
+sample-1	rects=187
+sample-2	rects=202
+sample-3	rects=193
+sample-4	rects=217
+sample-5	rects=199
+sample-6	rects=200
+sample-7	rects=215
+sample-8	rects=198
+sample-9	rects=186
+sample-10	rects=193
+sample-11	rects=204
+sample-12	rects=199
+sample-13	rects=207
+sample-14	rects=191
+sample-15	rects=186
+sample-16	rects=213
+sample-17	rects=126
+sample-18	rects=203
+sample-19	rects=123
+sample-20	rects=212
+sample-21	rects=179
+sample-22	rects=183
+sample-23	rects=188
+sample-24	rects=161
+sample-25	rects=204
+sample-26	rects=173
+sample-27	rects=120
+sample-28	rects=196
+sample-29	rects=177
+sample-30	rects=191
+sample-31	rects=184
+sample-32	rects=193
+sample-33	rects=193
+sample-34	rects=197
+sample-35	rects=203
+sample-36	rects=184
+sample-37	rects=202
+sample-38	rects=185
+sample-39	rects=198
+sample-40	rects=201
+sample-41	rects=180
+sample-42	rects=209
+sample-43	rects=195
+sample-44	rects=207
+sample-45	rects=207
+sample-46	rects=146
+sample-47	rects=194
+sample-48	rects=170
+zero	rects=163
+max	rects=150
+species=classic (i=1004)	rects=211
+species=bright (i=1006)	rects=198
+species=bronze (i=1015)	rects=187
+species=barn (i=1005)	rects=203
+species=moss (i=1002)	rects=177
+species=ember (i=1001)	rects=203
+species=dusk (i=1019)	rects=191
+species=slate (i=1014)	rects=157
+species=snowy (i=1000)	rects=180
+species=midnight (i=1003)	rects=197
+species=spectral (i=1139)	rects=136
+background=clay (i=1010)	rects=191
+background=night (i=1025)	rects=147
+background=gold (i=1007)	rects=203
+background=burn (i=1060)	rects=149
+tufts=crest (i=1020)	rects=205
+tufts=wild (i=1045)	rects=197
+eyes=wink (i=1008)	rects=195
+beak=long (i=1009)	rects=187
+beak=hooked (i=1038)	rects=191
+chest=bib (i=1013)	rects=193
+accessory=headband (i=1018)	rects=187
+accessory=halo (i=1021)	rects=186
+void+stare (i=1078)	rects=205
+void+wide stare (i=1183)	rects=191
+void+glance left (i=1251)	rects=192
+void+glance right (i=1089)	rects=193
+void+sleepy (i=1034)	rects=174
+void+wink (i=1250)	rects=198
+halo+crest (i=1222)	rects=186
+halo+burn (i=3361)	rects=131
+bytes0-9=0x25	rects=176
+bytes0-9=0x26	rects=188
+bytes0-9=0x32	rects=187
+bytes0-9=0x33	rects=185
+bytes0-9=0x3b	rects=184
+bytes0-9=0x3c	rects=183
+bytes0-9=0x45	rects=180
+bytes0-9=0x46	rects=197
+bytes0-9=0x51	rects=196
+bytes0-9=0x52	rects=195
+bytes0-9=0x63	rects=197
+bytes0-9=0x64	rects=173
+bytes0-9=0x6d	rects=173
+bytes0-9=0x6e	rects=173
+bytes0-9=0x70	rects=173
+bytes0-9=0x71	rects=173
+bytes0-9=0x77	rects=173
+bytes0-9=0x78	rects=195
+bytes0-9=0x7f	rects=195
+bytes0-9=0x80	rects=195
+bytes0-9=0x8a	rects=195
+bytes0-9=0x8b	rects=195
+bytes0-9=0x8c	rects=203
+bytes0-9=0x93	rects=203
+bytes0-9=0x94	rects=183
+bytes0-9=0x95	rects=183
+bytes0-9=0x96	rects=171
+bytes0-9=0xa4	rects=171
+bytes0-9=0xa5	rects=171
+bytes0-9=0xa6	rects=173
+bytes0-9=0xa9	rects=173
+bytes0-9=0xaa	rects=183
+bytes0-9=0xaf	rects=183
+bytes0-9=0xb0	rects=209
+bytes0-9=0xb3	rects=209
+bytes0-9=0xb4	rects=219
+bytes0-9=0xb8	rects=219
+bytes0-9=0xb9	rects=219
+bytes0-9=0xba	rects=215
+bytes0-9=0xbd	rects=215
+bytes0-9=0xbe	rects=219
+bytes0-9=0xbf	rects=219
+bytes0-9=0xc0	rects=214
+bytes0-9=0xcc	rects=214
+bytes0-9=0xcd	rects=214
+bytes0-9=0xcf	rects=214
+bytes0-9=0xd0	rects=216
+bytes0-9=0xd3	rects=216
+bytes0-9=0xd4	rects=212
+bytes0-9=0xd7	rects=212
+bytes0-9=0xd8	rects=156
+bytes0-9=0xd9	rects=156
+bytes0-9=0xda	rects=154
+bytes0-9=0xdf	rects=154
+bytes0-9=0xe0	rects=152
+bytes0-9=0xe1	rects=152
+bytes0-9=0xe2	rects=143
+bytes0-9=0xe7	rects=143
+bytes0-9=0xe8	rects=144
+bytes0-9=0xed	rects=144
+bytes0-9=0xee	rects=195
+bytes0-9=0xef	rects=195
+bytes0-9=0xf0	rects=195
+bytes0-9=0xf1	rects=195
+bytes0-9=0xf2	rects=196
+bytes0-9=0xf5	rects=196
+bytes0-9=0xf6	rects=197
+bytes0-9=0xf7	rects=197
+bytes0-9=0xf8	rects=196
+bytes0-9=0xf9	rects=196
+bytes0-9=0xfa	rects=150
+bytes0-9=0xfb	rects=150
+heaviest sample (i=4375)	rects=231
+worst case (searched)	rects=234

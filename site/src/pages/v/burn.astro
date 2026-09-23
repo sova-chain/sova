@@ -1,0 +1,519 @@
+---
+// Direction 3, "Burn": visual and kinetic. The hero is a canvas where a ZEC
+// coin burns and its embers form the Sova mark. Then big numerals, an animated
+// burn -> epoch -> mint diagram (regtest values), and a moving strip of the
+// on-chain Ashwings owls. The canvas is illustration, not data.
+import Direction from '../../layouts/Direction.astro';
+import DirSwitch from '../../components/DirSwitch.astro';
+import {
+  EDGE_LINE, REWARD_SOVA, HALVING_EPOCHS, SLOW_START_EPOCHS,
+  notClaims, owls, placeholders, WORDMARK_PATHS,
+} from '../../data/sova';
+
+// Big numerals. Each digit becomes a rolling column (see .roll in the CSS).
+const stats = [
+  { v: REWARD_SOVA, unit: 'SOVA per epoch*' },
+  { v: '0', unit: 'premine' },
+  { v: '1:1', unit: 'Zcash block : Sova block' },
+  { v: '0', unit: 'admin keys' },
+];
+const cols = (v: string) => [...v].map((c) => (/\d/.test(c) ? { d: Number(c) } : { c }));
+
+// Two-burner regtest split (docs/WORKPLAN.md C3; site/README.md derivation):
+// tip 625.000000001, then 5,625 shared 5:2.
+const split = [
+  { k: 'tip', label: 'sealer tip 1/10', v: '625', w: 10 },
+  { k: 'a', label: 'burner A · 5 parts', v: '4,017.86', w: 64.2857 },
+  { k: 'b', label: 'burner B · 2 parts', v: '1,607.14', w: 25.7143 },
+];
+---
+<Direction
+  title="Sova: burn ZEC, mine SOVA"
+  description="Burn ZEC on Zcash, mint SOVA on Sova. One Sova block per Zcash block. No premine, no admin keys. Pre-release."
+  preload={['mono']}
+  theme="#120f0b"
+>
+  <script is:inline slot="head">
+    if (!matchMedia('(prefers-reduced-motion: reduce)').matches) document.documentElement.classList.add('anim');
+  </script>
+
+  <header class="top">
+    <a href="/v/burn" aria-label="Sova">
+      <svg viewBox="0 0 387 70" width="88" height="16" aria-hidden="true">
+        {WORDMARK_PATHS.map((d) => <path fill="#F4B728" d={d} />)}
+      </svg>
+    </a>
+    <span class="pill"><span class="pip"></span>Pre-release · no public network yet</span>
+  </header>
+
+  <main id="main">
+    <section class="hero">
+      <div class="hero-copy">
+        <h1><span>Burn ZEC.</span> <span class="gold">Mine SOVA.</span></h1>
+        <p class="sub">An EVM chain for Zcash. Every SOVA traces to destroyed ZEC.</p>
+        <p class="edge">{EDGE_LINE}</p>
+        <div class="ctas">
+          <a class="btn" href="#flow">See a burn become SOVA ↓</a>
+          <span class="btn ghost" aria-disabled="true" data-placeholder="source-repo">Source opens at launch</span>
+        </div>
+      </div>
+      <div class="stage-wrap">
+        <canvas id="burn" role="img" aria-label="Animation: a ZEC coin burns from the bottom up and its embers fly up to form the Sova mark."></canvas>
+      </div>
+    </section>
+
+    <section class="stats" aria-label="Key numbers">
+      {stats.map((s) => (
+        <div class="stat">
+          <span class="num roll" aria-label={s.v}>
+            {cols(s.v).map((c) => 'd' in c
+              ? <span class="dcol" aria-hidden="true"><span class="strip" style={`--d:${c.d}`}>{'0123456789'.split('').map((n) => <span>{n}</span>)}</span></span>
+              : <span class="sep" aria-hidden="true">{c.c}</span>)}
+          </span>
+          <span class="unit">{s.unit}</span>
+        </div>
+      ))}
+      <p class="fn">* After a {SLOW_START_EPOCHS}-epoch slow start. Halves every {HALVING_EPOCHS} epochs, like Zcash. Burn-less epochs mint nothing.</p>
+    </section>
+
+    <section id="flow" class="flow" aria-labelledby="flow-t">
+      <h2 id="flow-t">One Zcash block. One Sova block.</h2>
+      <ol class="stages">
+        <li class="stage s1">
+          <span class="k">01 · Burn</span>
+          <div class="viz tx">
+            <div class="row"><span class="op">OP_RETURN</span><code>SV 01 0x0095…3523</code></div>
+            <div class="row hot"><span class="op">100,000 zat</span><code>→ 76a914 00…00 88ac</code></div>
+          </div>
+          <p>Send ZEC where nobody can spend it. Name your EVM address.</p>
+        </li>
+        <li class="pipe p1" aria-hidden="true"><span class="dot"></span></li>
+        <li class="stage s2">
+          <span class="k">02 · Epoch</span>
+          <div class="viz zblock">
+            <span class="zlabel">zcash #103</span>
+            <span class="tx-l"></span><span class="tx-l"></span><span class="tx-l burnl"></span><span class="tx-l"></span>
+          </div>
+          <p>That Zcash block is one epoch. Everyone who burned in it mines it.</p>
+        </li>
+        <li class="pipe p2" aria-hidden="true"><span class="dot"></span></li>
+        <li class="stage s3">
+          <span class="k">03 · Mint</span>
+          <div class="viz split">
+            <div class="bar">{split.map((p) => <span class={`seg ${p.k}`} style={`--w:${p.w}%`}></span>)}</div>
+            <ul class="legend">{split.map((p) => <li class={p.k}><span>{p.label}</span><b>{p.v}</b></li>)}</ul>
+          </div>
+          <p>The Sova block mints {REWARD_SOVA} SOVA, split by ZEC burned. No claim step.</p>
+        </li>
+      </ol>
+      <p class="cap">Illustrative, from a two-burner regtest run. The split is exact to the gwei.</p>
+    </section>
+
+    <section class="trust" aria-labelledby="trust-t">
+      <h2 id="trust-t">Checked, not trusted.</h2>
+      <ul>
+        <li><b>Every node</b> re-derives every mint from its own Zcash node.</li>
+        <li><b>Every miner</b> can diff their burns against payouts, txid by txid.</li>
+        <li><b>Nobody</b> holds an admin key, a premine or an investor allocation.</li>
+      </ul>
+      <p class="privacy">Privacy lives at the edge: fund your burn from shielded ZEC. The EVM itself is public.</p>
+    </section>
+
+    <section class="owls" aria-labelledby="owls-t">
+      <div class="owls-head">
+        <h2 id="owls-t">Ashwings</h2>
+        <p>Pixel owls drawn by the contract itself. Free mint, gas in SOVA. Minted with destroyed money.</p>
+      </div>
+      <div class="marquee" aria-hidden="true">
+        <div class="track">
+          {[...owls, ...owls].map((src) => <img src={src} width="96" height="96" alt="" decoding="async" loading="lazy" />)}
+        </div>
+      </div>
+      <p class="cap">Rendered by the Ashwings contract on a local devnet. Day-one mint at launch.</p>
+    </section>
+
+    <section class="nots" aria-labelledby="nots-t">
+      <h2 id="nots-t" class="sr">What we don’t claim</h2>
+      <ul>{notClaims.map(([h, d]) => <li title={d}>{h}</li>)}</ul>
+    </section>
+
+    <section class="run">
+      <code>$ ./box/up.sh</code>
+      <p>A full burn-to-mine devnet on your laptop. Repo opens at launch.</p>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <ul>{placeholders.map((p) => <li><span aria-disabled="true" data-placeholder={p.key}>{p.label}</span></li>)}</ul>
+    <p>Code dual-licensed MIT or Apache-2.0.</p>
+    <DirSwitch current="burn" />
+  </footer>
+</Direction>
+
+<style>
+  :global(:root) {
+    --bg: #120f0b;
+    --ink: #1c1914;
+    --raise: #26221b;
+    --rule: #3a342a;
+    --gold: #f4b728;
+    --deep: #b0841d;
+    --ember: #ff6a2b;
+    --paper: #fbf3dc;
+    --ash: #b3a993;
+    --dim: #8f8672;
+    --sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    --mono: 'Roboto Mono', ui-monospace, Menlo, Consolas, monospace;
+  }
+  :global(body) { background: var(--bg); color: var(--paper); font: 17px/1.5 var(--sans); }
+  a { color: var(--gold); }
+  h2 { font-size: clamp(28px, 4vw, 48px); line-height: 1.05; letter-spacing: -0.03em; font-weight: 800; margin: 0 0 28px; }
+
+  .top {
+    display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    max-width: 1280px; margin: 0 auto; padding: 18px clamp(16px, 4vw, 48px);
+  }
+  .pill {
+    font: 12px/1 var(--mono); color: var(--ash); border: 1px solid var(--rule); border-radius: 999px;
+    padding: 7px 12px; display: inline-flex; gap: 8px; align-items: center;
+  }
+  .pip { width: 7px; height: 7px; border-radius: 50%; background: var(--ember); box-shadow: 0 0 8px var(--ember); }
+
+  .hero {
+    max-width: 1280px; margin: 0 auto; padding: 8px clamp(16px, 4vw, 48px) 40px;
+    display: grid; grid-template-columns: 1.05fr 1fr; gap: 24px; align-items: center;
+  }
+  h1 {
+    font-size: clamp(50px, 7.6vw, 116px); line-height: 0.92; letter-spacing: -0.035em; font-weight: 850;
+    margin: 0 0 24px;
+  }
+  h1 span { display: block; }
+  .gold {
+    color: var(--gold);
+    background: linear-gradient(100deg, #ffcf5a 0%, var(--gold) 40%, #ff8a3d 100%);
+    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .sub { font-size: clamp(19px, 1.8vw, 24px); line-height: 1.3; margin: 0 0 10px; max-width: 26em; }
+  .edge { font: 14px/1.4 var(--mono); color: var(--dim); margin: 0 0 30px; }
+  .ctas { display: flex; flex-wrap: wrap; gap: 12px; }
+  .btn {
+    display: inline-block; padding: 13px 20px; border-radius: 999px; font-weight: 700; font-size: 16px;
+    background: var(--gold); color: var(--ink); text-decoration: none;
+  }
+  .btn:hover { background: #ffc94a; }
+  .btn.ghost { background: none; color: var(--ash); border: 1px solid var(--rule); font-weight: 500; cursor: not-allowed; }
+  .stage-wrap { position: relative; aspect-ratio: 1 / 1; width: 100%; max-width: 600px; justify-self: end; }
+  .stage-wrap::before {
+    content: ''; position: absolute; inset: 10% 10% 0; border-radius: 50%;
+    background: radial-gradient(closest-side, rgba(255, 106, 43, 0.14), transparent);
+  }
+  #burn { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+  .stats {
+    max-width: 1280px; margin: 0 auto; padding: 36px clamp(16px, 4vw, 48px);
+    display: grid; grid-template-columns: repeat(4, max-content); justify-content: space-between; gap: 20px 32px;
+    border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule);
+  }
+  .stat { display: flex; flex-direction: column; gap: 6px; }
+  .num {
+    display: flex; font-size: clamp(48px, 6vw, 88px); font-weight: 850; letter-spacing: -0.04em; line-height: 1;
+    color: var(--gold); font-variant-numeric: tabular-nums;
+  }
+  .dcol { display: inline-block; height: 1em; overflow: hidden; }
+  .strip { display: flex; flex-direction: column; transform: translateY(calc(var(--d) * -1em)); }
+  .strip span { height: 1em; line-height: 1; }
+  :global(.anim) .roll:not(.in) .strip { transform: translateY(0); }
+  :global(.anim) .roll.in .strip { transition: transform 1.6s cubic-bezier(0.15, 0.8, 0.2, 1); }
+  :global(.anim) .roll.in .dcol:nth-child(2) .strip { transition-delay: 0.08s; }
+  :global(.anim) .roll.in .dcol:nth-child(4) .strip { transition-delay: 0.16s; }
+  :global(.anim) .roll.in .dcol:nth-child(5) .strip { transition-delay: 0.24s; }
+  .sep { display: inline-block; }
+  .unit { font: 13px/1.3 var(--mono); color: var(--ash); text-transform: uppercase; letter-spacing: 0.06em; }
+  .fn { grid-column: 1 / -1; margin: 6px 0 0; font-size: 13px; color: var(--dim); }
+
+  .flow, .trust, .owls, .nots, .run { max-width: 1280px; margin: 0 auto; padding: 72px clamp(16px, 4vw, 48px) 0; }
+  .stages { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: 1fr 64px 1fr 64px 1fr; align-items: stretch; }
+  .stage {
+    border: 1px solid var(--rule); border-radius: 16px; padding: 20px; background: var(--ink);
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  .stage p { margin: 0; color: var(--ash); font-size: 16px; }
+  .k { font: 600 13px/1 var(--mono); color: var(--gold); text-transform: uppercase; letter-spacing: 0.08em; }
+  .viz { height: 116px; border-radius: 10px; background: var(--bg); border: 1px solid var(--rule); padding: 14px; position: relative; overflow: hidden; }
+  .tx { display: flex; flex-direction: column; justify-content: center; gap: 12px; font: 12.5px/1.2 var(--mono); }
+  .tx .row { display: flex; flex-direction: column; gap: 3px; }
+  .tx .op { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .tx code { color: var(--paper); font-family: var(--mono); }
+  .tx .hot code { color: var(--ember); }
+  .zblock { display: flex; flex-direction: column; justify-content: center; gap: 9px; }
+  .zlabel { font: 12px var(--mono); color: var(--dim); position: absolute; top: 10px; left: 14px; }
+  .tx-l { display: block; height: 7px; border-radius: 4px; background: var(--raise); margin-top: 0; }
+  .zblock .tx-l:first-of-type { margin-top: 18px; }
+  .tx-l:nth-child(3) { width: 70%; }
+  .tx-l:nth-child(5) { width: 55%; }
+  .burnl { background: var(--ember); box-shadow: 0 0 10px var(--ember); width: 85%; }
+  .split { display: flex; flex-direction: column; gap: 10px; }
+  .bar { display: flex; height: 18px; border-radius: 5px; overflow: hidden; background: var(--raise); }
+  .seg { width: var(--w); height: 100%; }
+  .seg.tip { background: #fff0c2; }
+  .seg.a { background: var(--gold); }
+  .seg.b { background: var(--deep); }
+  .legend { list-style: none; padding: 0; margin: 0; font: 12px/1.5 var(--mono); }
+  .legend li { display: flex; justify-content: space-between; gap: 8px; color: var(--ash); }
+  .legend li::before { content: ''; width: 8px; height: 8px; border-radius: 2px; align-self: center; margin-right: 6px; flex: none; }
+  .legend li span { flex: 1; }
+  .legend b { color: var(--paper); font-weight: 500; }
+  .legend .tip::before { background: #fff0c2; }
+  .legend .a::before { background: var(--gold); }
+  .legend .b::before { background: var(--deep); }
+  .pipe { position: relative; }
+  .pipe::before { content: ''; position: absolute; left: 6px; right: 6px; top: 50%; border-top: 2px dashed var(--rule); }
+  .dot {
+    position: absolute; top: calc(50% - 6px); left: 0; width: 12px; height: 12px; border-radius: 50%;
+    background: var(--ember); box-shadow: 0 0 14px 3px var(--ember); opacity: 0;
+  }
+  .cap { font: 13px/1.4 var(--mono); color: var(--dim); margin: 16px 0 0; }
+
+  /* the 6 s loop: burn -> dot -> epoch -> dot -> mint */
+  :global(.anim) .s1 { animation: act1 6s infinite; }
+  :global(.anim) .s2 { animation: act2 6s infinite; }
+  :global(.anim) .s3 { animation: act3 6s infinite; }
+  :global(.anim) .p1 .dot { animation: run1 6s infinite; }
+  :global(.anim) .p2 .dot { animation: run2 6s infinite; }
+  :global(.anim) .seg { animation: grow 6s infinite; }
+  :global(.anim) .burnl { animation: pulse 6s infinite; }
+  @keyframes act1 { 0%, 28% { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold), 0 0 36px rgba(244, 183, 40, 0.18); } 36%, 100% { border-color: var(--rule); box-shadow: none; } }
+  @keyframes act2 { 0%, 30% { border-color: var(--rule); box-shadow: none; } 38%, 60% { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold), 0 0 36px rgba(244, 183, 40, 0.18); } 68%, 100% { border-color: var(--rule); box-shadow: none; } }
+  @keyframes act3 { 0%, 63% { border-color: var(--rule); box-shadow: none; } 70%, 96% { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold), 0 0 36px rgba(244, 183, 40, 0.18); } 100% { border-color: var(--rule); box-shadow: none; } }
+  @keyframes run1 { 0%, 24% { left: 0; opacity: 0; } 26% { opacity: 1; } 36% { left: calc(100% - 12px); opacity: 1; } 38%, 100% { left: calc(100% - 12px); opacity: 0; } }
+  @keyframes run2 { 0%, 56% { left: 0; opacity: 0; } 58% { opacity: 1; } 68% { left: calc(100% - 12px); opacity: 1; } 70%, 100% { left: calc(100% - 12px); opacity: 0; } }
+  @keyframes grow { 0%, 66% { width: var(--w); opacity: 0.3; } 67% { width: 0; opacity: 1; } 80%, 97% { width: var(--w); opacity: 1; } 100% { width: var(--w); opacity: 0.3; } }
+  @keyframes pulse { 0%, 30% { width: 0; } 40%, 100% { width: 85%; } }
+
+  .trust ul { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .trust li { border-top: 2px solid var(--gold); padding-top: 14px; font-size: 19px; line-height: 1.35; color: var(--ash); }
+  .trust b { color: var(--paper); }
+  .privacy { margin: 28px 0 0; font: 14px/1.5 var(--mono); color: var(--ash); }
+
+  .owls-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px 32px; flex-wrap: wrap; }
+  .owls-head h2 { margin-bottom: 16px; }
+  .owls-head p { margin: 0 0 16px; color: var(--ash); max-width: 30em; }
+  .marquee { overflow: hidden; margin: 0 calc(-1 * clamp(16px, 4vw, 48px)); mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent); }
+  .track { display: flex; gap: 20px; width: max-content; padding: 8px 0; }
+  .track img { width: 96px; height: 96px; image-rendering: pixelated; border-radius: 8px; }
+  :global(.anim) .track { animation: slide 36s linear infinite; }
+  :global(.anim) .track img:nth-child(odd) { animation: bob 2.4s ease-in-out infinite alternate; }
+  .marquee:hover .track { animation-play-state: paused; }
+  @keyframes slide { to { transform: translateX(calc(-50% - 10px)); } }
+  @keyframes bob { to { transform: translateY(-6px); } }
+
+  .nots ul { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 10px; }
+  .nots li { border: 1px solid var(--rule); border-radius: 999px; padding: 8px 14px; font: 13px/1 var(--mono); color: var(--ash); }
+  .nots li::before { content: '✕ '; color: var(--ember); }
+  .run { display: flex; align-items: baseline; gap: 12px 20px; flex-wrap: wrap; }
+  .run code { font: 600 20px var(--mono); color: var(--gold); }
+  .run p { margin: 0; color: var(--ash); }
+
+  .foot { max-width: 1280px; margin: 80px auto 0; padding: 24px clamp(16px, 4vw, 48px) 40px; border-top: 1px solid var(--rule); font-size: 14px; color: var(--dim); }
+  .foot ul { list-style: none; padding: 0; margin: 0 0 8px; display: flex; flex-wrap: wrap; gap: 8px 20px; }
+  .foot p { margin: 0; }
+  .foot :global(.dirs) { margin-top: 16px; display: flex; gap: 12px; flex-wrap: wrap; font: 12px var(--mono); }
+  .foot :global(.dirs a) { color: var(--ash); }
+  .foot :global(.dirs strong) { color: var(--paper); font-weight: 500; }
+
+  @media (max-width: 900px) {
+    .hero { grid-template-columns: 1fr; gap: 0; padding-bottom: 24px; }
+    .stage-wrap { justify-self: center; max-width: 420px; aspect-ratio: 1 / 0.86; margin-top: 8px; }
+    .stats { grid-template-columns: 1fr 1fr; justify-content: stretch; }
+    .stages { grid-template-columns: 1fr; grid-template-rows: auto 44px auto 44px auto; }
+    .pipe::before { left: 50%; right: auto; top: 4px; bottom: 4px; border-top: 0; border-left: 2px dashed var(--rule); }
+    .dot { left: calc(50% - 5px) !important; top: 0; }
+    @keyframes run1 { 0%, 24% { top: 0; opacity: 0; } 26% { opacity: 1; } 36% { top: calc(100% - 12px); opacity: 1; } 38%, 100% { top: calc(100% - 12px); opacity: 0; } }
+    @keyframes run2 { 0%, 56% { top: 0; opacity: 0; } 58% { opacity: 1; } 68% { top: calc(100% - 12px); opacity: 1; } 70%, 100% { top: calc(100% - 12px); opacity: 0; } }
+    .trust ul { grid-template-columns: 1fr; }
+    .flow, .trust, .owls, .nots, .run { padding-top: 56px; }
+  }
+  @media (max-width: 480px) {
+    .top .pill { font-size: 10.5px; padding: 6px 10px; }
+    .ctas { gap: 8px 14px; align-items: center; }
+    .ctas .btn { padding: 12px 18px; font-size: 15px; }
+    .ctas .btn.ghost { border: 0; padding: 4px 0; font-size: 14px; }
+    .edge { margin-bottom: 22px; }
+    .track img { width: 72px; height: 72px; }
+  }
+</style>
+
+<script>
+  // Hero: a ZEC coin burns from the bottom up; each freed ember flies up and
+  // settles into the Sova "S" mark, which then holds, shimmers and fades as the
+  // coin re-forms. Every frame is a pure function of time t, so it loops
+  // cleanly and can pause offscreen. Reduced motion: one still frame.
+  const S_PATH = 'M87 395V347.478H337.926C357.151 347.478 371.316 333.322 371.316 314.111C371.316 295.406 357.151 281.25 337.926 281.25H168.45C121.401 281.25 92.059 256.478 92.059 225.639C92.059 193.283 123.931 177.105 152.767 169.522C147.708 178.117 145.685 187.722 145.685 195.811C145.685 216.539 158.332 230.189 183.121 230.189H346.527C395.093 230.189 430 265.072 430 312.594C430 360.117 395.093 395 346.527 395H87ZM152.767 169.522C171.485 138.178 197.792 122 240.794 122H409.764V169.522H152.767Z';
+  const T = 8.5; // loop length, s
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const cv = document.getElementById('burn') as HTMLCanvasElement | null;
+  const ctx = cv?.getContext('2d');
+
+  type P = { sx: number; sy: number; tx: number; ty: number; d: number; a: number; b: number };
+  let W = 0, H = 0, dpr = 1, ps: P[] = [];
+  let coin = { x: 0, y: 0, r: 0 };
+  let sBox = { x: 0, y: 0, w: 0, h: 0 };
+
+  // ember -> gold ramp
+  const RAMP = ['#ff3d1f', '#ff5a22', '#ff7426', '#ff8c2b', '#ffa030', '#ffb033', '#fbb52f', '#f4b728'];
+  const clamp = (v: number, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+  const ease = (k: number) => (k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2);
+
+  function build() {
+    if (!cv || !ctx) return;
+    const r = cv.getBoundingClientRect();
+    dpr = Math.min(2, devicePixelRatio || 1);
+    W = cv.width = Math.round(r.width * dpr);
+    H = cv.height = Math.round(r.height * dpr);
+    const m = Math.min(W, H);
+    coin = { x: W * 0.5, y: H * 0.74, r: m * 0.17 };
+    const s = (m * 0.46) / 343; // S mark spans x 87..430, y 122..395
+    const ox = W * 0.5 - (87 + 171.5) * s, oy = H * 0.33 - (122 + 136.5) * s;
+    sBox = { x: 87 * s + ox, y: 122 * s + oy, w: 343 * s, h: 273 * s };
+    const path = new Path2D();
+    path.addPath(new Path2D(S_PATH), new DOMMatrix([s, 0, 0, s, ox, oy]));
+    const n = r.width < 480 ? 950 : 1500;
+    const tgt: [number, number][] = [];
+    let guard = 0;
+    while (tgt.length < n && guard++ < n * 40) {
+      const x = sBox.x + Math.random() * sBox.w, y = sBox.y + Math.random() * sBox.h;
+      if (ctx.isPointInPath(path, x, y)) tgt.push([x, y]);
+    }
+    ps = tgt.map(([tx, ty]) => {
+      const rr = coin.r * Math.sqrt(Math.random()), th = Math.random() * Math.PI * 2;
+      const sx = coin.x + rr * Math.cos(th), sy = coin.y + rr * Math.sin(th);
+      const front = (coin.y + coin.r - sy) / (2 * coin.r); // 0 at the bottom of the coin
+      return { sx, sy, tx, ty, d: 1.0 + 2.2 * front + Math.random() * 0.15, a: Math.random(), b: Math.random() };
+    });
+  }
+
+  function drawCoin(alpha: number, front: number) {
+    const c = ctx!;
+    const { x, y, r } = coin;
+    c.save();
+    c.globalAlpha = alpha;
+    c.beginPath(); c.rect(0, 0, W, front); c.clip();
+    const g = c.createLinearGradient(x - r, y - r, x + r, y + r);
+    g.addColorStop(0, '#ffd66b'); g.addColorStop(0.5, '#f4b728'); g.addColorStop(1, '#a8781a');
+    c.fillStyle = g;
+    c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fill();
+    c.lineWidth = r * 0.06; c.strokeStyle = 'rgba(28,25,20,0.35)';
+    c.beginPath(); c.arc(x, y, r * 0.82, 0, Math.PI * 2); c.stroke();
+    c.fillStyle = '#1c1914';
+    c.font = `800 ${Math.round(r * 0.52)}px system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif`;
+    c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText('ZEC', x, y + r * 0.03);
+    c.restore();
+  }
+
+  function frame(t: number) {
+    if (!ctx) return;
+    const c = ctx;
+    c.clearRect(0, 0, W, H);
+    const { x: cx, y: cy, r: R } = coin;
+    const burnK = clamp((t - 1.0) / 2.2);
+    const front = cy + R - 2 * R * burnK;
+    const heat = t < 0.6 ? 0.25 : t < 1.2 ? 0.25 + (t - 0.6) * 1.25 : t < 3.4 ? 1 : t < 4.4 ? 1 - (t - 3.4) : 0.1;
+
+    // fire glow under the coin
+    const glow = c.createRadialGradient(cx, cy + R * 0.3, 0, cx, cy + R * 0.3, R * 2.4);
+    glow.addColorStop(0, `rgba(255,106,43,${0.35 * heat})`);
+    glow.addColorStop(1, 'rgba(255,106,43,0)');
+    c.fillStyle = glow; c.fillRect(0, 0, W, H);
+
+    // the coin: intact above the burn front; fades back in at the end of the loop
+    const reform = clamp((t - 7.3) / 1.0);
+    if (t < 3.4) drawCoin(1, front);
+    if (reform > 0) drawCoin(reform, H);
+    // burning edge
+    if (burnK > 0 && burnK < 1) {
+      c.save();
+      c.beginPath(); c.arc(cx, cy, R, 0, Math.PI * 2); c.clip();
+      const eg = c.createLinearGradient(0, front - 6 * dpr, 0, front + 3 * dpr);
+      eg.addColorStop(0, 'rgba(255,90,34,0)'); eg.addColorStop(0.7, 'rgba(255,170,60,0.95)'); eg.addColorStop(1, 'rgba(255,60,20,0)');
+      c.fillStyle = eg; c.fillRect(cx - R, front - 6 * dpr, 2 * R, 9 * dpr);
+      c.restore();
+    }
+
+    c.globalCompositeOperation = 'lighter';
+    // ambient sparks off the burn front
+    for (let i = 0; i < 70; i++) {
+      const ph = (i * 0.618) % 1;
+      const l = (t * 0.55 + ph) % 1;
+      const xx = cx + ((i * 37) % 100 / 100 - 0.5) * R * 1.8 + Math.sin(l * 7 + i) * 8 * dpr;
+      const yy = cy + R * 0.2 - l * H * 0.55;
+      const al = (1 - l) * heat * 0.8;
+      if (al < 0.02) continue;
+      c.fillStyle = `rgba(255,${120 + ((i * 13) % 80)},40,${al})`;
+      c.fillRect(xx, yy, 1.6 * dpr, 1.6 * dpr);
+    }
+
+    // particles: coin -> ember -> S
+    const out = clamp((t - 6.9) / 1.1);
+    const sz = 1.8 * dpr;
+    for (const p of ps) {
+      if (t < p.d) continue;
+      const u = t - p.d, D = 2.1 + p.a * 0.7;
+      const k = clamp(u / D), e = ease(k);
+      const qx = p.sx + (p.b - 0.5) * R * 2.6, qy = p.sy - R * (1.3 + p.a * 1.2);
+      let x = (1 - e) * (1 - e) * p.sx + 2 * (1 - e) * e * qx + e * e * p.tx;
+      let y = (1 - e) * (1 - e) * p.sy + 2 * (1 - e) * e * qy + e * e * p.ty;
+      const wob = (1 - k) * 4 * dpr;
+      x += Math.sin(t * 9 + p.a * 40) * wob;
+      y += Math.cos(t * 7 + p.b * 40) * wob * 0.5;
+      let col = RAMP[Math.min(RAMP.length - 1, Math.floor(k * RAMP.length))];
+      let al = 0.95;
+      if (k >= 1) {
+        const sh = Math.sin((p.tx / dpr) * 0.025 - t * 3.2);
+        if (sh > 0.93) col = '#fff1c4';
+      }
+      if (out > 0) { al *= 1 - out; y -= out * (8 + p.a * 30) * dpr; }
+      c.globalAlpha = al;
+      c.fillStyle = col;
+      c.fillRect(x, y, sz, sz);
+    }
+    c.globalAlpha = 1;
+    c.globalCompositeOperation = 'source-over';
+
+    // label once the mark has formed
+    const lab = clamp((t - 5.2) / 0.5) * (1 - clamp((t - 6.9) / 0.6));
+    if (lab > 0) {
+      c.globalAlpha = lab;
+      c.fillStyle = '#f4b728';
+      c.font = `600 ${Math.round(15 * dpr)}px 'Roboto Mono', ui-monospace, Menlo, monospace`;
+      c.textAlign = 'center'; c.textBaseline = 'top';
+      c.fillText('+6,250 SOVA', W / 2, sBox.y + sBox.h + 16 * dpr);
+      c.globalAlpha = 1;
+    }
+  }
+
+  if (cv && ctx) {
+    build();
+    let start = -1, visible = true, last = 0;
+    const loop = (now: number) => {
+      if (start < 0) start = now;
+      if (visible && !document.hidden) frame(((now - start) / 1000) % T);
+      requestAnimationFrame(loop);
+    };
+    if (reduce) frame(6.0);
+    else {
+      new IntersectionObserver(([e]) => { visible = e.isIntersecting; }).observe(cv);
+      requestAnimationFrame(loop);
+    }
+    addEventListener('resize', () => {
+      clearTimeout(last);
+      last = window.setTimeout(() => { build(); if (reduce) frame(6.0); }, 150);
+    });
+  }
+
+  // Numerals roll into place the first time they are on screen.
+  const io = new IntersectionObserver((es) => es.forEach((e) => {
+    if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+  }), { threshold: 0.4 });
+  document.querySelectorAll('.roll').forEach((el) => io.observe(el));
+</script>
