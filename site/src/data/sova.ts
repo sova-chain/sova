@@ -95,6 +95,11 @@ export const sips = [
     sum: 'Contracts read the value in each shielded pool and every change to it; each Sova block records a summary of its Zcash block in state.',
     note: 'Accepted. Implementation pending; targets the testnet reset.',
   },
+  {
+    n: 8, id: 'sip-8', file: 'sip-8-draft-anchored-burns.md', title: 'Anchored burns', st: 'accepted',
+    sum: 'Each burn also names the Sova block it builds on, so Zcash records which history the miners chose, and rewriting it means out-burning them.',
+    note: 'Accepted. Required for mainnet; on testnet after SIP-6.',
+  },
 ] as const;
 
 // Ashwings rendered by the contract (contracts/samples/), all twelve samples.
