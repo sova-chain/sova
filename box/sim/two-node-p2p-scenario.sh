@@ -64,6 +64,7 @@ echo "--- starting node A (mine mode, sova/1, no JWT, no static peers) ---"
 p2p_env \
   SOVA_ZEBRAD_RPC="${ZEBRAD_RPC}" \
   SOVA_MINER_EVM_ADDRESS="${EVM_ADDR}" \
+  SOVA_SEALER_KEYSTORE="${MINER_DATA_DIR}/keystore.json" \
   SOVA_EPOCH_BASE=1 \
   SOVA_HTTP_PORT="${A_HTTP_PORT}" \
   SOVA_AUTH_PORT="${A_AUTH_PORT}" \
@@ -209,7 +210,8 @@ if [[ "${ACCEPTED_B}" -ge "${MAX_HEIGHT}" ]]; then
 else
   fail "(d) node B accepted only ${ACCEPTED_B} block(s) over sova/1 (expected >= ${MAX_HEIGHT})"
 fi
-if strip_ansi "${WORK_DIR}/node-b.log" | grep -qi 'engine_newPayload\|relay: peer accepted'; then
+B_LOG_CLEAN="$(strip_ansi "${WORK_DIR}/node-b.log")"
+if grep -qi 'engine_newPayload\|relay: peer accepted' <<<"${B_LOG_CLEAN}"; then
   fail "(d) node B's log mentions an authrpc engine call"
 else
   pass "(d) no authrpc engine traffic on B (no shared JWT existed)"
@@ -245,6 +247,35 @@ for node in A B; do
     fail "(e) node ${node}: head ${HEAD_N}, safe ${SAFE_N} (-${SAFE_LAG}, want 3..6), finalized ${FIN_N} (-${FIN_LAG}, want 10..13)"
   fi
 done
+
+# ============================================================
+# (f) SIP-6 (only with SOVA_SIP6=1): every block past genesis is sealed
+# (97-byte extra_data), node B enforced it on import, and A signed as
+# its miner's address.
+# ============================================================
+if [[ "${SOVA_SIP6:-}" == "1" ]]; then
+  echo ""
+  echo "=== (f) SIP-6 seals ==="
+  # Not `strip_ansi | grep -q`: under pipefail, grep -q's early exit
+  # SIGPIPEs sed and turns a match into a failure.
+  A_LOG_CLEAN="$(strip_ansi "${WORK_DIR}/node-a.log")"
+  if grep -qi "sip-6: sealing as ${EVM_ADDR}" <<<"${A_LOG_CLEAN}"; then
+    pass "(f) node A seals as its miner address ${EVM_ADDR}"
+  else
+    fail "(f) node A's log lacks 'sip-6: sealing as ${EVM_ADDR}'"
+  fi
+  UNSEALED=""
+  for h in $(seq 1 "${MAX_HEIGHT}"); do
+    LEN="$(eth_rpc "${ENGINE_RPC_B}" eth_getBlockByNumber "[\"$(printf '0x%x' "${h}")\", false]" \
+      | python3 -c "import sys,json;print((len(json.load(sys.stdin)['result']['extraData'])-2)//2)")"
+    [[ "${LEN}" == "97" || "${LEN}" == "0" ]] || UNSEALED+=" ${h}(${LEN}B)"
+  done
+  if [[ -z "${UNSEALED}" ]]; then
+    pass "(f) heights 1..${MAX_HEIGHT} on node B are all sealed (97 bytes) or null (0)"
+  else
+    fail "(f) blocks without a seal on node B:${UNSEALED}"
+  fi
+fi
 
 echo ""
 if [[ "${FAILURES}" -eq 0 ]]; then

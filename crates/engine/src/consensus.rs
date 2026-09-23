@@ -168,9 +168,13 @@ impl SovaConsensus {
             }
         }
         let withdrawals = block.body().withdrawals.as_deref().map(|w| w.as_slice());
+        // SIP-6: the producer comes from the seal (validate_header already
+        // rejected a bad one; this cannot fail differently).
+        let sealer =
+            crate::seal::sealer(block.header(), (self.sip6)()).map_err(ConsensusError::other)?;
         match self
             .expectations
-            .check_ranked(height, withdrawals, (self.schedule)())
+            .check_sealed(height, withdrawals, (self.schedule)(), sealer)
         {
             RankedVerdict::Valid { rank } => {
                 tracing::info!(height, rank, scanned, "c5: settlement enforced");
@@ -203,7 +207,29 @@ impl HeaderValidator for SovaConsensus {
         header: &SealedHeader,
         parent: &SealedHeader,
     ) -> Result<(), ConsensusError> {
-        self.inner.validate_header_against_parent(header, parent)
+        self.inner.validate_header_against_parent(header, parent)?;
+        if (self.sip6)().is_none() || header.number() == 0 {
+            return Ok(());
+        }
+        // SIP-6 pins timestamps to the epoch's Zcash time: without our
+        // record of that epoch the block is held, never judged.
+        let height = header.number();
+        let Some(record) = self.expectations.record(height) else {
+            return Err(ConsensusError::other(
+                match self.expectations.scanned_through() {
+                    Some(scanned) if height > scanned => {
+                        SettlementError::Unscanned { height, scanned }
+                    }
+                    _ => SettlementError::MissingRecord { height },
+                },
+            ));
+        };
+        crate::seal::check_against_parent(
+            header.header(),
+            parent.header(),
+            u64::from(record.epoch.time),
+        )
+        .map_err(ConsensusError::other)
     }
 }
 
@@ -377,6 +403,7 @@ mod tests {
                 "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
             )),
             transactions_root: crate::seal::EMPTY_ROOT,
+            mix_hash: crate::seal::pinned_randao(B256::from(ANCHOR)),
             extra_data: alloy_primitives::Bytes::copy_from_slice(extra),
             ..Default::default()
         }

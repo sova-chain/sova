@@ -78,6 +78,8 @@ pub fn epoch_attribute(
         zcash_height: epoch.height,
         zcash_hash: epoch.hash,
         settlements,
+        zcash_time: u64::from(epoch.time),
+        null: false,
     })
 }
 
@@ -114,6 +116,9 @@ pub struct SealerConfig {
     /// Ladder step: rank `r` may seal once `r * rank_step` has elapsed
     /// since we saw the epoch ([`consensus::sealer::produce_decision`]).
     pub rank_step: std::time::Duration,
+    /// SIP-6 is active: burn-less and abandoned epochs get their null
+    /// block instead of an unsigned cadence or rank-0 block.
+    pub sip6: bool,
 }
 
 /// What one follower poll produced, for logging and tests.
@@ -132,6 +137,8 @@ pub enum SealerOutcome {
         retry: bool,
         /// Whether a settlement attribute was staged for this trigger.
         settled: bool,
+        /// SIP-6: build the epoch's null block (unsigned, empty).
+        null: bool,
     },
     /// The follower reported a reorg; v0 logs and continues (multi-node
     /// rollback handling arrives with gossip).
@@ -333,6 +340,7 @@ impl SealerCore {
                                 late_win: true,
                                 retry,
                                 settled: true,
+                                null: false,
                             });
                         }
                     }
@@ -357,12 +365,16 @@ impl SealerCore {
             if !settles {
                 // Nothing to mint, but the block still commits to its
                 // epoch's Zcash hash (SIP-4 anchor).
+                // SIP-6: that block is the epoch's null block, the same
+                // on every node that builds it.
                 pending.stage(
                     expected,
                     SovaEpochAttribute {
                         zcash_height,
                         zcash_hash: entry.epoch.hash,
                         settlements: Vec::new(),
+                        zcash_time: u64::from(entry.epoch.time),
+                        null: self.config.sip6,
                     },
                 );
                 entry.triggered_at = Some(now);
@@ -372,6 +384,7 @@ impl SealerCore {
                     late_win: false,
                     retry,
                     settled: false,
+                    null: self.config.sip6,
                 });
                 produced_head = expected;
                 continue;
@@ -387,7 +400,35 @@ impl SealerCore {
                 let abandoned = best_seen(expected).is_none()
                     && now.duration_since(front_since)
                         >= self.config.rank_step.saturating_mul(rungs);
-                if abandoned
+                if abandoned && self.config.sip6 {
+                    // SIP-6: nobody ranked sealed, and only they can sign;
+                    // the null block (lowest preference, mints nothing)
+                    // keeps the chain moving. Any signed block displaces it.
+                    tracing::warn!(
+                        zcash_height,
+                        sova_height = expected,
+                        "abandoned burn epoch: building its null block for liveness"
+                    );
+                    pending.stage(
+                        expected,
+                        SovaEpochAttribute {
+                            zcash_height,
+                            zcash_hash: entry.epoch.hash,
+                            settlements: Vec::new(),
+                            zcash_time: u64::from(entry.epoch.time),
+                            null: true,
+                        },
+                    );
+                    entry.triggered_at = Some(now);
+                    out.push(SealerOutcome::Trigger {
+                        height: zcash_height,
+                        sova_height: expected,
+                        late_win: false,
+                        retry,
+                        settled: false,
+                        null: true,
+                    });
+                } else if abandoned
                     && let Some(rank0) = entry.ranked.first()
                     && let Ok(attr) =
                         epoch_attribute(&entry.epoch, &entry.ranked, rank0.evm_address, reward_gwei)
@@ -405,6 +446,7 @@ impl SealerCore {
                         late_win: false,
                         retry,
                         settled: true,
+                        null: false,
                     });
                 }
                 break;
@@ -432,6 +474,7 @@ impl SealerCore {
                             late_win: false,
                             retry,
                             settled: true,
+                            null: false,
                         });
                     }
                     // One settled epoch per pass (one-slot mailbox).
@@ -476,6 +519,7 @@ pub async fn run_sealer<V: ZcashView>(
                             late_win,
                             retry,
                             settled,
+                            null,
                         } => {
                             // Retries log apart from first triggers: one
                             // `settled=true` line per settled epoch.
@@ -505,6 +549,7 @@ pub async fn run_sealer<V: ZcashView>(
                             let target = crate::miner::BuildTarget {
                                 sova_height,
                                 sibling: late_win,
+                                null,
                             };
                             if trigger.send(target).await.is_err() {
                                 tracing::warn!("trigger channel closed; sealer stopping");
@@ -710,6 +755,7 @@ mod tests {
                 reward_gwei: DRAFT_EPOCH_REWARD_GWEI,
             },
             rank_step,
+            sip6: false,
         }
     }
 
@@ -732,14 +778,16 @@ mod tests {
                     sova_height: 1,
                     late_win: false,
                     retry: false,
-                    settled: false
+                    settled: false,
+                    null: false
                 },
                 SealerOutcome::Trigger {
                     height: 2,
                     sova_height: 2,
                     late_win: false,
                     retry: false,
-                    settled: true
+                    settled: true,
+                    null: false
                 },
             ]
         );
@@ -792,7 +840,8 @@ mod tests {
                 sova_height: 1,
                 late_win: false,
                 retry: false,
-                settled: false
+                settled: false,
+                null: false
             }]
         );
         assert_anchor_only(&pending, 1, [1; 32]);
@@ -870,7 +919,8 @@ mod tests {
                 sova_height: 1,
                 late_win: false,
                 retry: false,
-                settled: false
+                settled: false,
+                null: false
             }]
         );
         assert_anchor_only(&pending, 1, [1; 32]);
@@ -894,7 +944,8 @@ mod tests {
                 sova_height: 2,
                 late_win: false,
                 retry: false,
-                settled: true
+                settled: true,
+                null: false
             }]
         );
         let staged = pending
@@ -927,6 +978,7 @@ mod tests {
                 our_address: our,
                 schedule: Schedule::Sip3,
                 rank_step: DEFAULT_RANK_STEP,
+                sip6: false,
             },
             1,
             50,
@@ -941,7 +993,8 @@ mod tests {
                 sova_height: 2,
                 late_win: false,
                 retry: false,
-                settled: true
+                settled: true,
+                null: false
             })
         );
         // Epoch at Sova height 2 = epoch index 1: slow-start reward is
@@ -1023,7 +1076,8 @@ mod tests {
                 sova_height: 2,
                 late_win: true,
                 retry: false,
-                settled: true
+                settled: true,
+                null: false
             }]
         );
         let staged = pending
@@ -1092,7 +1146,8 @@ mod tests {
                 sova_height: 1,
                 late_win: false,
                 retry: true,
-                settled: false
+                settled: false,
+                null: false
             })
         );
     }
@@ -1132,7 +1187,8 @@ mod tests {
                 sova_height: 2,
                 late_win: false,
                 retry: false,
-                settled: true
+                settled: true,
+                null: false
             }]
         );
         let staged = pending

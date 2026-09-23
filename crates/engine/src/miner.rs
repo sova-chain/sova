@@ -55,6 +55,9 @@ pub struct BuildTarget {
     /// that is covered by the time it is served (a retrigger racing a slow
     /// first build) is a no-op, never a second block.
     pub sibling: bool,
+    /// SIP-6: the epoch's null block — built without transactions, sent
+    /// with empty extra data and never signed.
+    pub null: bool,
 }
 
 /// A local block producer that treats the provider's canonical chain as
@@ -67,11 +70,15 @@ pub struct SovaMiner<T: PayloadTypes, B, P> {
     /// Sova heights to build, from the sealer.
     targets: tokio::sync::mpsc::Receiver<BuildTarget>,
     payload_builder: PayloadBuilderHandle<T>,
+    /// SIP-6: seals every built block (through its journal) before it is
+    /// submitted. `None` before activation: blocks go out unsealed.
+    signer: Option<std::sync::Arc<crate::signer::Signer>>,
 }
 
 impl<T, B, P> SovaMiner<T, B, P>
 where
     T: PayloadTypes,
+    T::BuiltPayload: BuiltPayload<Primitives = reth_ethereum::EthPrimitives>,
     B: PayloadAttributesBuilder<
             T::PayloadAttributes,
             HeaderTy<<T::BuiltPayload as BuiltPayload>::Primitives>,
@@ -93,7 +100,15 @@ where
             to_engine,
             targets,
             payload_builder,
+            signer: None,
         }
+    }
+
+    /// Seal every built block with `signer` (SIP-6).
+    #[must_use]
+    pub fn with_signer(mut self, signer: std::sync::Arc<crate::signer::Signer>) -> Self {
+        self.signer = Some(signer);
+        self
     }
 
     /// Runs the miner: build each requested height, re-assert canonical
@@ -241,8 +256,28 @@ where
             eyre::bail!("no payload");
         };
 
-        let header = payload.block().sealed_header().clone();
-        let res = self.to_engine.new_payload(payload.into()).await?;
+        // SIP-6: seal (or re-publish the journaled block for this slot)
+        // before the block leaves the builder; its hash changes, so every
+        // step below uses the sealed header.
+        let (header, data) = match &self.signer {
+            // SIP-6 null block: unsigned, empty extra data (the builder's
+            // client string would make it a different block on every
+            // node). The EVM never reads extra data, so only the hash moves.
+            Some(_) if request.null => {
+                let mut block = payload.block().clone().into_block();
+                block.header.extra_data = alloy_primitives::Bytes::new();
+                let sealed = reth_ethereum::primitives::SealedBlock::seal_slow(block);
+                let header = sealed.sealed_header().clone();
+                (header, T::block_to_payload(sealed, None))
+            }
+            Some(signer) => {
+                let sealed = signer.seal(payload.block().clone())?;
+                let header = sealed.sealed_header().clone();
+                (header, T::block_to_payload(sealed, None))
+            }
+            None => (payload.block().sealed_header().clone(), payload.into()),
+        };
+        let res = self.to_engine.new_payload(data).await?;
         if !res.is_valid() {
             eyre::bail!("built payload rejected: {res:?}");
         }

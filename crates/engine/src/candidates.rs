@@ -89,6 +89,47 @@ pub fn set_canonical_reader(reader: CanonicalReader) -> bool {
 struct Seen {
     candidate: Candidate,
     parent: [u8; 32],
+    /// SIP-6: who sealed it, for equivocation evidence (`None` unsealed).
+    seal: Option<SealInfo>,
+}
+
+/// A sealed candidate's slot and signature identity (SIP-6 §2.7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SealInfo {
+    /// The recovered signer.
+    pub signer: [u8; 20],
+    /// The block's Zcash anchor (`parent_beacon_block_root`).
+    pub anchor: [u8; 32],
+    /// The hash the seal signs (the header without its signature).
+    pub seal_hash: [u8; 32],
+}
+
+/// Rank of a signer with equivocation evidence for a slot: below every
+/// honest rank, above the null block (SIP-6 §2.6/§2.7).
+pub const EQUIVOCATOR_RANK: usize = usize::MAX - 1;
+
+/// `s` as it competes: demoted to [`EQUIVOCATOR_RANK`] when the same
+/// signer sealed another block (different `seal_hash`) for the same slot —
+/// same height (all of `others`), parent and anchor. A re-seal on a new
+/// parent or anchor is a new slot, not evidence.
+fn effective(others: &[Seen], s: &Seen) -> Candidate {
+    let Some(me) = s.seal else {
+        return s.candidate;
+    };
+    let equivocated = others.iter().any(|o| {
+        o.parent == s.parent
+            && o.seal.is_some_and(|x| {
+                x.signer == me.signer && x.anchor == me.anchor && x.seal_hash != me.seal_hash
+            })
+    });
+    if equivocated {
+        Candidate {
+            sealer_rank: EQUIVOCATOR_RANK,
+            ..s.candidate
+        }
+    } else {
+        s.candidate
+    }
 }
 
 /// Tracks every candidate per epoch (keyed by Sova height) with its parent.
@@ -146,6 +187,29 @@ impl CandidateTracker {
     /// `parent`; returns whether it is now the epoch's best attached
     /// candidate.
     pub fn observe(&self, sova_height: u64, candidate: Candidate, parent: [u8; 32]) -> Observation {
+        self.observe_with(sova_height, candidate, parent, None)
+    }
+
+    /// [`Self::observe`] for a sealed block (SIP-6): its seal identity is
+    /// kept, so a second seal by the same signer for the same slot demotes
+    /// both ([`EQUIVOCATOR_RANK`]).
+    pub fn observe_sealed(
+        &self,
+        sova_height: u64,
+        candidate: Candidate,
+        parent: [u8; 32],
+        seal: SealInfo,
+    ) -> Observation {
+        self.observe_with(sova_height, candidate, parent, Some(seal))
+    }
+
+    fn observe_with(
+        &self,
+        sova_height: u64,
+        candidate: Candidate,
+        parent: [u8; 32],
+        seal: Option<SealInfo>,
+    ) -> Observation {
         {
             let Ok(mut seen) = self.seen.lock() else {
                 return Observation::NotBetter;
@@ -162,7 +226,11 @@ impl CandidateTracker {
                     }
                     existing.candidate = candidate;
                 }
-                None => entry.push(Seen { candidate, parent }),
+                None => entry.push(Seen {
+                    candidate,
+                    parent,
+                    seal,
+                }),
             }
             while seen.len() > RETAIN {
                 let Some((&lowest, _)) = seen.first_key_value() else {
@@ -250,7 +318,10 @@ impl CandidateTracker {
         let seen = self.seen.lock().ok()?;
         let candidates = seen.get(&sova_height)?;
         let Some(reader) = self.reader() else {
-            return candidates.iter().map(|s| s.candidate).min_by(prefer);
+            return candidates
+                .iter()
+                .map(|s| effective(candidates, s))
+                .min_by(prefer);
         };
         candidates
             .iter()
@@ -319,7 +390,10 @@ fn branch(
     height: u64,
     tip: Seen,
 ) -> Option<Branch> {
-    let mut blocks = vec![(height, tip.candidate)];
+    let tip_candidate = seen
+        .get(&height)
+        .map_or(tip.candidate, |others| effective(others, &tip));
+    let mut blocks = vec![(height, tip_candidate)];
     let mut parent = tip.parent;
     let mut h = height;
     loop {
@@ -333,11 +407,9 @@ fn branch(
         if blocks.len() as u64 > MAX_ATTACH_DEPTH {
             return None;
         }
-        let s = seen
-            .get(&below)?
-            .iter()
-            .find(|s| s.candidate.block_hash == parent)?;
-        blocks.push((below, s.candidate));
+        let others = seen.get(&below)?;
+        let s = others.iter().find(|s| s.candidate.block_hash == parent)?;
+        blocks.push((below, effective(others, s)));
         parent = s.parent;
         h = below;
     }
@@ -353,7 +425,7 @@ fn canonical_candidate(
     seen.get(&height)?
         .iter()
         .find(|s| s.candidate.block_hash == hash)
-        .map(|s| s.candidate)
+        .map(|s| effective(&seen[&height], s))
 }
 
 /// Whether a branch may become our chain: it extends our head, or it is our
@@ -1007,6 +1079,50 @@ mod tests {
         // A missing ancestor.
         let _ = t.observe(10, cand(0, 0xC0), [0xEE; 32]);
         assert_eq!(t.best(10).map(|c| c.block_hash), Some([10; 32]));
+    }
+
+    fn seal(signer: u8, anchor: u8, seal_hash: u8) -> SealInfo {
+        SealInfo {
+            signer: [signer; 20],
+            anchor: [anchor; 32],
+            seal_hash: [seal_hash; 32],
+        }
+    }
+
+    /// SIP-6 §2.7: rank 0 sealing two blocks for one slot demotes both
+    /// below rank 1's block; the ladder's rank 1 then wins everywhere.
+    #[test]
+    fn an_equivocating_signer_loses_to_the_next_rank() {
+        let t = chain_to_10();
+        let _ = t.observe_sealed(11, cand(0, 0x01), [10; 32], seal(0xA0, 5, 1));
+        let _ = t.observe_sealed(11, cand(1, 0x30), [10; 32], seal(0xB1, 5, 3));
+        assert_eq!(
+            t.best(11).map(|c| c.block_hash),
+            Some([0x01; 32]),
+            "honest so far"
+        );
+        // The same signer, slot and anchor, another seal: evidence.
+        let _ = t.observe_sealed(11, cand(0, 0x02), [10; 32], seal(0xA0, 5, 2));
+        assert_eq!(t.best(11).map(|c| c.block_hash), Some([0x30; 32]));
+        // With nobody else ranked, the equivocator still beats null.
+        let t = chain_to_10();
+        let _ = t.observe(11, cand(usize::MAX, 0x00), [10; 32]);
+        let _ = t.observe_sealed(11, cand(0, 0x05), [10; 32], seal(0xA0, 5, 1));
+        let _ = t.observe_sealed(11, cand(0, 0x06), [10; 32], seal(0xA0, 5, 2));
+        assert_eq!(t.best(11).map(|c| c.block_hash), Some([0x05; 32]));
+        assert_eq!(t.best(11).map(|c| c.sealer_rank), Some(EQUIVOCATOR_RANK));
+    }
+
+    /// A re-seal on a new anchor (Zcash reorg) or a new parent (a late-win
+    /// reorg) is a new slot, not equivocation.
+    #[test]
+    fn a_reseal_on_a_new_slot_is_not_evidence() {
+        let t = chain_to_10();
+        let _ = t.observe_sealed(11, cand(0, 0x01), [10; 32], seal(0xA0, 5, 1));
+        let _ = t.observe_sealed(11, cand(0, 0x02), [10; 32], seal(0xA0, 6, 2));
+        assert_eq!(t.best(11).map(|c| c.sealer_rank), Some(0));
+        let _ = t.observe_sealed(11, cand(0, 0x03), [0xEE; 32], seal(0xA0, 5, 3));
+        assert_eq!(t.best(11).map(|c| c.sealer_rank), Some(0));
     }
 
     /// No reader installed (tools, other tests): every candidate counts.

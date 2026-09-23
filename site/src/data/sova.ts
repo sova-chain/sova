@@ -78,7 +78,7 @@ export const sips = [
   {
     n: 4, id: 'sip-4', file: 'sip-4-draft-zcash-state-precompile.md', title: 'Zcash state precompile', st: 'draft',
     sum: 'Contracts read transparent Zcash state, as of the Zcash block each Sova block commits to.',
-    note: 'Build approved. Code in review; ships with the public testnet.',
+    note: 'Built; ships with the public testnet.',
   },
   {
     n: 5, id: 'sip-5', file: 'sip-5-withdrawn.md', title: 'Wrapped ZEC', st: 'withdrawn',
@@ -88,7 +88,7 @@ export const sips = [
   {
     n: 6, id: 'sip-6', file: 'sip-6-draft-sealer-signatures.md', title: 'Sealer signatures', st: 'accepted',
     sum: 'The sealer signs its block with the key its burn credits, so every block names its sealer and light clients get a signature to verify.',
-    note: 'Accepted. Implementation pending; ships at the testnet reset, with SIP-4.',
+    note: 'Accepted and built; switches on at the testnet reset, with SIP-4.',
   },
   {
     n: 7, id: 'sip-7', file: 'sip-7-draft-zcash-events.md', title: 'Zcash pool state and events', st: 'accepted',

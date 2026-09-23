@@ -61,6 +61,8 @@ fn sample_attributes() -> SovaPayloadAttributes {
                 (Address::with_last_byte(0xA1), U256::from(500_000u64)),
                 (Address::with_last_byte(0xA2), U256::from(1_500_000u64)),
             ],
+            zcash_time: 0,
+            null: false,
         }),
     }
 }

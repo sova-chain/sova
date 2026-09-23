@@ -90,6 +90,62 @@ pub enum SealError {
     /// A null block (empty `extra_data`) with a field it must not set.
     #[error("sova-seal: null block has {0}")]
     NullNotEmpty(&'static str),
+    /// `prev_randao` is not `keccak256(parent_beacon_block_root)`.
+    #[error("sova-seal: prev_randao is not keccak256 of the zcash anchor")]
+    Randao,
+    /// The timestamp is outside SIP-6's window for its parent and epoch.
+    #[error(
+        "sova-seal: timestamp {ts} outside {min}..={max} (parent {parent}, zcash time {zcash})"
+    )]
+    Timestamp {
+        /// The block's timestamp.
+        ts: u64,
+        /// Earliest allowed (for a null block: the only allowed value).
+        min: u64,
+        /// Latest allowed.
+        max: u64,
+        /// The parent's timestamp.
+        parent: u64,
+        /// The epoch's Zcash block time.
+        zcash: u64,
+    },
+    /// A null block whose gas limit differs from its parent's.
+    #[error("sova-seal: null block gas limit {0} differs from its parent's {1}")]
+    NullGasLimit(u64, u64),
+}
+
+/// The rule against the parent (SIP-6 §2.5, `validate_header_against_parent`):
+/// a null block's timestamp is exactly `max(parent + 1, zcash_time)` and its
+/// gas limit its parent's; a sealed block's timestamp is after its parent's
+/// and at most `max(parent + 1, zcash_time + MAX_SEAL_DRIFT)`.
+///
+/// # Errors
+/// [`SealError::Timestamp`] or [`SealError::NullGasLimit`].
+pub fn check_against_parent(
+    header: &Header,
+    parent: &Header,
+    zcash_time: u64,
+) -> Result<(), SealError> {
+    let (min, max) = timestamp_window(parent.timestamp, zcash_time);
+    let ts = header.timestamp;
+    let bad = || SealError::Timestamp {
+        ts,
+        min,
+        max,
+        parent: parent.timestamp,
+        zcash: zcash_time,
+    };
+    if header.extra_data.is_empty() {
+        if ts != min {
+            return Err(bad());
+        }
+        if header.gas_limit != parent.gas_limit {
+            return Err(SealError::NullGasLimit(header.gas_limit, parent.gas_limit));
+        }
+    } else if ts <= parent.timestamp || ts > max {
+        return Err(bad());
+    }
+    Ok(())
 }
 
 /// The stateless header rule (SIP-6 §2.5, `validate_header`): before
@@ -112,7 +168,11 @@ pub fn check_header(header: &Header, chain_id: Option<u64>) -> Result<Option<Add
             Ok(None)
         };
     };
-    match kind(header)? {
+    let kind = kind(header)?;
+    if header.mix_hash != pinned_randao(header.parent_beacon_block_root.unwrap_or_default()) {
+        return Err(SealError::Randao);
+    }
+    match kind {
         SealKind::Sealed => recover(header, chain_id).map(Some),
         SealKind::Null => {
             if header.beneficiary != Address::ZERO {
@@ -139,6 +199,54 @@ pub enum SealKind {
     Null,
     /// 97 bytes: vanity and a signature (not yet verified).
     Sealed,
+}
+
+/// How far past its Zcash block's time a sealed block's timestamp may run
+/// (SIP-6 §2.8, draft).
+pub const MAX_SEAL_DRIFT: u64 = 900;
+
+/// SIP-6 §2.8: every block's `prev_randao` is `keccak256(anchor)` — a value
+/// only Zcash miners can bias, not the Sova producer.
+#[must_use]
+pub fn pinned_randao(anchor: B256) -> B256 {
+    keccak256(anchor)
+}
+
+/// SIP-6 §2.4/§2.8: the timestamp window after `parent_ts` for a block
+/// settling a Zcash block with time `zcash_time`: `(min, max)` where `min`
+/// is also the null block's exact timestamp.
+#[must_use]
+pub fn timestamp_window(parent_ts: u64, zcash_time: u64) -> (u64, u64) {
+    let floor = parent_ts.saturating_add(1);
+    (
+        floor.max(zcash_time),
+        floor.max(zcash_time.saturating_add(MAX_SEAL_DRIFT)),
+    )
+}
+
+/// Who a block says produced it, for the settlement check (SIP-6 §2.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sealer {
+    /// SIP-6 is not active: rank is read from the withdrawals (the tip).
+    Unsealed,
+    /// A null block: nobody signed it, and it mints nothing.
+    Null,
+    /// Sealed by this address (recovered from the signature).
+    Signed(Address),
+}
+
+/// The block's [`Sealer`] under activation `chain_id` (`None` = SIP-6 off).
+///
+/// # Errors
+/// The header's seal does not verify ([`check_header`]'s rules).
+pub fn sealer(header: &Header, chain_id: Option<u64>) -> Result<Sealer, SealError> {
+    if chain_id.is_none() {
+        return Ok(Sealer::Unsealed);
+    }
+    match check_header(header, chain_id)? {
+        Some(signer) => Ok(Sealer::Signed(signer)),
+        None => Ok(Sealer::Null),
+    }
 }
 
 /// Classify a header by its `extra_data` length alone.
@@ -419,6 +527,19 @@ mod tests {
         assert_eq!(recover(&twin, TESTNET), Err(SealError::HighS));
     }
 
+    /// `header()` with SIP-6's pinned randao (vectors keep the plain one).
+    fn pinned_header() -> Header {
+        let mut h = header();
+        h.mix_hash = pinned_randao(h.parent_beacon_block_root.unwrap_or_default());
+        h
+    }
+
+    fn pinned_sealed() -> Header {
+        let mut h = pinned_header();
+        sign(&mut h, b"sova", key(), TESTNET).unwrap_or_else(|e| panic!("{e}"));
+        h
+    }
+
     #[test]
     fn the_header_rule_before_and_after_activation() {
         let signer = address_of(key()).ok();
@@ -429,13 +550,18 @@ mod tests {
             Err(SealError::PreSip6Length(97))
         );
         // After: sealed recovers its signer; an unsealed 4-byte vanity fails.
-        assert_eq!(check_header(&sealed(TESTNET), Some(TESTNET)), Ok(signer));
+        assert_eq!(check_header(&pinned_sealed(), Some(TESTNET)), Ok(signer));
         assert_eq!(
-            check_header(&header(), Some(TESTNET)),
+            check_header(&pinned_header(), Some(TESTNET)),
             Err(SealError::Length(4))
         );
+        // The randao is pinned to the anchor for every block.
+        assert_eq!(
+            check_header(&sealed(TESTNET), Some(TESTNET)),
+            Err(SealError::Randao)
+        );
         // A null block must be empty.
-        let mut null = header();
+        let mut null = pinned_header();
         null.extra_data = Bytes::new();
         null.transactions_root = EMPTY_ROOT;
         null.withdrawals_root = Some(EMPTY_ROOT);
@@ -452,17 +578,64 @@ mod tests {
             check_header(&minting, Some(TESTNET)),
             Err(SealError::NullNotEmpty("withdrawals"))
         );
-        let mut busy = null;
+        let mut busy = null.clone();
         busy.transactions_root = B256::repeat_byte(9);
         assert_eq!(
             check_header(&busy, Some(TESTNET)),
             Err(SealError::NullNotEmpty("transactions"))
         );
+        let mut random = null;
+        random.mix_hash = B256::repeat_byte(3);
+        assert_eq!(check_header(&random, Some(TESTNET)), Err(SealError::Randao));
         // Genesis is exempt either way.
         let mut genesis = header();
         genesis.number = 0;
         genesis.extra_data = Bytes::from_static(b"sova-testnet-v0");
         assert_eq!(check_header(&genesis, Some(TESTNET)), Ok(None));
+    }
+
+    /// SIP-6 §2.5 against the parent: the null block's timestamp is the
+    /// one value `max(parent + 1, zcash_time)`; a sealed block's lies in
+    /// `(parent, max(parent + 1, zcash_time + 900)]`.
+    #[test]
+    fn timestamps_and_gas_against_the_parent() {
+        let mut parent = header();
+        parent.timestamp = 1_000;
+        let at = |ts: u64, null: bool| {
+            let mut h = header();
+            h.timestamp = ts;
+            if null {
+                h.extra_data = Bytes::new();
+            }
+            h
+        };
+        // Zcash time ahead of the parent: the null block sits at it.
+        assert_eq!(
+            check_against_parent(&at(1_500, true), &parent, 1_500),
+            Ok(())
+        );
+        assert!(check_against_parent(&at(1_501, true), &parent, 1_500).is_err());
+        // Zcash time behind: parent + 1.
+        assert_eq!(check_against_parent(&at(1_001, true), &parent, 10), Ok(()));
+        let mut wide = at(1_001, true);
+        wide.gas_limit += 1;
+        assert!(matches!(
+            check_against_parent(&wide, &parent, 10),
+            Err(SealError::NullGasLimit(..))
+        ));
+        // Sealed: after the parent, at most zcash_time + 900.
+        let sealed_at = |ts| {
+            let mut h = at(ts, false);
+            h.extra_data = Bytes::from(vec![0u8; SEALED_EXTRA_LEN]);
+            h
+        };
+        assert_eq!(
+            check_against_parent(&sealed_at(2_400), &parent, 1_500),
+            Ok(())
+        );
+        assert!(check_against_parent(&sealed_at(2_401), &parent, 1_500).is_err());
+        assert!(check_against_parent(&sealed_at(1_000), &parent, 1_500).is_err());
+        assert_eq!(check_against_parent(&sealed_at(1_001), &parent, 10), Ok(()));
     }
 
     #[test]

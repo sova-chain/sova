@@ -105,6 +105,20 @@ where
             payload_id,
         } = config;
 
+        // SIP-6: a null block carries no transactions, ever — build the
+        // empty payload once and freeze it so the job never adds the pool.
+        if attributes.epoch.as_ref().is_some_and(|e| e.null) {
+            let inner_attributes = apply_epoch_settlements(attributes)?;
+            return self
+                .inner
+                .build_empty_payload(PayloadConfig {
+                    parent_header,
+                    parent_block_info,
+                    attributes: inner_attributes,
+                    payload_id,
+                })
+                .map(BuildOutcome::Freeze);
+        }
         // B3b: an epoch-bearing build request mints its settlements through
         // the withdrawals channel — Ethereum's consensus-grade balance
         // increment, applied by reth's stock executor with no custom code.
@@ -229,6 +243,8 @@ mod tests {
             zcash_height: 42,
             zcash_hash: [0x22; 32],
             settlements,
+            zcash_time: 0,
+            null: false,
         }
     }
 

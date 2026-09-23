@@ -51,6 +51,14 @@ pub struct SovaEpochAttribute {
     /// The credited address and wei amount for each recognized burn in this
     /// epoch, in the order `epoch_rewards` produced them.
     pub settlements: Vec<(Address, U256)>,
+    /// The Zcash block's header time (unix seconds): SIP-6 pins a null
+    /// block's timestamp to it and bounds a sealed block's. 0 = unknown.
+    #[serde(default)]
+    pub zcash_time: u64,
+    /// SIP-6: build this epoch's **null block** — no transactions, no mint,
+    /// zero beneficiary, empty extra data, unsigned.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub null: bool,
 }
 
 /// Serializes/deserializes a raw 32-byte hash as a `0x`-prefixed hex string
@@ -180,6 +188,8 @@ mod tests {
                 (Address::with_last_byte(1), U256::from(100_000u64)),
                 (Address::with_last_byte(2), U256::from(250_000u64)),
             ],
+            zcash_time: 0,
+            null: false,
         }
     }
 

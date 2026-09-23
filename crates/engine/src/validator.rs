@@ -155,7 +155,11 @@ impl PayloadValidator<SovaEngineTypes> for SovaEngineValidator {
         //   arrival advances the head — and are re-ranked with their
         //   real sealer rank once our scan reaches the height
         //   (`CandidateTracker::rerank`, driven by the expectations feed).
-        let observed_rank = match global().check_ranked(height, withdrawals, schedule()) {
+        // SIP-6 §2.5: verify the seal before the block can be observed, so a
+        // forged copy never takes the epoch's best slot even for a moment.
+        let sealer = crate::seal::sealer(block.header(), crate::seal::active_chain_id())
+            .map_err(|e| NewPayloadError::Other(e.to_string().into()))?;
+        let observed_rank = match global().check_sealed(height, withdrawals, schedule(), sealer) {
             RankedVerdict::Valid { rank } => Some(rank),
             RankedVerdict::ValidEmpty => Some(usize::MAX),
             RankedVerdict::Unknown => {
@@ -171,8 +175,30 @@ impl PayloadValidator<SovaEngineTypes> for SovaEngineValidator {
                 ));
             }
         };
-        let observation = match observed_rank {
-            Some(sealer_rank) => candidates::global().observe(
+        // Equivocation evidence can demote another signer's block and make
+        // a different candidate best, so compare the height's best around
+        // the observation rather than only asking about this block.
+        let best_before = candidates::global().best(height).map(|c| c.block_hash);
+        let observation = match (observed_rank, sealer) {
+            (Some(sealer_rank), crate::seal::Sealer::Signed(signer)) => candidates::global()
+                .observe_sealed(
+                    height,
+                    Candidate {
+                        sealer_rank,
+                        block_hash: block.hash().0,
+                    },
+                    block.parent_hash.0,
+                    candidates::SealInfo {
+                        signer: signer.0.0,
+                        anchor: block
+                            .header()
+                            .parent_beacon_block_root
+                            .unwrap_or_default()
+                            .0,
+                        seal_hash: crate::seal::seal_hash(block.header()).0,
+                    },
+                ),
+            (Some(sealer_rank), _) => candidates::global().observe(
                 height,
                 Candidate {
                     sealer_rank,
@@ -180,17 +206,25 @@ impl PayloadValidator<SovaEngineTypes> for SovaEngineValidator {
                 },
                 block.parent_hash.0,
             ),
-            None => candidates::global().observe_unranked(
+            (None, _) => candidates::global().observe_unranked(
                 height,
                 block.hash().0,
                 block.parent_hash.0,
                 withdrawals.map(<[_]>::to_vec).unwrap_or_default(),
             ),
         };
+        let best_after = candidates::global().best(height).map(|c| c.block_hash);
         if observation == Observation::NewBest {
             candidates::notify_best(BestCandidate {
                 sova_height: height,
                 block_hash: block.hash().0,
+            });
+        } else if let Some(best) = best_after
+            && best_after != best_before
+        {
+            candidates::notify_best(BestCandidate {
+                sova_height: height,
+                block_hash: best,
             });
         }
         Ok(block)
@@ -365,6 +399,8 @@ mod tests {
             zcash_height: 7,
             zcash_hash: [0x11; 32],
             settlements: vec![(Address::with_last_byte(9), U256::from(1u64))],
+            zcash_time: 0,
+            null: false,
         });
         let result = validator().ensure_well_formed_attributes(EngineApiMessageVersion::V1, &attrs);
         assert!(

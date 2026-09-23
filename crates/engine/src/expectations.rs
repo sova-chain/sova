@@ -256,6 +256,69 @@ impl ExpectedSettlements {
         }
     }
 
+    /// SIP-6 §2.3/§2.4: the settlement rule with the block's producer
+    /// known. A **signed** block is valid only if its signer is one of the
+    /// epoch's ranked burners (so a block for a burn-less epoch can't be
+    /// signed) and its withdrawals are exactly that burner's derivation;
+    /// its rank is the signer's place, not read from the tip. A **null**
+    /// block is valid for any scanned epoch and must mint nothing (Rob's
+    /// D5). Before activation ([`crate::seal::Sealer::Unsealed`]) this is
+    /// [`Self::check_ranked`].
+    #[must_use]
+    pub fn check_sealed(
+        &self,
+        height: u64,
+        actual: Option<&[Withdrawal]>,
+        schedule: consensus::schedule::Schedule,
+        sealer: crate::seal::Sealer,
+    ) -> RankedVerdict {
+        use crate::seal::Sealer;
+        let signer = match sealer {
+            Sealer::Unsealed => return self.check_ranked(height, actual, schedule),
+            Sealer::Null => {
+                if self.record(height).is_none() {
+                    return RankedVerdict::Unknown;
+                }
+                return if actual.unwrap_or(&[]).is_empty() {
+                    RankedVerdict::ValidEmpty
+                } else {
+                    RankedVerdict::Mismatch { height }
+                };
+            }
+            Sealer::Signed(signer) => signer,
+        };
+        let Some(record) = self.record(height) else {
+            return RankedVerdict::Unknown;
+        };
+        let Some(rank) = record
+            .ranked
+            .iter()
+            .position(|m| m.evm_address == signer.0.0)
+        else {
+            return RankedVerdict::Mismatch { height };
+        };
+        let actual = actual.unwrap_or(&[]);
+        let reward_gwei = schedule.reward_gwei(height.saturating_sub(1));
+        if reward_gwei == 0 {
+            // Past emission: signed burn epochs stay ranked (fees pay the
+            // sealer) and mint nothing.
+            return if actual.is_empty() {
+                RankedVerdict::Valid { rank }
+            } else {
+                RankedVerdict::Mismatch { height }
+            };
+        }
+        let derived =
+            crate::driver::epoch_attribute(&record.epoch, &record.ranked, signer.0.0, reward_gwei)
+                .ok()
+                .and_then(|attr| crate::settlements_to_withdrawals(&attr).ok());
+        if derived.as_deref() == Some(actual) {
+            RankedVerdict::Valid { rank }
+        } else {
+            RankedVerdict::Mismatch { height }
+        }
+    }
+
     /// Check a payload's withdrawals (`None` treated as empty) for a
     /// height against the recorded requirement.
     ///
@@ -540,6 +603,102 @@ mod tests {
         assert_eq!(
             e.check_ranked(10, Some(&[w(0, 1, 1)]), FLAT),
             RankedVerdict::Mismatch { height: 10 }
+        );
+    }
+
+    /// SIP-6 §2.3/§2.4: with a seal, the rank comes from the signer.
+    #[test]
+    fn check_sealed_ranks_by_signer_and_nulls_mint_nothing() {
+        use alloy_primitives::Address;
+        use consensus::epoch::EpochBurn;
+        use consensus::sip1::Burn;
+
+        use crate::driver::{DRAFT_EPOCH_REWARD_GWEI, epoch_attribute, ranked_miners};
+        use crate::seal::Sealer;
+        use crate::settlements_to_withdrawals;
+
+        const FLAT: consensus::schedule::Schedule = consensus::schedule::Schedule::Flat {
+            reward_gwei: DRAFT_EPOCH_REWARD_GWEI,
+        };
+        let burn = |a: u8, zat: u64| EpochBurn {
+            txid: [a; 32],
+            burn: Burn {
+                evm_address: [a; 20],
+                signal_bits: 0,
+                value_zat: zat,
+            },
+        };
+        let epoch = EpochData {
+            height: 100,
+            hash: [7; 32],
+            burns: vec![burn(1, 600_000), burn(2, 400_000)],
+            time: 0,
+            txs: Vec::new(),
+        };
+        let ranked = ranked_miners(&epoch.burns);
+        let derive = |sealer: [u8; 20]| {
+            settlements_to_withdrawals(
+                &epoch_attribute(&epoch, &ranked, sealer, DRAFT_EPOCH_REWARD_GWEI)
+                    .unwrap_or_else(|err| panic!("{err}")),
+            )
+            .unwrap_or_else(|err| panic!("{err}"))
+        };
+        let e = ExpectedSettlements::default();
+        let signed = |a: [u8; 20]| Sealer::Signed(Address::from(a));
+        assert_eq!(
+            e.check_sealed(9, None, FLAT, Sealer::Null),
+            RankedVerdict::Unknown,
+            "unscanned: unknown, never valid"
+        );
+        e.insert(
+            9,
+            HeightRecord {
+                withdrawals: derive(ranked[0].evm_address),
+                epoch: epoch.clone(),
+                ranked: ranked.clone(),
+            },
+        );
+        let (r0, r1) = (ranked[0].evm_address, ranked[1].evm_address);
+        // Each ranked signer with its own derivation, at its own rank.
+        assert_eq!(
+            e.check_sealed(9, Some(&derive(r0)), FLAT, signed(r0)),
+            RankedVerdict::Valid { rank: 0 }
+        );
+        assert_eq!(
+            e.check_sealed(9, Some(&derive(r1)), FLAT, signed(r1)),
+            RankedVerdict::Valid { rank: 1 }
+        );
+        // Rank 1 signing rank 0's derivation (claiming the tip) is invalid,
+        // and so is an unranked signer with a perfect copy.
+        let bad = RankedVerdict::Mismatch { height: 9 };
+        assert_eq!(e.check_sealed(9, Some(&derive(r0)), FLAT, signed(r1)), bad);
+        assert_eq!(
+            e.check_sealed(9, Some(&derive(r0)), FLAT, signed([9; 20])),
+            bad
+        );
+        // A null block is valid on a burn epoch only if it mints nothing.
+        assert_eq!(
+            e.check_sealed(9, None, FLAT, Sealer::Null),
+            RankedVerdict::ValidEmpty
+        );
+        assert_eq!(
+            e.check_sealed(9, Some(&derive(r0)), FLAT, Sealer::Null),
+            bad
+        );
+        // A burn-less epoch: only the null block; nobody is ranked to sign.
+        e.insert(10, rec(Vec::new()));
+        assert_eq!(
+            e.check_sealed(10, None, FLAT, Sealer::Null),
+            RankedVerdict::ValidEmpty
+        );
+        assert_eq!(
+            e.check_sealed(10, None, FLAT, signed(r0)),
+            RankedVerdict::Mismatch { height: 10 }
+        );
+        // Unsealed (SIP-6 off) is the old rule.
+        assert_eq!(
+            e.check_sealed(9, Some(&derive(r1)), FLAT, Sealer::Unsealed),
+            RankedVerdict::Valid { rank: 1 }
         );
     }
 

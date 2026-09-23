@@ -135,6 +135,20 @@ where
         // default stays.
         if let Some(epoch) = &epoch {
             inner.parent_beacon_block_root = Some(B256::from(epoch.zcash_hash));
+            if crate::seal::active_chain_id().is_some() {
+                // SIP-6 §2.4/§2.8: fields a producer could grind are pinned.
+                inner.prev_randao = crate::seal::pinned_randao(B256::from(epoch.zcash_hash));
+                let (min, max) =
+                    crate::seal::timestamp_window(parent.timestamp(), epoch.zcash_time);
+                inner.timestamp = if epoch.null {
+                    min
+                } else {
+                    inner.timestamp.clamp(min, max)
+                };
+                if epoch.null {
+                    inner.suggested_fee_recipient = Address::ZERO;
+                }
+            }
         }
         SovaPayloadAttributes { inner, epoch }
     }
@@ -149,6 +163,8 @@ mod tests {
             zcash_height,
             zcash_hash: [zcash_height as u8; 32],
             settlements: Vec::new(),
+            zcash_time: 0,
+            null: false,
         }
     }
 

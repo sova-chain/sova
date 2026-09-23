@@ -76,6 +76,7 @@ echo "--- starting node A (mine mode, sova/1, rank step ${RANK_STEP_S}s) ---"
 p2p_env \
   SOVA_ZEBRAD_RPC="${ZEBRAD_RPC}" \
   SOVA_MINER_EVM_ADDRESS="${EVM_A}" \
+  SOVA_SEALER_KEYSTORE="${WORK_DIR}/miner-a/keystore.json" \
   SOVA_EPOCH_BASE="${EPOCH_BASE}" \
   SOVA_RANK_STEP_SECS="${RANK_STEP_S}" \
   SOVA_HTTP_PORT="${A_HTTP_PORT}" \
@@ -93,6 +94,7 @@ echo "--- starting node B (mine mode, sova/1 static peer = A, rank step ${RANK_S
 p2p_env \
   SOVA_ZEBRAD_RPC="${ZEBRAD_RPC}" \
   SOVA_MINER_EVM_ADDRESS="${EVM_B}" \
+  SOVA_SEALER_KEYSTORE="${WORK_DIR}/miner-b/keystore.json" \
   SOVA_EPOCH_BASE="${EPOCH_BASE}" \
   SOVA_RANK_STEP_SECS="${RANK_STEP_S}" \
   SOVA_P2P_PEERS="${ENODE_A}" \

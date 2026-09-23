@@ -43,6 +43,12 @@
 //! `SOVA_EPOCH_BASE` (first Zcash height to treat as an epoch, default 1),
 //! `SOVA_PEERS` (comma-separated authrpc URLs to relay to).
 //!
+//! SIP-6 sealer signatures (`SOVA_SIP6=1`, see `engine::seal`): every node
+//! then requires each block to be sealed (or a null block) under this
+//! chain's ID; a mine-mode node signs its blocks with the key in
+//! `SOVA_SEALER_KEYSTORE` (the `sova-miner` keystore — its address is the
+//! one the burns credit; a different `SOVA_MINER_EVM_ADDRESS` is refused).
+//!
 //! Chain profile (`SOVA_CHAIN`, see [`chain`]): `dev` (default — reth's
 //! dev spec with its publicly-keyed prefunded accounts; local use only) or
 //! `sova-testnet` (empty genesis alloc, its own chain ID and genesis,
@@ -206,6 +212,13 @@ async fn main() -> eyre::Result<()> {
     // `sova_receivers` is spawned after launch.
     let (network_builder, sova_receivers) = gossip::network_builder(gossip);
     let (database, datadir_line) = open_datadir(&mut node_config)?;
+    // SIP-6 (`SOVA_SIP6=1`): seals are required, and checked under this
+    // chain's ID, from the first import on — activated before launch,
+    // never mid-run.
+    let sip6_chain_id = env_flag("SOVA_SIP6").then(|| node_config.chain.chain().id());
+    if let Some(chain_id) = sip6_chain_id {
+        engine::seal::activate(chain_id);
+    }
 
     // NOTE: bind `node` (not `_`, which drops immediately) — the `FullNode`
     // handle owns the running RPC server.
@@ -487,7 +500,14 @@ async fn main() -> eyre::Result<()> {
             );
         }
 
-        let our_address = parse_miner_address()?;
+        let signer = match sip6_chain_id {
+            Some(chain_id) => Some(std::sync::Arc::new(load_signer(chain_id)?)),
+            None => None,
+        };
+        let our_address = match &signer {
+            Some(signer) => sealer_address(signer.address().into())?,
+            None => parse_miner_address()?,
+        };
         let pending = PendingEpoch::default();
         let attrs_builder =
             SovaLocalPayloadAttributesBuilder::with_pending(node.chain_spec(), pending.clone())
@@ -504,6 +524,13 @@ async fn main() -> eyre::Result<()> {
             trigger_rx,
             node.payload_builder_handle.clone(),
         );
+        let miner = match signer {
+            Some(signer) => {
+                println!("sip-6: sealing as 0x{}", hex::encode(signer.address()));
+                miner.with_signer(signer)
+            }
+            None => miner,
+        };
         tokio::spawn(miner.run());
 
         // Ladder step (SOVA_RANK_STEP_SECS): how long each successive
@@ -518,6 +545,7 @@ async fn main() -> eyre::Result<()> {
                 our_address,
                 schedule,
                 rank_step,
+                sip6: sip6_chain_id.is_some(),
             },
             base_height,
             100,
@@ -547,6 +575,48 @@ async fn main() -> eyre::Result<()> {
     }
 
     node_exit_future.await
+}
+
+/// SIP-6: the sealing key from `SOVA_SEALER_KEYSTORE` (a `sova-miner`
+/// keystore), journaling under the datadir (persistent) or a per-process
+/// temp dir (ephemeral), one journal per sealing address.
+fn load_signer(chain_id: u64) -> eyre::Result<engine::signer::Signer> {
+    let keystore = std::env::var_os("SOVA_SEALER_KEYSTORE")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            eyre::eyre!(
+                "SOVA_SIP6=1 mine mode requires SOVA_SEALER_KEYSTORE (a sova-miner keystore.json)"
+            )
+        })?;
+    let base = std::env::var_os("SOVA_DATADIR")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir().join(format!("sova-{}", std::process::id())))
+        .join("seal-journal");
+    // The address isn't known until the key loads; load once to learn it.
+    let probe = engine::signer::Signer::from_keystore(&keystore, chain_id, base.join("probe"))?;
+    let journal = base.join(format!("{}", probe.address()));
+    let _ = std::fs::remove_dir_all(base.join("probe"));
+    Ok(engine::signer::Signer::from_keystore(
+        &keystore, chain_id, journal,
+    )?)
+}
+
+/// SIP-6: the sealer's own address is the one its burns credit. If
+/// `SOVA_MINER_EVM_ADDRESS` is also set it must agree.
+fn sealer_address(signer: [u8; 20]) -> eyre::Result<[u8; 20]> {
+    if std::env::var("SOVA_MINER_EVM_ADDRESS").is_ok_and(|v| !v.trim().is_empty()) {
+        let configured = parse_miner_address()?;
+        if configured != signer {
+            return Err(eyre::eyre!(
+                "SOVA_MINER_EVM_ADDRESS 0x{} is not the sealing key's address 0x{}: burns must credit the key that seals",
+                hex::encode(configured),
+                hex::encode(signer)
+            ));
+        }
+    }
+    Ok(signer)
 }
 
 /// Parse `SOVA_MINER_EVM_ADDRESS` (0x-prefixed 20-byte hex).

@@ -1,9 +1,10 @@
 # SIP-6: Sealer Signatures
 
-- Status: **Accepted** (Rob, 2026-09-23: recommended defaults in §10); implementation pending, ships at the testnet reset. Earlier: **Draft, design only**. Needs Rob's
+- Status: **Accepted** (Rob, 2026-09-23: recommended defaults in §10); **implemented** (2026-09-23, `crates/engine/src/{seal,signer}.rs`, consensus, tracker and sealer; on with `SOVA_SIP6=1`), switched on at the testnet reset, from genesis. Not yet built: post-emission burn epochs (reward 0) still get the null block rather than a signed one. Earlier: **Draft, design only**. Needs Rob's
   calls in "Decisions for Rob" (§10) before a build is dispatched.
-- Numbering: **SIP-6, not SIP-5.** `sips/` holds SIP-1 to SIP-4, but
-  SIP-5 is already reserved for the wZEC peg (`docs/WORKPLAN.md` row z-2,
+- Numbering: **SIP-6, not SIP-5.** `sips/` held SIP-1 to SIP-4, and
+  SIP-5 was then reserved for the wZEC peg (since withdrawn: wrapped ZEC is
+  a Sova Labs product, `docs/design/wz-cash.md`) (`docs/WORKPLAN.md` row z-2,
   `docs/design/zec-peg-v2.md` §4.1, `docs/design/zec-on-sova-options.md`).
   The peg doc's "needs its own SIP" for block signing
   (`zec-peg-v2.md` §1.4(a)) is this one.
