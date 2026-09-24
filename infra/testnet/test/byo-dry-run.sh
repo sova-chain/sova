@@ -82,11 +82,62 @@ sip6_follower() { grep -q '^SOVA_SIP6=1$' "$1" && ! grep -q SEALER "$1"; }
 for h in sova-seed-1 sova-rpc-1; do
   check "render: ${h}'s node has SIP-6 on, no sealing key" sip6_follower "${TMP}/out/render/${h}/etc/sova/sova-node.env"
 done
+for h in sova-seed-1 sova-rpc-1 sova-keeper-1; do
+  check "render: ${h}'s node has SIP-7 on" grep -q '^SOVA_SIP7=1$' "${TMP}/out/render/${h}/etc/sova/sova-node.env"
+done
 check "render: keeper budgets rendered" grep -q '^KEEPER_LIFETIME_BUDGET_ZAT=' "${R}/etc/sova/keeper.env"
 check "render: no cloudflared on the keeper (not public)" test ! -e "${R}/etc/systemd/system/cloudflared.service"
 if [[ ${#VERIFY[@]} -gt 0 ]]; then
   check "systemd-analyze verify: keeper ok" grep -q 'ok   sova-keeper-1: systemd-analyze verify' <<<"${out}"
 fi
+
+# ---- SOVA_SIP7 validation -------------------------------------------------------
+sed 's/^SOVA_SIP7=1$/SOVA_SIP7=yes/' "${TMP}/config.env" >"${TMP}/sip7-bad.env"
+CFG="${TMP}/sip7-bad.env"
+out="$(cd "${KIT}" && kit ./deploy.sh check 2>&1)"
+check "deploy.sh check refuses SOVA_SIP7=yes" has "SOVA_SIP7 must be 0 or 1" "${out}"
+sed 's/^SOVA_SIP7=1$/SOVA_SIP7=0/' "${TMP}/config.env" >"${TMP}/sip7-off.env"
+CFG="${TMP}/sip7-off.env"
+out="$(cd "${KIT}" && kit ./deploy.sh check 2>&1)"
+check "deploy.sh check: SOVA_SIP7=0 is an open item, not an error" has "SOVA_SIP7=0: SIP-7 is off" "${out}"
+CFG="${TMP}/config.env"
+
+# ---- bootnodes.sh: the genesis hash comes from the nodes, never a constant ----
+# Stand in for what deploy.sh records from each node host's
+# `sova genesis-hash` (KIT-OUT genesis_hash / genesis_sip7).
+G1="0x$(printf 'ab%.0s' $(seq 1 32))"
+G2="0x$(printf 'cd%.0s' $(seq 1 32))"
+mkdir -p "${TMP}/out/servers"
+echo "enode://$(printf '11%.0s' $(seq 1 64))@203.0.113.1:30303" >"${TMP}/out/servers/sova-seed-1.enode"
+record_genesis() { # hash-for-keeper
+  local h
+  for h in sova-seed-1 sova-rpc-1 sova-keeper-1; do
+    echo "${G1}" >"${TMP}/out/servers/${h}.genesis_hash"
+    echo 1 >"${TMP}/out/servers/${h}.genesis_sip7"
+  done
+  echo "$1" >"${TMP}/out/servers/sova-keeper-1.genesis_hash"
+}
+record_genesis "${G1}"
+out="$(cd "${KIT}" && kit ./bootnodes.sh 2>&1)"
+check "bootnodes.sh: publishes the nodes' recorded genesis hash in seeds.json" \
+  test "$(jq -r .genesis_hash "${TMP}/out/seeds.json" 2>/dev/null)" == "${G1}"
+check "bootnodes.sh: seeds.json carries sip6 and sip7" \
+  test "$(jq -c '[.sip6, .sip7]' "${TMP}/out/seeds.json" 2>/dev/null)" == '[true,true]'
+check "bootnodes.sh: testnet.env sets SOVA_SIP7=1" grep -q '^SOVA_SIP7=1$' "${TMP}/out/testnet.env"
+check "bootnodes.sh: testnet.env names the genesis hash" grep -q "^# Genesis hash: ${G1}$" "${TMP}/out/testnet.env"
+check "bootnodes.sh: no hard-coded genesis hash left in the kit" \
+  lacks "0x8b04e8fc|GENESIS_HASH=\"0x" "$(cat "${KIT}"/*.sh "${KIT}"/host/*.sh)"
+record_genesis "${G2}"
+out="$(cd "${KIT}" && kit ./bootnodes.sh 2>&1)"
+check "bootnodes.sh: refuses nodes that disagree on the genesis hash" has "genesis hash disagreement" "${out}"
+record_genesis "${G1}"
+echo 0 >"${TMP}/out/servers/sova-rpc-1.genesis_sip7"
+out="$(cd "${KIT}" && kit ./bootnodes.sh 2>&1)"
+check "bootnodes.sh: refuses a host deployed with another SOVA_SIP7" has "sova-rpc-1 was deployed with a different SOVA_SIP7" "${out}"
+rm -f "${TMP}/out/servers/sova-rpc-1.genesis_hash"
+out="$(cd "${KIT}" && kit ./bootnodes.sh 2>&1)"
+check "bootnodes.sh: refuses to publish without every node's recorded hash" has "no genesis hash recorded for sova-rpc-1" "${out}"
+rm -rf "${TMP}/out/servers" "${TMP}/out/seeds.json" "${TMP}/out/testnet.env" "${TMP}/out/bootnodes.txt"
 
 # ---- launch.sh --dry-run: the keeper in every host stage --------------------
 out="$(cd "${KIT}" && kit TELEGRAM_BOT_TOKEN=dry-run-dummy TELEGRAM_CHAT_ID=0 ./launch.sh --dry-run 2>&1)"

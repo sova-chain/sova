@@ -30,6 +30,7 @@ before step 1.
 | --- | --- | --- | --- |
 | **Emission schedule** | `flat` (a constant 6,250 SOVA per epoch) or `sip3` (SIP-3's schedule) | **Decided 2026-09-23: `flat`.** SIP-3's schedule is for mainnet. | `SOVA_EMISSION_SCHEDULE` |
 | **SIP-6 sealer signatures** | On from genesis, or off (debug only). A consensus switch: every node, ours and strangers', must use the same value, so `testnet.env` and `seeds.json` carry it. | **Decided: on** (SIP-6 is Accepted and activates at the reset, from genesis, SIP-6 §7). Every node requires sealed (97-byte `extraData`) or null (empty) blocks, and the keeper signs with its miner key (`docs/ops/keeper-miner.md`, "Sealing key (SIP-6)"). | `SOVA_SIP6=1` |
+| **SIP-7 Zcash pool state** | On from genesis, or off (debug only). A consensus switch that is also in the genesis: with it on, the chain spec predeploys the `ZcashBlocks` contract at `0x…5A01`, which changes the genesis hash and fork ID. Every node, ours and strangers', must use the same value, so `testnet.env` and `seeds.json` carry it. | **SIP-7: on at the reset (Rob accepted SIP-7, 2026-09-23).** Contracts read Zcash pool totals, block stats and shielded flows (`0x…5A00`, `ZcashBlocks` at `0x…5A01`), and every node serves `sova_getZcashBlocks`. | `SOVA_SIP7=1` |
 | **Chain ID at the reset** | Keep **82330**: the new genesis already gets a new fork ID, and chainlist doesn't change. Or take a fresh ID (e.g. 82331), so wallets don't mix up the old chain's nonces and history with the new one's. | **Decided 2026-09-23: keep 82330.** | `SOVA_CHAIN_ID`, plus `chain.rs` at the reset |
 | **Servers** | Where the seed, RPC, faucet and keeper run | **Decided: all on Hetzner (Rob, 2026-09-23)**, one server account, Cloudflare for the edge. This replaces the same day's earlier "keeper on AWS". | `SERVERS` |
 | **Keeper host** | Without a mine-mode node somewhere, the chain doesn't advance (see B5b). | **Decided 2026-09-23: Hetzner CX33** (fsn1, 40 GB volume), created by the kit like the other three. A keeper elsewhere stays possible as an option ("Optional: a keeper elsewhere", below R9). | `SERVERS` (`sova-keeper-1:cx33:fsn1:40:keeper`) |
@@ -174,7 +175,7 @@ still works: `./test/byo-dry-run.sh`.
 | 3 hosts | `deploy.sh`: node keys and enodes, zebrad (pinned image), `sova` from the tagged Release (SHA256SUMS checked), the faucet, the keeper, cloudflared, units, the health timer | — |
 | 4 edge | `cloudflare.sh all` (DNS, tunnels, Worker + RPC rate limit, faucet WAF rule, R2), then `deploy.sh alerts` if Telegram is set | — |
 | 5 sync | reads every host's zebrad | **any zebrad is still syncing** (about half a day from zero) |
-| 6 chain | `epoch-base.sh propose` → `pin B` → `deploy.sh` (the sova nodes start) → `bootnodes.sh` + `--verify` → `publish.sh join` | **without `--go`**: it prints B and stops. Pinning B starts this genesis |
+| 6 chain | `epoch-base.sh propose` → `pin B` → `deploy.sh` (the sova nodes start; each node host records its `sova genesis-hash`) → `bootnodes.sh` (publishes that genesis hash) + `--verify` (each node's block 0 matches it) → `publish.sh join` | **without `--go`**: it prints B and stops. Pinning B starts this genesis |
 | 7 contracts | `deploy-contracts.sh keygen` (once), then `deploy --via sova-rpc-1` | **the deployer holds no SOVA yet** (fund it: B5c), or a constructor value is missing (R8) |
 | 8 smoke | `smoke.sh all` (edge, hosts, contracts) | — |
 
@@ -249,7 +250,9 @@ a. **A stranger's node syncs.** Download the release tarball and verify
    `SHA256SUMS`. Then `source` the `testnet.env` from
    `https://dl.testnet.sova.io/testnet.env`, set `SOVA_DATADIR` to a
    fresh directory and `SOVA_ZEBRAD_RPC=http://127.0.0.1:18234`, and run
-   `sova` (`testnet.env` sets `SOVA_SIP6=1`, so it checks every seal).
+   `sova` (`testnet.env` sets `SOVA_SIP6=1`, so it checks every seal, and
+   `SOVA_SIP7=1`, so it boots the same genesis: `sova genesis-hash`
+   with that env prints the hash `seeds.json` publishes).
    Pass: its log shows `p2p: discovery on … bootnode(s)`, `sova/1:
    peer active` and `expectations: enforcing settlements`, and
    `cast block latest --field hash` matches between it and
@@ -301,10 +304,10 @@ the gitleaks CI scan.
 | `deploy.sh` → `host/setup-host.sh` | Per-role setup over SSH. `deploy.sh check` validates the config, `deploy.sh render` writes and lints every host's files locally |
 | `cloudflare.sh` | DNS, tunnels, the RPC firewall Worker (with the RPC rate limit), the faucet's WAF rate-limit rule, R2 bucket + domain, teardown |
 | `epoch-base.sh` | Proposes, pins and records the epoch base B |
-| `bootnodes.sh` | The final bootnode list, `testnet.env`, `seeds.json`, the `chain.rs` constant, `--verify` |
+| `bootnodes.sh` | The final bootnode list, `testnet.env`, `seeds.json` (with the genesis hash the node hosts printed), the `chain.rs` constant, `--verify` |
 | `deploy-contracts.sh` | The day-one contracts: `keygen`, `plan`, `deploy`, `verify` (runs `contracts/script/deploy-kit.sh`, the same code as `box/deploy-dapps.sh`) |
 | `publish.sh` | Join files and zebrad snapshots to R2 |
-| `smoke.sh` | Edge, host, mint and contract checks |
+| `smoke.sh` | Edge (incl. the published genesis hash, and SIP-7's `ZcashBlocks.latest()` and `sova_getZcashBlocks`), host, mint and contract checks |
 
 **Budget** [est, 2026-09-22/23 prices; re-check at order time, because
 Hetzner repriced three times in 2026]: **Hetzner only** (all four servers,
@@ -367,12 +370,20 @@ Section 0 settled the schedule (`flat`) and the chain ID (82330) on
    `SOVA_TESTNET_GENESIS_EXTRA_DATA` bumped to `sova-testnet-v1` (a new
    genesis hash and fork ID, so old nodes are filtered out by the ENR
    fork-ID check and the Status handshake); the pinned genesis-hash and
-   fork-ID tests updated; SIP-7's `ZcashBlocks` predeploy added (code
-   only, zero balance); `SOVA_TESTNET_BOOTNODES` refreshed. The chain ID
-   stays 82330 (Rob, 2026-09-23).
+   fork-ID tests updated (`chain.rs` pins the genesis hash with and
+   without SIP-7); SIP-7's `ZcashBlocks` predeploy (code only, zero
+   balance, at `0x…5A01`), which is in the genesis state only with
+   `SOVA_SIP7=1` (the kit's default); `SOVA_TESTNET_BOOTNODES` refreshed.
+   The chain ID stays 82330 (Rob, 2026-09-23).
 2. **Tag** `vX+1` (B0).
 3. **Announce** at least 48 h ahead: the new tag, the new genesis hash,
-   and (SIP-6 §1.3) that miners must re-`init` their keystores.
+   and (SIP-6 §1.3) that miners must re-`init` their keystores. The
+   genesis hash is not hard-coded anywhere in the kit: take it from the
+   new binary (`SOVA_CHAIN=sova-testnet SOVA_SIP7=1 sova genesis-hash`, the
+   same chain spec the nodes boot). At launch the node hosts print it
+   again at `deploy.sh`, `bootnodes.sh` publishes it in `seeds.json` and
+   `testnet.env`, `bootnodes.sh --verify` checks it against each running
+   node's block 0, and `smoke.sh edge` against the public RPC's.
 4. **Roll out:** clear `SOVA_EPOCH_BASE` in `config.env`, set
    `SOVA_RELEASE_TAG`, and keep `SOVA_EMISSION_SCHEDULE=flat` (Rob,
    2026-09-23: SIP-3's schedule is for mainnet). On each node host,
@@ -406,10 +417,12 @@ Section 0 settled the schedule (`flat`) and the chain ID (82330) on
   (about an hour of 75 s epochs) and re-fetches them from peers. That is
   harmless while any peer is up. The follow-ups are graceful shutdown and
   a lower persistence threshold for persistent datadirs.
-- **B, the schedule and SIP-6 are env vars, not profile constants.** A
-  stranger who forgets `SOVA_EPOCH_BASE` gets the default 1 and never
-  agrees with the network, and one who forgets `SOVA_SIP6=1` can't import
-  sealed blocks (their 97-byte `extraData`). The follow-up is to pin them in the `sova-testnet` profile
+- **B, the schedule, SIP-6 and SIP-7 are env vars, not profile
+  constants.** A stranger who forgets `SOVA_EPOCH_BASE` gets the default 1
+  and never agrees with the network, one who forgets `SOVA_SIP6=1` can't
+  import sealed blocks (their 97-byte `extraData`), and one who forgets
+  `SOVA_SIP7=1` boots a genesis without the `ZcashBlocks` predeploy: a
+  different genesis hash and fork ID, so no peer accepts it. The follow-up is to pin them in the `sova-testnet` profile
   in `chain.rs`, the same way bootnodes will be. Until then, `testnet.env`
   carries them.
 - **zebrad cookie auth is off** (loopback-only RPC, single-purpose

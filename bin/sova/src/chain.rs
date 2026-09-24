@@ -139,6 +139,12 @@ impl ChainProfile {
         let spec = self.chain_spec();
         if sip7 { with_zcash_blocks(&spec) } else { spec }
     }
+
+    /// The genesis hash a node of this profile boots with (`sova
+    /// genesis-hash`). Only SIP-7 moves it; SIP-6 changes no genesis field.
+    pub(crate) fn genesis_hash(self, sip7: bool) -> alloy_primitives::B256 {
+        self.chain_spec_with(sip7).genesis_hash()
+    }
 }
 
 /// SIP-7 §4.1: the `ZcashBlocks` runtime bytecode (`forge inspect
@@ -215,6 +221,13 @@ mod tests {
     /// so it does not move this.)
     const SOVA_TESTNET_GENESIS_HASH: B256 = alloy_primitives::b256!(
         "0x8b04e8fc22b07ffb31eaac7af0b3c49131bac558679827bd09c65decb36db130"
+    );
+
+    /// The `sova-testnet` genesis hash with SIP-7's `ZcashBlocks` predeploy
+    /// (`SOVA_SIP7=1`): what the public testnet boots, and what `sova
+    /// genesis-hash` prints for it.
+    const SOVA_TESTNET_SIP7_GENESIS_HASH: B256 = alloy_primitives::b256!(
+        "0xb7391a4a83644e1dce95c95348a005febedeaa12fa46eb30ac0dfb5f36f00b71"
     );
 
     /// keccak256(rlp([])) — the state root of an empty account trie.
@@ -382,5 +395,30 @@ mod tests {
             assert_ne!(sip7.genesis_hash(), plain.genesis_hash());
             assert_eq!(sip7.chain, plain.chain);
         }
+    }
+
+    /// The `sova-testnet` genesis hash with SIP-7 on (`SOVA_SIP7=1`, the
+    /// public testnet's setting): [`SOVA_TESTNET_GENESIS_HASH`]'s header
+    /// plus the `ZcashBlocks` predeploy. Pinned like the plain one: a change
+    /// to the predeploy's bytecode, nonce or address moves it, and must be
+    /// a deliberate edit here (and a new announced genesis).
+    #[test]
+    fn testnet_sip7_genesis_hash_is_pinned() {
+        let hash = ChainProfile::SovaTestnet.genesis_hash(true);
+        assert_eq!(hash, SOVA_TESTNET_SIP7_GENESIS_HASH);
+        assert_ne!(hash, SOVA_TESTNET_GENESIS_HASH);
+        assert_eq!(
+            ChainProfile::SovaTestnet.genesis_hash(false),
+            SOVA_TESTNET_GENESIS_HASH
+        );
+        assert_eq!(ChainProfile::Dev.genesis_hash(false), DEV_GENESIS_HASH);
+        // Same fork schedule, different genesis: a fork ID of its own, so a
+        // node with SIP-7 off is filtered out at the ENR / Status check.
+        assert_ne!(
+            ChainProfile::SovaTestnet
+                .chain_spec_with(true)
+                .latest_fork_id(),
+            sova_testnet_chain_spec().latest_fork_id()
+        );
     }
 }

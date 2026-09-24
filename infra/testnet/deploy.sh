@@ -10,7 +10,9 @@
 #       Pass 2: write each host's host.env (seeds get the OTHER seeds as
 #               bootnodes, everyone else gets every seed, plus
 #               EXTRA_BOOTNODES from config.env) and run setup-host.sh.
-#               Seeds go first.
+#               Seeds go first. Each node host records the genesis hash
+#               its installed `sova genesis-hash` prints
+#               (out/servers/<name>.genesis_hash; bootnodes.sh publishes it).
 #   ./deploy.sh alerts
 #       Push TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID (from YOUR environment)
 #       to /etc/sova/health.env (root 0600) on every host, over SSH stdin.
@@ -98,6 +100,7 @@ ZEBRA_IMAGE_DIGEST=${ZEBRA_IMAGE_DIGEST}
 SOVA_EPOCH_BASE=${SOVA_EPOCH_BASE}
 SOVA_EMISSION_SCHEDULE=${SOVA_EMISSION_SCHEDULE}
 SOVA_SIP6=${SOVA_SIP6}
+SOVA_SIP7=${SOVA_SIP7}
 SOVA_BOOTNODES=$2
 SOVA_P2P_PORT=${SOVA_P2P_PORT}
 ZEBRA_P2P_PORT=${ZEBRA_P2P_PORT}
@@ -134,6 +137,10 @@ remote_setup() { # server-entry bootnodes [--enode-only]
   kit_scp "${name}" "${REMOTE_DIR}" "${envf}"
   kit_ssh "${name}" "mv ${REMOTE_DIR}/${name}.host.env ${REMOTE_DIR}/host.env"
   local logf="${OUT_DIR}/servers/${name}.setup.log"
+  # A full setup re-records the node's genesis hash (KIT-OUT genesis_hash,
+  # `sova genesis-hash` on the host): drop the old one first, so a stale
+  # hash never outlives a change of release or SOVA_SIP7.
+  [[ -n "${3:-}" ]] || rm -f "${OUT_DIR}/servers/${name}.genesis_hash" "${OUT_DIR}/servers/${name}.genesis_sip7"
   if ! kit_ssh "${name}" "sudo bash ${REMOTE_DIR}/setup-host.sh ${REMOTE_DIR}/host.env ${3:-} 2>&1" | tee "${logf}"; then
     die "${name}: setup-host.sh failed (log: ${logf})"
   fi
@@ -248,7 +255,7 @@ lint_render() { # render-root server
   done
   f="${root}/etc/sova/sova-node.env"
   if [[ -f "${f}" ]]; then
-    for v in SOVA_CHAIN SOVA_ZEBRAD_RPC SOVA_DATADIR SOVA_P2P_PORT SOVA_HTTP_PORT SOVA_AUTH_PORT SOVA_RPC_PROFILE SOVA_SIP6; do
+    for v in SOVA_CHAIN SOVA_ZEBRAD_RPC SOVA_DATADIR SOVA_P2P_PORT SOVA_HTTP_PORT SOVA_AUTH_PORT SOVA_RPC_PROFILE SOVA_SIP6 SOVA_SIP7; do
       grep -q "^${v}=." "${f}" || { echo "  FAIL ${name}: sova-node.env has no ${v}"; LINT_FAIL=$((LINT_FAIL + 1)); }
     done
     # SIP-6 mine mode signs: it needs the sealing key and a persistent

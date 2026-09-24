@@ -186,6 +186,18 @@ validate_sip6() {
   SOVA_SIP6="${SOVA_SIP6:-1}"
   [[ "${SOVA_SIP6}" == 0 || "${SOVA_SIP6}" == 1 ]] || die "config: SOVA_SIP6 must be 0 or 1, got '${SOVA_SIP6}'"
   [[ "${SOVA_SIP6}" == 1 ]] || cfg_warn "SOVA_SIP6=0: SIP-6 is off (debug only; the public testnet runs with it on from genesis)"
+  validate_sip7
+}
+
+# SIP-7 Zcash pool state (config.env.example, "Consensus parameters"). A
+# consensus switch that is also part of the genesis (the ZcashBlocks
+# predeploy changes the genesis hash): every node must agree, so only 0 or
+# 1, default on. validate_sip6 calls it: every script that renders or
+# publishes SOVA_SIP6 renders or publishes SOVA_SIP7 next to it.
+validate_sip7() {
+  SOVA_SIP7="${SOVA_SIP7:-1}"
+  [[ "${SOVA_SIP7}" == 0 || "${SOVA_SIP7}" == 1 ]] || die "config: SOVA_SIP7 must be 0 or 1, got '${SOVA_SIP7}'"
+  [[ "${SOVA_SIP7}" == 1 ]] || cfg_warn "SOVA_SIP7=0: SIP-7 is off (debug only; the public testnet runs with it on from genesis, and it changes the genesis hash)"
 }
 
 validate_config() {

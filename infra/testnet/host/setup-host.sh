@@ -27,6 +27,11 @@
 # /var/lib/sova/sealer/keystore.json. Its seal journal lives under the
 # persistent SOVA_DATADIR (/var/lib/sova/node/seal-journal/<address>).
 #
+# SOVA_SIP7=1 (the default): every node runs SIP-7 (Zcash pool state) and
+# boots the genesis with the ZcashBlocks predeploy at 0x...5A01, a
+# different genesis hash from SIP-7 off. Nodes with different values do
+# not peer (fork ID), so every node renders the same one.
+#
 # Lines starting "KIT-OUT " are machine-read by deploy.sh (enode, faucet
 # t-addr, keeper addresses: all public).
 set -euo pipefail
@@ -43,6 +48,7 @@ SOVA_EPOCH_BASE="${SOVA_EPOCH_BASE:-}"
 SOVA_BOOTNODES="${SOVA_BOOTNODES:-}"
 SOVA_EMISSION_SCHEDULE="${SOVA_EMISSION_SCHEDULE:-sip3}"
 SOVA_SIP6="${SOVA_SIP6:-1}"
+SOVA_SIP7="${SOVA_SIP7:-1}"
 BUILD_FROM_SOURCE="${BUILD_FROM_SOURCE:-0}"
 
 DATA=/var/lib/sova
@@ -79,6 +85,7 @@ case "${ROLE}" in seed | rpc | faucet | keeper) ;; *) die "unknown ROLE ${ROLE}"
 [[ -z "${SOVA_EPOCH_BASE}" || "${SOVA_EPOCH_BASE}" =~ ^[1-9][0-9]*$ ]] || die "SOVA_EPOCH_BASE must be a positive integer"
 case "${SOVA_EMISSION_SCHEDULE}" in sip3 | flat) ;; *) die "SOVA_EMISSION_SCHEDULE must be sip3 or flat" ;; esac
 case "${SOVA_SIP6}" in 0 | 1) ;; *) die "SOVA_SIP6 must be 0 or 1" ;; esac
+case "${SOVA_SIP7}" in 0 | 1) ;; *) die "SOVA_SIP7 must be 0 or 1" ;; esac
 
 has_node() { [[ "${ROLE}" == seed || "${ROLE}" == rpc || "${ROLE}" == keeper ]]; }
 has_tunnel() { [[ "${ROLE}" == rpc || "${ROLE}" == faucet ]]; }
@@ -316,6 +323,7 @@ SOVA_ZEBRAD_RPC=http://127.0.0.1:${ZEBRA_RPC_PORT}
 SOVA_EPOCH_BASE=${SOVA_EPOCH_BASE}
 SOVA_EMISSION_SCHEDULE=${SOVA_EMISSION_SCHEDULE}
 SOVA_SIP6=${SOVA_SIP6}
+SOVA_SIP7=${SOVA_SIP7}
 SOVA_DATADIR=${DATA}/node
 SOVA_BOOTNODES=${SOVA_BOOTNODES}
 SOVA_P2P_PORT=${SOVA_P2P_PORT}
@@ -327,6 +335,28 @@ RUST_LOG=info
 RUST_LOG_STYLE=never
 NO_COLOR=1
 EOF
+}
+
+# The genesis hash this host's node boots, from the installed binary itself
+# (`sova genesis-hash`: the chainspec for SOVA_CHAIN and SOVA_SIP7, with
+# SIP-7's ZcashBlocks predeploy; nothing is started). deploy.sh records it
+# as out/servers/<name>.genesis_hash and bootnodes.sh publishes it, so the
+# hash is never hard-coded in the kit. A release older than the subcommand
+# would ignore the argument and start a node, so it is only run when the
+# binary carries the subcommand's usage text; env -i keeps every other
+# SOVA_* setting away from it.
+node_genesis_hash() {
+  local bin=/usr/local/bin/sova hash
+  if ! grep -aq 'sova genesis-hash' "${bin}"; then
+    log "WARNING: sova ${SOVA_RELEASE_TAG} has no 'genesis-hash' subcommand: genesis hash not recorded (bootnodes.sh refuses to publish without it)"
+    return 0
+  fi
+  hash="$(timeout 60 env -i SOVA_CHAIN=sova-testnet SOVA_SIP7="${SOVA_SIP7}" "${bin}" genesis-hash)" ||
+    die "sova genesis-hash failed"
+  [[ "${hash}" =~ ^0x[0-9a-f]{64}$ ]] || die "sova genesis-hash printed '${hash}', not a hash"
+  log "genesis hash (SIP-7 $([[ "${SOVA_SIP7}" == 1 ]] && echo on || echo off)): ${hash}"
+  out genesis_hash "${hash}"
+  out genesis_sip7 "${SOVA_SIP7}"
 }
 
 setup_node() {
@@ -359,6 +389,7 @@ setup_node() {
     rm -f "${ETC}/sova-node.env.new"
   fi
   chmod 0644 "${ETC}/sova-node.env"
+  node_genesis_hash
   install -m 0644 "${HERE}/systemd/sova-node.service" "${UNIT_DIR}/sova-node.service"
   systemctl daemon-reload
   systemctl enable sova-node >/dev/null 2>&1
@@ -374,7 +405,7 @@ setup_node() {
   if [[ ${changed} == 1 || ${bin_changed} == 1 ]] || ! systemctl is-active --quiet sova-node; then
     systemctl restart sova-node
     readlink /usr/local/bin/sova >"${ETC}/.sova-node.bin"
-    log "sova-node (re)started (epoch base ${SOVA_EPOCH_BASE}, ${SOVA_EMISSION_SCHEDULE}, SIP-6 $([[ "${SOVA_SIP6}" == 1 ]] && echo on || echo off))"
+    log "sova-node (re)started (epoch base ${SOVA_EPOCH_BASE}, ${SOVA_EMISSION_SCHEDULE}, SIP-6 $([[ "${SOVA_SIP6}" == 1 ]] && echo on || echo off), SIP-7 $([[ "${SOVA_SIP7}" == 1 ]] && echo on || echo off))"
   else
     log "sova-node unchanged and running"
   fi

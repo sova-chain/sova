@@ -64,6 +64,12 @@
 //! bootnodes pinned — `SOVA_BOOTNODES` or none — never reth's mainnet
 //! fallback). Orthogonal to the three modes above.
 //!
+//! `sova genesis-hash` (the binary's one argument) prints the genesis hash
+//! a node with this env would boot — `SOVA_CHAIN` and `SOVA_SIP7` (SIP-7's
+//! predeploy is in the genesis state; SIP-6 is not) — and exits without
+//! starting anything. The testnet kit publishes it from there instead of
+//! hard-coding it (`infra/testnet/bootnodes.sh`).
+//!
 //! Gossip transport (`SOVA_GOSSIP`, see [`gossip`]): `relay` (default —
 //! gossip v1's authrpc relay above, unchanged) or `p2p` (the `sova/1` RLPx
 //! sub-protocol: every node announces/pulls blocks over devp2p and
@@ -125,8 +131,36 @@ use reth_ethereum::{
 use reth_rpc_layer::JwtSecret;
 use reth_tracing::{RethTracer, Tracer};
 
+/// What `bin/sova` was asked to do: its only arguments.
+#[derive(Debug, PartialEq, Eq)]
+enum Command {
+    /// No argument: run the node (every mode above; env-configured).
+    Node,
+    /// `genesis-hash`: print the chainspec's genesis hash and exit.
+    GenesisHash,
+}
+
+/// Parse the arguments after the program name. Anything but none or
+/// `genesis-hash` is refused, so a typo never starts a node.
+fn parse_command<I: IntoIterator<Item = String>>(args: I) -> eyre::Result<Command> {
+    let args: Vec<String> = args.into_iter().collect();
+    match args.as_slice() {
+        [] => Ok(Command::Node),
+        [cmd] if cmd == "genesis-hash" => Ok(Command::GenesisHash),
+        _ => Err(eyre::eyre!(
+            "usage: sova            (run the node; configured by SOVA_* env vars)\n       sova genesis-hash  (print the genesis hash for SOVA_CHAIN / SOVA_SIP7, and exit)\ngot: {args:?}"
+        )),
+    }
+}
+
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
+    if parse_command(std::env::args().skip(1))? == Command::GenesisHash {
+        // The chainspec only: no tracing, datadir, network or zebrad.
+        let profile = chain::ChainProfile::from_env()?;
+        println!("{}", profile.genesis_hash(env_flag("SOVA_SIP7")));
+        return Ok(());
+    }
     // Without an installed subscriber, reth's internal `tracing` calls
     // (RPC server bind confirmation, block production, etc.) go nowhere.
     // Keep the guard alive for the process lifetime.
@@ -811,4 +845,48 @@ fn canonical_anchor<P: reth_ethereum::provider::HeaderProvider>(
         .flatten()
         .and_then(|h| h.parent_beacon_block_root())
         .map(|r| r.0)
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    fn args(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    #[test]
+    fn command_parsing() {
+        assert_eq!(parse_command(args(&[])).unwrap(), Command::Node);
+        assert_eq!(
+            parse_command(args(&["genesis-hash"])).unwrap(),
+            Command::GenesisHash
+        );
+        // A typo or an extra argument never falls through to a node.
+        for bad in [
+            &["genesis"][..],
+            &["genesis-hash", "x"],
+            &["--genesis-hash"],
+            &["node"],
+        ] {
+            assert!(parse_command(args(bad)).is_err(), "{bad:?}");
+        }
+    }
+
+    /// What the subcommand prints: the full 0x-prefixed lowercase hash,
+    /// the shape `infra/testnet/bootnodes.sh` checks and publishes.
+    #[test]
+    fn genesis_hash_prints_in_full() {
+        let line = chain::ChainProfile::SovaTestnet
+            .genesis_hash(true)
+            .to_string();
+        assert_eq!(line.len(), 66);
+        assert!(line.starts_with("0x"));
+        assert!(
+            line[2..]
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        );
+    }
 }

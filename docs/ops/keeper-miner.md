@@ -242,7 +242,8 @@ Run `mine` as a service, for example a systemd unit `sova-keeper` whose
 - Log every on/off change, with its date, next to the disclosure.
 
 To also *seal* when no one else is sealing, run `bin/sova` in mine mode on
-the same machine with `SOVA_SIP6=1`, `SOVA_SEALER_KEYSTORE=<the keeper's
+the same machine with the network's `testnet.env` (`SOVA_SIP6=1`,
+`SOVA_SIP7=1`, ...), `SOVA_SEALER_KEYSTORE=<the keeper's
 keystore.json>` (mode 600, readable by the node's user) and a persistent
 `SOVA_DATADIR` for the seal journal (see "Sealing key (SIP-6)"; the kit
 does all of this on `sova-keeper-1`). A burn-only keeper still counts

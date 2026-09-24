@@ -4,7 +4,12 @@
 #   ./smoke.sh edge        from THIS machine, as a stranger would: public
 #                          RPC answers chain 82330 and a moving head; the
 #                          latest block is SIP-6 sealed (97-byte extraData)
-#                          or null (empty) when SOVA_SIP6=1; the
+#                          or null (empty) when SOVA_SIP6=1; block 0 is
+#                          the published genesis hash (seeds.json); with
+#                          SOVA_SIP7=1, ZcashBlocks.latest() at the head
+#                          is its anchored Zcash height (head + B - 1) and
+#                          sova_getZcashBlocks serves that height with the
+#                          same hash; the
 #                          denylist is enforced (admin/debug/trace/txpool/
 #                          engine/personal/sign/filters); batch cap; the
 #                          per-IP limit answers a burst with a 429 a
@@ -14,7 +19,8 @@
 #                          (incl. byo ones); every private port (authrpc,
 #                          RPC, zebrad RPC, faucet) closed on every host
 #   ./smoke.sh hosts       over SSH: services active, "enforcing
-#                          settlements" logged, zebrad synced, epoch lag,
+#                          settlements" logged, SIP-7 feed logged (with
+#                          SOVA_SIP7=1), zebrad synced, epoch lag,
 #                          zero C5 rejections, no-keys check on public boxes
 #   ./smoke.sh balance <0xEVM> [minutes]
 #                          the stranger test's last step: poll the public
@@ -64,6 +70,8 @@ cmd_edge() {
     bad "rpc: eth_blockNumber gave '${h1}'"
   fi
   check_sip6_latest
+  check_genesis
+  check_sip7_latest
   for m in admin_nodeInfo admin_peers debug_traceTransaction trace_block txpool_content \
     engine_forkchoiceUpdatedV3 personal_listAccounts eth_sign eth_sendTransaction \
     eth_newFilter eth_accounts miner_start ots_getApiLevel; do
@@ -155,6 +163,80 @@ check_sip6_latest() {
   fi
 }
 
+# Block 0 through the public RPC is the genesis hash the kit published
+# (out/seeds.json, else the copy on the download host): bootnodes.sh took
+# it from the nodes' own `sova genesis-hash`, never from a constant.
+check_genesis() {
+  local want="" src g0
+  if [[ -s "${OUT_DIR}/seeds.json" ]]; then
+    want="$(jq -r '.genesis_hash // empty' "${OUT_DIR}/seeds.json" 2>/dev/null)"
+    src="out/seeds.json"
+  else
+    want="$(curl -fsS --max-time 15 "https://${DL_HOST}/seeds.json" | jq -r '.genesis_hash // empty' 2>/dev/null)"
+    src="https://${DL_HOST}/seeds.json"
+  fi
+  if ! [[ "${want}" =~ ^0x[0-9a-f]{64}$ ]]; then
+    bad "rpc: no published genesis hash to compare with (out/seeds.json or ${DL_HOST}; run ./bootnodes.sh)"
+    return 0
+  fi
+  g0="$(pub_rpc eth_getBlockByNumber '["0x0",false]' | jq -r '.result.hash // empty' 2>/dev/null)"
+  [[ "${g0}" == "${want}" ]] && ok "rpc: block 0 is the published genesis ${want} (${src})" ||
+    bad "rpc: block 0 is '${g0:-<no answer>}', ${src} says ${want}"
+}
+
+# SIP-7 §4.1/§4.2 through the public RPC, at one head N: the ZcashBlocks
+# predeploy's latest() (0x...5A01, selector 0x52bfe789, returns (uint64
+# height, bytes32 hash)) is Zcash height E_N = N + B - 1, the one block N
+# anchors (the pre-block call records it), with block N's anchor
+# (parentBeaconBlockRoot) as its hash; and the feed,
+# sova_getZcashBlocks(E_N, E_N), serves that height with the same hash,
+# anchored by block N.
+ZCASH_BLOCKS=0x0000000000000000000000000000000000005a01
+check_sip7_latest() {
+  if [[ "${SOVA_SIP7}" != 1 ]]; then
+    ok "rpc: SIP-7 off (SOVA_SIP7=0), ZcashBlocks and sova_getZcashBlocks not checked"
+    return 0
+  fi
+  local n r data height hash want item root
+  n="$(pub_rpc eth_blockNumber | jq -r '.result // empty' 2>/dev/null)"
+  if ! [[ "${n}" =~ ^0x[0-9a-f]+$ ]] || ((n == 0)); then
+    bad "rpc: no head past genesis to check SIP-7 at (eth_blockNumber '${n}')"
+    return 0
+  fi
+  r="$(pub_rpc eth_call "[{\"to\":\"${ZCASH_BLOCKS}\",\"data\":\"0x52bfe789\"},\"${n}\"]")"
+  data="$(jq -r '.result // empty' <<<"${r}" 2>/dev/null | tr 'A-F' 'a-f')"
+  if ! [[ "${data}" =~ ^0x[0-9a-f]{128}$ ]]; then
+    bad "rpc: ZcashBlocks.latest() at block $((n)) gave '${r:0:160}' (predeploy missing? SOVA_SIP7=1 on every node?)"
+    return 0
+  fi
+  # uint64 in the low 8 bytes of word 0; word 1 is the hash.
+  height=$((16#${data:50:16}))
+  hash="0x${data:66:64}"
+  if [[ -n "${SOVA_EPOCH_BASE}" ]]; then
+    want=$((n + SOVA_EPOCH_BASE - 1))
+    ((height == want)) && ok "rpc: ZcashBlocks.latest() at block $((n)) = Zcash height ${height} (N + B - 1)" ||
+      bad "rpc: ZcashBlocks.latest() at block $((n)) = height ${height}, want ${want} (N + B - 1, B = ${SOVA_EPOCH_BASE})"
+  else
+    bad "rpc: SOVA_EPOCH_BASE is not pinned: cannot check ZcashBlocks.latest() (height ${height}) against N + B - 1"
+  fi
+  # The recorded hash is block N's own SIP-4 anchor.
+  root="$(pub_rpc eth_getBlockByNumber "[\"${n}\",false]" | jq -r '.result.parentBeaconBlockRoot // empty' 2>/dev/null | tr 'A-F' 'a-f')"
+  [[ "${hash}" == "${root}" && "${hash}" != "0x$(printf '%064d' 0)" ]] &&
+    ok "rpc: ZcashBlocks.latest() hash is block $((n))'s anchor (parentBeaconBlockRoot)" ||
+    bad "rpc: ZcashBlocks.latest() at block $((n)) has hash ${hash}, the block's anchor is '${root}'"
+  r="$(pub_rpc sova_getZcashBlocks "[${height},${height}]")"
+  item="$(jq -c '.result[0] // empty' <<<"${r}" 2>/dev/null)"
+  if [[ -z "${item}" ]]; then
+    bad "rpc: sova_getZcashBlocks(${height}, ${height}) gave '${r:0:160}'"
+  elif [[ "$(jq -r '.height' <<<"${item}")" == "${height}" &&
+    "$(jq -r '.hash | ascii_downcase' <<<"${item}")" == "${hash}" &&
+    "$(jq -r '.sovaBlock' <<<"${item}")" == "$((n))" ]]; then
+    ok "rpc: sova_getZcashBlocks serves height ${height} (hash ${hash:0:18}..., Sova block $((n))), matching ZcashBlocks"
+  else
+    bad "rpc: sova_getZcashBlocks(${height}) = ${item:0:200}; ZcashBlocks says hash ${hash} at Sova block $((n))"
+  fi
+}
+
 # The keeper's node logs "sip-6: sealing as 0x..." at start: that must be
 # the keeper's published EVM address (what its burns credit).
 check_keeper_sealer() { # name logged-address
@@ -181,6 +263,7 @@ cmd_hosts() {
       done
       sudo journalctl -u sova-node --no-pager -q 2>/dev/null | grep -q "expectations: enforcing settlements" && echo "c5 enforcing"
       echo "c5rejects $(sudo journalctl -u sova-node --since -1h --no-pager -q 2>/dev/null | grep -c "settlement mismatch")"
+      echo "sip7feed $(sudo journalctl -u sova-node --no-pager -q 2>/dev/null | grep -c "sip-7 feed: sova_getZcashBlocks")"
       echo "sealer $(sudo journalctl -u sova-node --no-pager -q 2>/dev/null | grep -o "sip-6: sealing as 0x[0-9a-f]*" | tail -1 | awk "{print \$NF}")"
       sudo /usr/local/lib/sova-infra/health.sh 2>/dev/null | sed "s/^/health /"
     ' 2>&1)" || { bad "${name}: ssh failed"; continue; }
@@ -189,6 +272,12 @@ cmd_hosts() {
         svc) [[ "${b}" == active ]] && ok "${name}: ${a} active" || bad "${name}: ${a} is ${b}" ;;
         c5) ok "${name}: C5 enforcing against its own zebrad" ;;
         c5rejects) [[ "${a}" == 0 ]] && ok "${name}: 0 C5 rejections in the last hour" || bad "${name}: ${a} C5 rejections in the last hour" ;;
+        sip7feed)
+          if [[ "${role}" == seed || "${role}" == rpc || "${role}" == keeper ]] && [[ "${SOVA_SIP7}" == 1 ]]; then
+            [[ "${a:-0}" -gt 0 ]] && ok "${name}: SIP-7 on (logged 'sip-7 feed: sova_getZcashBlocks')" ||
+              bad "${name}: no 'sip-7 feed' line: sova-node not started with SOVA_SIP7=1?"
+          fi
+          ;;
         sealer) [[ "${role}" == keeper && "${SOVA_SIP6}" == 1 ]] && check_keeper_sealer "${name}" "${a:-}" ;;
         health) [[ "${a}" == ALERT ]] && bad "${name}: ${a} ${b} ${rest}" || ok "${name}: ${a} ${b} ${rest}" ;;
       esac
