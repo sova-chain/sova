@@ -14,6 +14,9 @@
 #             Every block B has arrived as a sova/1 Announce -> GetBlock
 #             -> Block pull and was submitted to B's own engine
 #             in-process (new_payload); B's own arbiter moved its head.
+#             (If the funding burst puts A more than sova/1's chase
+#             window ahead, sova/1 hands A's tip to B's sync driver and
+#             B's engine downloads that gap from its peer over devp2p.)
 #
 # Assertions:
 #   (0) setup      -- both nodes run sova/1 with authrpc on loopback and
@@ -22,8 +25,10 @@
 #   (b) hashes     -- getBlockByNumber(H).hash identical on A and B at
 #                     4 heights incl. the burn's settled epoch.
 #   (c) balance    -- the miner's minted balance is identical on A and B.
-#   (d) transport  -- B's log shows blocks accepted over sova/1, and B
-#                     never received an engine call on authrpc.
+#   (d) transport  -- every height on B's chain is accounted for by a
+#                     sova/1 import (accepted pull, or a logged sova/1
+#                     catch-up window), and B never received an engine
+#                     call on authrpc.
 #
 # Isolation/teardown: see box/sim/p2p-common.sh (own ports, own compose
 # project, PID-scoped teardown).
@@ -204,11 +209,67 @@ fi
 # ============================================================
 echo ""
 echo "=== (d) transport evidence ==="
-ACCEPTED_B="$(strip_ansi "${WORK_DIR}/node-b.log" | grep -c 'sova/1: peer block accepted')"
-if [[ "${ACCEPTED_B}" -ge "${MAX_HEIGHT}" ]]; then
-  pass "(d) node B accepted ${ACCEPTED_B} block(s) over sova/1 (>= ${MAX_HEIGHT} heights)"
+# Every block on B's canonical chain, height by height, must be accounted
+# for by one of B's two sova/1 import paths:
+#   - the sova/1 pull: a 'sova/1: peer block accepted' line for exactly
+#     that (height, hash) -- announce, orphan-parent chase and held-block
+#     retry all end in the same submit path (p2p/service.rs submit_chain);
+#   - the late-join catch-up: when A outruns B by more than sova/1's
+#     33-block chase window (the ~100-block funding burst can do that),
+#     sova/1 hands A's announced tip to the sync driver, which FCUs toward
+#     it once B's own scan covers it, and B's engine downloads the gap
+#     over devp2p `eth` from its peer -- no "accepted" line. The driver
+#     logs each such window ('catching up to sync target (engine
+#     download)' from=F height=T hash=X); heights in (F, T] count, and
+#     the target must be B's canonical block at T.
+# A block that reached B any other way (authrpc: newPayload + FCU from
+# outside) matches neither and fails this check. Counting lines against
+# A's height (the old check) raced a catch-up window -- blocks it imports
+# log no "accepted" line -- and duplicates could mask a gap.
+# B's head is snapshotted first and its canonical hashes read up to it;
+# the log is then re-read for a few seconds, since the "accepted" line is
+# written by the gossip task and can trail the head by a moment.
+HEAD_B="$(eth_block_number "${ENGINE_RPC_B}")"
+CANON_B_FILE="${WORK_DIR}/canon-b.txt"
+: >"${CANON_B_FILE}"
+for h in $(seq 1 "${HEAD_B}"); do
+  echo "${h} $(eth_block_hash "${ENGINE_RPC_B}" "${h}")" >>"${CANON_B_FILE}"
+done
+transport_audit() {
+  strip_ansi "${WORK_DIR}/node-b.log" | awk -v top="${HEAD_B}" -v canon="${CANON_B_FILE}" '
+    function field(k,   i) {
+      for (i = 1; i <= NF; i++) if (index($i, k "=") == 1) return substr($i, length(k) + 2)
+      return ""
+    }
+    function norm(x) { x = tolower(x); sub(/^0x/, "", x); return x }
+    BEGIN { while ((getline line < canon) > 0) { split(line, f, " "); ch[f[1] + 0] = norm(f[2]) } }
+    /sova\/1: peer block accepted/ { acc[(field("height") + 0) " " norm(field("hash"))] = 1 }
+    /catching up to sync target \(engine download\)/ {
+      nw++; wf[nw] = field("from") + 0; wt[nw] = field("height") + 0; wh[nw] = norm(field("hash"))
+    }
+    END {
+      nsova = 0; ncatch = 0; missing = ""; badwin = ""
+      for (h = 1; h <= top; h++) {
+        if (ch[h] == "") { missing = missing " " h "(no-hash)"; continue }
+        if ((h " " ch[h]) in acc) { nsova++; continue }
+        covered = 0
+        for (i = 1; i <= nw; i++) if (h > wf[i] && h <= wt[i]) covered = 1
+        if (covered) { ncatch++ } else { missing = missing " " h }
+      }
+      for (i = 1; i <= nw; i++) if (wt[i] <= top && ch[wt[i]] != wh[i]) badwin = badwin " " wt[i]
+      printf "%d\t%d\t%d\t%s\t%s\n", nsova, ncatch, nw + 0, (missing == "" ? "-" : missing), (badwin == "" ? "-" : badwin)
+    }'
+}
+AUDIT_DEADLINE=$((SECONDS + 15))
+while :; do
+  IFS=$'\t' read -r N_SOVA N_CATCHUP N_WINDOWS MISSING_B BADWIN_B <<<"$(transport_audit)"
+  [[ "${MISSING_B}" == "-" || ${SECONDS} -ge ${AUDIT_DEADLINE} ]] && break
+  sleep 1
+done
+if [[ "${MISSING_B}" == "-" && "${BADWIN_B}" == "-" && "${N_SOVA}" -gt 0 ]]; then
+  pass "(d) all ${HEAD_B} heights on node B came over sova/1: ${N_SOVA} pulled and accepted (hash-matched), ${N_CATCHUP} by sova/1-triggered catch-up (${N_WINDOWS} window(s))"
 else
-  fail "(d) node B accepted only ${ACCEPTED_B} block(s) over sova/1 (expected >= ${MAX_HEIGHT})"
+  fail "(d) node B heights 1..${HEAD_B} not all sova/1: pulled=${N_SOVA} catch-up=${N_CATCHUP} unaccounted:${MISSING_B} catch-up targets off B's chain:${BADWIN_B}"
 fi
 B_LOG_CLEAN="$(strip_ansi "${WORK_DIR}/node-b.log")"
 if grep -qi 'engine_newPayload\|relay: peer accepted' <<<"${B_LOG_CLEAN}"; then

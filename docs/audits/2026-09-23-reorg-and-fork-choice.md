@@ -536,6 +536,11 @@ checkpoint."
    `docs/ops/testnet-launch.md`.*
 7. **Move `SOVA_EPOCH_BASE` and the emission schedule into the chain
    profile (F9).**
+   *Done 2026-09-23 (`ea6a966`, suite 9/9): `sova-testnet` fixes the
+   schedule (flat) and takes B from `SOVA_TESTNET_EPOCH_BASE` once a
+   release compiles it in; contradicting or malformed env values refuse
+   to start (live-checked), and until B is compiled in `SOVA_EPOCH_BASE`
+   is required, with no default. SIP-6 and SIP-7 are still env vars.*
 
 ### 6.2 Testnet (weeks): an objective rule among Sova histories, given SIP-6
 
@@ -615,6 +620,8 @@ It supersedes neither SIP-6 nor the checkpoint; all three stack.
    version that ships with the testnet.
 6. Testnet docs: Zcash-testnet reorgs are cheap; `minConf` 3 is a demo
    number; nothing on the testnet is final in any sense.
+   *Done 2026-09-23: `docs/guides/testnet.md`, "What this testnet is, and
+   what it isn't", says all three.*
 
 **During the testnet:**
 7. 6.2, cumulative-rank fork choice across histories, with join/restart

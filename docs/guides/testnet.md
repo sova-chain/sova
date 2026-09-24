@@ -585,7 +585,7 @@ node has no such limit.
 | Head stays low while peers are connected | Your zebrad isn't synced: the node syncs only as far as its zebrad has scanned | Finish 1d |
 | Head stopped moving | Compare `eth_blockNumber` with `<<RPC_URL>>`. If the public RPC is stuck too, the network is waiting for a sealer, not you | Nothing to fix locally. Running a sealing node (4) helps |
 | `settlement mismatch at height ...` | A block contradicts your own zebrad | Check your zebrad is on Zcash testnet and synced. If you restored a snapshot, re-check its hash with an explorer; if in doubt, full-sync |
-| Everything disagrees with the network | Missing or wrong `SOVA_EPOCH_BASE` (it defaults to 1) | Use the value in `testnet.env` |
+| `SOVA_EPOCH_BASE is required for sova-testnet` or `... contradicts the sova-testnet epoch base` | The env didn't carry the network's B, or carries another | Use the unedited `testnet.env` (a release that knows B needs none) |
 | zebrad RPC refuses connections | Container down, or RPC not reachable | `docker ps`; `docker logs zebrad`; keep `listen_addr = "0.0.0.0:18232"` inside the container and `-p 127.0.0.1:18232:18232` |
 | Port already in use | Something else holds 8545, 8551 or 30303 | `SOVA_HTTP_PORT`, `SOVA_AUTH_PORT`, `SOVA_P2P_PORT` |
 | `Too many open files` | Low file-descriptor limit | Raise it (`ulimit -n`); the project's unit sets `LimitNOFILE=1048576` |
@@ -609,6 +609,13 @@ your `node.log` lines, or ask in `t.me/sovazec`.
   SOVA and chain history don't carry over.
 - **No value.** TAZ and testnet SOVA are for testing. Don't buy or sell
   them.
+- **Nothing here is final.** Sova blocks settle on Zcash testnet, and
+  Zcash testnet blocks are cheap to mine, so a reorg there is cheap too;
+  when one happens, the Sova blocks built on the replaced Zcash blocks
+  are rebuilt. The RPC's `safe` (3 blocks) and `finalized` (100 blocks)
+  labels are conveniences for tools, not guarantees. The `minConf` of 3
+  that the testnet contract examples use (`ZcashLib`, the Ashwings ZEC
+  checkout) is a demo number, sized for a quick demo, not for value.
 - **The project's servers are conveniences.** Bootnodes, the public RPC,
   the faucet and snapshots save you time. Consensus doesn't depend on
   them: any peer works as a bootnode, and your node checks everything

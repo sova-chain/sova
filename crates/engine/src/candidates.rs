@@ -814,6 +814,9 @@ pub async fn run_sync_driver<H, W, F, Fut>(
     Fut: std::future::Future<Output = Result<(), String>> + Send,
 {
     let mut waiting_logged = false;
+    // The target the last "catching up" line was logged for: that line is
+    // logged once per target, not on every re-assertion.
+    let mut announced: Option<SyncTarget> = None;
     loop {
         // Targets sent straight into the channel (tests, older callers)
         // join the remembered set.
@@ -825,6 +828,20 @@ pub async fn run_sync_driver<H, W, F, Fut>(
         match actionable_target(head, scanned) {
             Some(target) => {
                 waiting_logged = false;
+                if announced != Some(target) {
+                    // Blocks in (from, height] may now be imported by the
+                    // engine's own downloader (devp2p `eth`), not through
+                    // sova/1's submit path, so they get no "peer block
+                    // accepted" line. Logged so a reader of the log (the
+                    // p2p sims' transport check) can attribute them.
+                    tracing::info!(
+                        from = head,
+                        height = target.sova_height,
+                        hash = %alloy_primitives::hex::encode(target.block_hash),
+                        "catching up to sync target (engine download)"
+                    );
+                    announced = Some(target);
+                }
                 match fcu(target).await {
                     Ok(()) => {}
                     Err(status) => tracing::debug!(

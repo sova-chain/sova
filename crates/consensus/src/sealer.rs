@@ -48,6 +48,45 @@ pub fn prefer(a: &Candidate, b: &Candidate) -> Ordering {
         .then_with(|| a.block_hash.cmp(&b.block_hash))
 }
 
+/// Trust rank of a block with no ranked sealer: a null block, or a
+/// burn-less or rewardless epoch's block.
+pub const NULL_RANK: usize = usize::MAX;
+
+/// Trust rank of a sealer demoted for equivocation (SIP-6 §2.7).
+pub const EQUIVOCATOR_RANK: usize = usize::MAX - 1;
+
+/// Audit F2 measure C (`docs/design/f2-join-and-restart.md` §C): one
+/// block's score for comparing branches. `min(rank, 63)` for a ranked
+/// sealer, 64 for a demoted equivocator, 128 for a block with no ranked
+/// sealer. Bounded, so sums cannot overflow and null blocks stay last.
+#[must_use]
+pub const fn rank_score(rank: usize) -> u64 {
+    match rank {
+        NULL_RANK => 128,
+        EQUIVOCATOR_RANK => 64,
+        r if r < 63 => r as u64,
+        _ => 63,
+    }
+}
+
+/// Audit F2 measure C: compare two branches from their common ancestor.
+///
+/// `a` and `b` are the sealer ranks of each branch's blocks from the first
+/// height after the fork point, in height order. Over the heights both
+/// have (`m = min(len)`), the lower summed [`rank_score`] wins; on a tie the
+/// longer branch wins; [`Ordering::Equal`] leaves the decision to the
+/// caller (the incumbent, or for a node with none, the lower hash of the
+/// first block after the fork). [`Ordering::Less`] means `a` is preferred.
+///
+/// Not lexicographic: the first block does not decide everything. At one
+/// height this is SIP-2's rank order, so the tip behaves as it always has.
+#[must_use]
+pub fn prefer_branch(a: &[usize], b: &[usize]) -> Ordering {
+    let m = a.len().min(b.len());
+    let sum = |ranks: &[usize]| ranks[..m].iter().map(|&r| rank_score(r)).sum::<u64>();
+    sum(a).cmp(&sum(b)).then_with(|| b.len().cmp(&a.len()))
+}
+
 /// The best of two optional candidates under [`prefer`].
 #[must_use]
 pub fn better(a: Option<Candidate>, b: Option<Candidate>) -> Option<Candidate> {
@@ -209,6 +248,44 @@ mod tests {
             produce_decision(None, Duration::ZERO, None, STEP),
             ProduceDecision::NotEligible
         );
+    }
+
+    #[test]
+    fn rank_score_is_bounded_and_orders_null_last() {
+        assert_eq!(rank_score(0), 0);
+        assert_eq!(rank_score(5), 5);
+        assert_eq!(rank_score(62), 62);
+        assert_eq!(rank_score(63), 63);
+        assert_eq!(rank_score(10_000), 63);
+        assert_eq!(rank_score(EQUIVOCATOR_RANK), 64);
+        assert_eq!(rank_score(NULL_RANK), 128);
+    }
+
+    #[test]
+    fn prefer_branch_sums_over_the_common_range() {
+        use Ordering::{Equal, Greater, Less};
+        // One height: SIP-2's rank order.
+        assert_eq!(prefer_branch(&[0], &[1]), Less);
+        assert_eq!(prefer_branch(&[2], &[1]), Greater);
+        // Not lexicographic: a worse first block is outweighed later.
+        assert_eq!(prefer_branch(&[1, 0, 0], &[0, 2, 2]), Less);
+        // Deeper better-ranked branch beats a mostly-null one.
+        assert_eq!(
+            prefer_branch(&[0, 0, 0, 0], &[0, NULL_RANK, NULL_RANK, 0]),
+            Less
+        );
+        // Only the common range is summed; then the longer one wins.
+        assert_eq!(prefer_branch(&[0, 0], &[0, 0, 5]), Greater);
+        assert_eq!(prefer_branch(&[0, NULL_RANK], &[0]), Less);
+        // Full tie: the caller decides (incumbent, or hash).
+        assert_eq!(prefer_branch(&[0, 1], &[1, 0]), Equal);
+        assert_eq!(prefer_branch(&[], &[]), Equal);
+        // Equivocators sit between every honest rank and a null block.
+        assert_eq!(prefer_branch(&[EQUIVOCATOR_RANK], &[63]), Greater);
+        assert_eq!(prefer_branch(&[EQUIVOCATOR_RANK], &[NULL_RANK]), Less);
+        // Sums cannot overflow on long all-null branches.
+        let long = vec![NULL_RANK; 100_000];
+        assert_eq!(prefer_branch(&long, &long), Equal);
     }
 
     #[test]

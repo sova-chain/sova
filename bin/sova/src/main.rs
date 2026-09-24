@@ -40,7 +40,8 @@
 //!
 //! Mine-mode env: `SOVA_ZEBRAD_RPC` (e.g. `http://127.0.0.1:18232`),
 //! `SOVA_MINER_EVM_ADDRESS` (0x-hex, the address our burns credit),
-//! `SOVA_EPOCH_BASE` (first Zcash height to treat as an epoch, default 1),
+//! `SOVA_EPOCH_BASE` (first Zcash height to treat as an epoch; dev default 1,
+//! testnet from the chain profile, `chain.rs`),
 //! `SOVA_PEERS` (comma-separated authrpc URLs to relay to).
 //!
 //! SIP-7 Zcash pool state (`SOVA_SIP7=1`, see `evm::zcash`): contracts can
@@ -284,6 +285,20 @@ async fn main() -> eyre::Result<()> {
         );
     }
     engine::checkpoints::install(checkpoints);
+    // Audit F9: the epoch base and the emission schedule come from the
+    // chain profile (env vars may only repeat them on the testnet), and a
+    // bad value stops the node before it imports anything.
+    let base_height = chain_profile.epoch_base(std::env::var("SOVA_EPOCH_BASE").ok().as_deref())?;
+    // One schedule feeds the sealer, the expectations follower AND the
+    // validator's process-global; they must agree or the node rejects its
+    // own blocks.
+    let schedule =
+        match chain_profile.schedule(std::env::var("SOVA_EMISSION_SCHEDULE").ok().as_deref())? {
+            chain::ScheduleName::Sip3 => consensus::schedule::Schedule::Sip3,
+            chain::ScheduleName::Flat => consensus::schedule::Schedule::Flat {
+                reward_gwei: DRAFT_EPOCH_REWARD_GWEI,
+            },
+        };
 
     // NOTE: bind `node` (not `_`, which drops immediately) — the `FullNode`
     // handle owns the running RPC server.
@@ -396,10 +411,6 @@ async fn main() -> eyre::Result<()> {
         );
     }
 
-    let base_height: u64 = std::env::var("SOVA_EPOCH_BASE")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(1);
     // SIP-4: the Zcash query precompile answers from the node's Zcash
     // index, fed by the expectations follower (empty without a zebrad, so
     // calls are fatal: such a node cannot execute blocks that use the
@@ -407,23 +418,6 @@ async fn main() -> eyre::Result<()> {
     engine::zcash_index::install(base_height);
     engine::votes::install(base_height);
 
-    // SIP-3 emission schedule (SOVA_EMISSION_SCHEDULE): "flat" (default
-    // — regtest/box determinism, the draft 6,250/epoch) or "sip3" (slow
-    // start + halving eras; public testnet/mainnet). One value feeds
-    // the sealer, the expectations follower, AND the validator's
-    // process-global — they must agree or the node rejects its own
-    // blocks.
-    let schedule = match std::env::var("SOVA_EMISSION_SCHEDULE").as_deref() {
-        Ok("sip3") => consensus::schedule::Schedule::Sip3,
-        Ok("flat") | Err(_) => consensus::schedule::Schedule::Flat {
-            reward_gwei: DRAFT_EPOCH_REWARD_GWEI,
-        },
-        Ok(other) => {
-            return Err(eyre::eyre!(
-                "SOVA_EMISSION_SCHEDULE must be \"flat\" or \"sip3\", got {other:?}"
-            ));
-        }
-    };
     engine::expectations::set_schedule(schedule);
 
     // C5 + v2 preference, for every mode that has a Zcash view: the

@@ -73,6 +73,37 @@ pub(crate) const SOVA_TESTNET_BOOTNODES: &[&str] = &[];
 /// "Checkpoint refresh"). Operators add entries with `SOVA_CHECKPOINTS`.
 pub(crate) const SOVA_TESTNET_CHECKPOINTS: &[(u64, [u8; 32])] = &[];
 
+/// The testnet's epoch base B: the first Zcash testnet height that is a
+/// Sova epoch (audit F9: part of the profile, so nodes cannot differ).
+/// `None` until the launch release compiles in the value
+/// `infra/testnet/epoch-base.sh pin` chose; until then `SOVA_EPOCH_BASE`
+/// is required.
+pub(crate) const SOVA_TESTNET_EPOCH_BASE: Option<u64> = None;
+
+/// Emission schedule names, as `SOVA_EMISSION_SCHEDULE` spells them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ScheduleName {
+    /// The same reward every epoch (6,250 SOVA).
+    Flat,
+    /// SIP-3: slow start, then halving eras.
+    Sip3,
+}
+
+impl ScheduleName {
+    fn parse(raw: &str) -> eyre::Result<Self> {
+        match raw {
+            "flat" => Ok(Self::Flat),
+            "sip3" => Ok(Self::Sip3),
+            other => Err(eyre::eyre!(
+                "SOVA_EMISSION_SCHEDULE must be \"flat\" or \"sip3\", got {other:?}"
+            )),
+        }
+    }
+}
+
+/// The testnet's emission schedule (Rob, 2026-09-23: flat 6,250 per epoch).
+pub(crate) const SOVA_TESTNET_SCHEDULE: ScheduleName = ScheduleName::Flat;
+
 /// A chain profile, parsed from `SOVA_CHAIN`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ChainProfile {
@@ -147,6 +178,52 @@ impl ChainProfile {
             Self::SovaTestnet => SOVA_TESTNET_CHECKPOINTS,
         };
         engine::checkpoints::merge(builtin, raw_override).map_err(|e| eyre::eyre!(e))
+    }
+
+    /// The epoch base B (audit F9). Dev: `SOVA_EPOCH_BASE` (`raw`), default 1.
+    /// Testnet: the profile's value; `SOVA_EPOCH_BASE` may only repeat it,
+    /// and is required while the profile has none. A malformed value is an
+    /// error, never a silent default.
+    pub(crate) fn epoch_base(self, raw: Option<&str>) -> eyre::Result<u64> {
+        let from_env = raw
+            .map(|r| {
+                r.trim()
+                    .parse::<u64>()
+                    .map_err(|_| eyre::eyre!("SOVA_EPOCH_BASE must be a Zcash height, got {r:?}"))
+            })
+            .transpose()?;
+        match (self, from_env) {
+            (Self::Dev, env) => Ok(env.unwrap_or(1)),
+            (Self::SovaTestnet, env) => match (SOVA_TESTNET_EPOCH_BASE, env) {
+                (Some(pinned), None) => Ok(pinned),
+                (Some(pinned), Some(e)) if e == pinned => Ok(pinned),
+                (Some(pinned), Some(e)) => Err(eyre::eyre!(
+                    "SOVA_EPOCH_BASE={e} contradicts the sova-testnet epoch base {pinned}; \
+                     unset it (the release knows the network's value)"
+                )),
+                (None, Some(e)) => Ok(e),
+                (None, None) => Err(eyre::eyre!(
+                    "SOVA_EPOCH_BASE is required for sova-testnet with this release \
+                     (use the value in the published testnet.env)"
+                )),
+            },
+        }
+    }
+
+    /// The emission schedule (audit F9). Dev: `SOVA_EMISSION_SCHEDULE`
+    /// (`raw`), default flat. Testnet: the profile's; the env var may only
+    /// repeat it.
+    pub(crate) fn schedule(self, raw: Option<&str>) -> eyre::Result<ScheduleName> {
+        let from_env = raw.map(|r| ScheduleName::parse(r.trim())).transpose()?;
+        match (self, from_env) {
+            (Self::Dev, env) => Ok(env.unwrap_or(ScheduleName::Flat)),
+            (Self::SovaTestnet, None) => Ok(SOVA_TESTNET_SCHEDULE),
+            (Self::SovaTestnet, Some(e)) if e == SOVA_TESTNET_SCHEDULE => Ok(e),
+            (Self::SovaTestnet, Some(e)) => Err(eyre::eyre!(
+                "SOVA_EMISSION_SCHEDULE={e:?} contradicts the sova-testnet schedule \
+                 ({SOVA_TESTNET_SCHEDULE:?}); unset it"
+            )),
+        }
     }
 
     /// The chainspec this profile boots.
@@ -234,6 +311,38 @@ mod tests {
     use super::*;
     use alloy_primitives::B256;
     use reth_ethereum::chainspec::{EthChainSpec, MAINNET};
+
+    #[test]
+    fn epoch_base_and_schedule_come_from_the_profile() {
+        let dev = ChainProfile::Dev;
+        let tn = ChainProfile::SovaTestnet;
+        assert_eq!(dev.epoch_base(None).ok(), Some(1));
+        assert_eq!(dev.epoch_base(Some("4400000")).ok(), Some(4_400_000));
+        // Malformed is an error, never a silent 1.
+        assert!(dev.epoch_base(Some("44oo")).is_err());
+        assert!(tn.epoch_base(Some("")).is_err());
+        match SOVA_TESTNET_EPOCH_BASE {
+            None => {
+                assert!(tn.epoch_base(None).is_err(), "required until pinned");
+                assert_eq!(tn.epoch_base(Some("4400000")).ok(), Some(4_400_000));
+            }
+            Some(b) => {
+                assert_eq!(tn.epoch_base(None).ok(), Some(b));
+                assert_eq!(tn.epoch_base(Some(&b.to_string())).ok(), Some(b));
+                assert!(tn.epoch_base(Some(&(b + 1).to_string())).is_err());
+            }
+        }
+
+        assert_eq!(dev.schedule(None).ok(), Some(ScheduleName::Flat));
+        assert_eq!(dev.schedule(Some("sip3")).ok(), Some(ScheduleName::Sip3));
+        assert!(dev.schedule(Some("fast")).is_err());
+        assert_eq!(tn.schedule(None).ok(), Some(SOVA_TESTNET_SCHEDULE));
+        assert_eq!(tn.schedule(Some("flat")).ok(), Some(ScheduleName::Flat));
+        assert!(
+            tn.schedule(Some("sip3")).is_err(),
+            "contradicts the profile"
+        );
+    }
 
     #[test]
     fn checkpoints_merge_env_and_refuse_contradictions() {

@@ -456,14 +456,17 @@ Section 0 settled the schedule (`flat`) and the chain ID (82330) on
   (about an hour of 75 s epochs) and re-fetches them from peers. That is
   harmless while any peer is up. The follow-ups are graceful shutdown and
   a lower persistence threshold for persistent datadirs.
-- **B, the schedule, SIP-6 and SIP-7 are env vars, not profile
-  constants.** A stranger who forgets `SOVA_EPOCH_BASE` gets the default 1
-  and never agrees with the network, one who forgets `SOVA_SIP6=1` can't
+- **B and the schedule are profile constants now (audit F9); SIP-6 and
+  SIP-7 are still env vars.** `sova-testnet` fixes the schedule (flat)
+  and, once `SOVA_TESTNET_EPOCH_BASE` in `chain.rs` is set, B: an env
+  value that contradicts either refuses to start, and a malformed one is
+  an error. Until a release compiles B in, `SOVA_EPOCH_BASE` is required
+  for `sova-testnet` (no silent default of 1): the release that follows
+  `epoch-base.sh pin` should set it. One who forgets `SOVA_SIP6=1` can't
   import sealed blocks (their 97-byte `extraData`), and one who forgets
   `SOVA_SIP7=1` boots a genesis without the `ZcashBlocks` predeploy: a
-  different genesis hash and fork ID, so no peer accepts it. The follow-up is to pin them in the `sova-testnet` profile
-  in `chain.rs`, the same way bootnodes will be. Until then, `testnet.env`
-  carries them.
+  different genesis hash and fork ID, so no peer accepts it. The follow-up is to pin those two in the `sova-testnet` profile
+  as well. Until then, `testnet.env` carries them.
 - **zebrad cookie auth is off** (loopback-only RPC, single-purpose
   hosts), which deviates from infra-m1 §4.3. `bin/sova`'s zebrad client
   can't read a cookie file. The follow-up is `SOVA_ZEBRAD_COOKIE_FILE`.
