@@ -19,7 +19,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 
 use consensus::follower::EpochData;
-use evm::zcash::{IndexedTx, ZcashSource, set_zcash_source};
+use evm::zcash::{BlockSummary, IndexedTx, ZcashSource, set_zcash_source};
+/// SIP-7's process switch (see `evm::zcash::activate_sip7`), re-exported
+/// for bin/sova.
+pub use evm::zcash::{activate_sip7, sip7_active};
 
 /// An indexed block: hash, header time, and its txids (to unwind them).
 #[derive(Debug, Clone)]
@@ -27,6 +30,8 @@ struct Block {
     hash: [u8; 32],
     time: u32,
     txids: Vec<[u8; 32]>,
+    /// SIP-7: pools and counters (`None` when zebrad reported no pools).
+    summary: Option<Arc<BlockSummary>>,
 }
 
 #[derive(Debug, Default)]
@@ -84,11 +89,18 @@ impl ZcashIndex {
                         .iter()
                         .map(|o| (o.value_zat, o.script.clone()))
                         .collect(),
-                );
+                )
+                .with_shielded(tx.shielded);
                 (tx.txid, Arc::new(record))
             })
             .collect();
         let txids = records.iter().map(|(txid, _)| *txid).collect();
+        let summary = epoch.pools.as_deref().map(|pools| {
+            Arc::new(BlockSummary {
+                pools: *pools,
+                stats: consensus::pools::block_stats(&epoch.txs),
+            })
+        });
         let Ok(mut inner) = self.inner.write() else {
             return;
         };
@@ -105,6 +117,7 @@ impl ZcashIndex {
                 hash: epoch.hash,
                 time: epoch.time,
                 txids,
+                summary,
             },
         );
         let mut next = inner.through.map_or(base, |t| t + 1);
@@ -180,6 +193,11 @@ impl ZcashSource for ZcashIndex {
     fn generation(&self) -> u64 {
         self.generation.load(Ordering::SeqCst)
     }
+
+    fn block_summary(&self, zcash_height: u64) -> Option<Arc<BlockSummary>> {
+        let inner = self.inner.read().ok()?;
+        inner.blocks.get(&zcash_height)?.summary.clone()
+    }
 }
 
 /// The process-wide index (see [`crate::expectations::global`] for why
@@ -209,6 +227,9 @@ impl ZcashSource for GlobalIndex {
     fn generation(&self) -> u64 {
         global().generation()
     }
+    fn block_summary(&self, zcash_height: u64) -> Option<Arc<BlockSummary>> {
+        global().block_summary(zcash_height)
+    }
 }
 
 /// Set the epoch base and install the global index as the precompile's
@@ -235,6 +256,7 @@ mod tests {
                 value_zat: u64::from(tag),
                 script: vec![tag],
             }],
+            shielded: Default::default(),
         }
     }
 
@@ -245,6 +267,7 @@ mod tests {
             burns: Vec::new(),
             time: 1_000 + height as u32,
             txs,
+            pools: None,
         }
     }
 
@@ -322,5 +345,54 @@ mod tests {
         let g = idx.generation();
         idx.insert(&epoch(BASE + 1, 9, vec![]));
         assert!(idx.generation() > g, "replacing an indexed height is");
+    }
+
+    /// SIP-7: a block's pools and counters are indexed with it (stats
+    /// summed from its transactions), each tx keeps its shielded summary,
+    /// and both go with the block on an unwind.
+    #[test]
+    fn block_summaries_are_indexed_and_unwound() {
+        use consensus::pools::{BlockPools, ShieldedSummary, TxShielded};
+        let idx = ZcashIndex::with_base(BASE);
+        let mut shielded = tx(2);
+        shielded.shielded = TxShielded {
+            n_in: 1,
+            summary: Some(ShieldedSummary {
+                deltas: [0, 0, 0, -500],
+                ironwood_actions: 2,
+                ..ShieldedSummary::default()
+            }),
+        };
+        let mut e = epoch(BASE, 1, vec![tx(1), shielded]);
+        e.pools = Some(Box::new(BlockPools {
+            chain_supply_zat: 7,
+            ..BlockPools::default()
+        }));
+        idx.insert(&e);
+        let summary = idx
+            .block_summary(BASE)
+            .unwrap_or_else(|| panic!("summary indexed"));
+        assert_eq!(summary.pools.chain_supply_zat, 7);
+        assert_eq!(
+            (
+                summary.stats.tx_count,
+                summary.stats.shielded_tx_count,
+                summary.stats.t_in
+            ),
+            (2, 1, 1)
+        );
+        assert_eq!(summary.stats.ironwood_actions, 2);
+        assert_eq!(
+            idx.tx(&[2; 32])
+                .and_then(|t| t.shielded.summary)
+                .map(|z| z.deltas[3]),
+            Some(-500)
+        );
+        // A block without pools has no summary; an unwind drops it all.
+        idx.insert(&epoch(BASE + 1, 2, vec![tx(3)]));
+        assert!(idx.block_summary(BASE + 1).is_none());
+        idx.unwind_above(BASE - 1);
+        assert!(idx.block_summary(BASE).is_none());
+        assert!(idx.tx(&[2; 32]).is_none());
     }
 }

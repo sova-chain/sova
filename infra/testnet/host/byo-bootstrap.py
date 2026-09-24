@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""infra/testnet/host/byo-bootstrap.py -- give a bring-your-own host (one
-provision.sh did not create, e.g. the AWS keeper) the same first-boot base
-a Hetzner host gets from host/cloud-init.yaml.
+"""infra/testnet/host/byo-bootstrap.py -- give an optional bring-your-own
+host (one provision.sh did not create, e.g. a keeper on AWS or other
+hardware; the default is all-Hetzner) the same first-boot base a Hetzner
+host gets from host/cloud-init.yaml.
 
     sudo python3 byo-bootstrap.py <rendered cloud-init.yaml> [--dry-run]
 

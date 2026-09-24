@@ -76,12 +76,13 @@ need_cmd() {
 }
 
 # SERVERS entries are name:type:location:volume_gb:role (a Hetzner server
-# provision.sh creates), or, for a host the kit does not create ("bring
-# your own", e.g. the AWS keeper):
+# provision.sh creates; the default for every host), or, optionally, for a
+# host the kit does not create ("bring your own", e.g. a keeper on other
+# hardware):
 #   name:byo:<ipv4-or-hostname>:<disk_gb>:role[:<first-login-user>]
 # A byo host is adopted over SSH (provision.sh up) and from then on is
 # configured exactly like a Hetzner one. Its firewall is the operator's
-# job (docs/ops/keeper-aws.md). An address still written as <...> is
+# job (on AWS: docs/ops/keeper-aws.md). An address still written as <...> is
 # pending: dry runs use a placeholder, real runs refuse it.
 srv_name() { cut -d: -f1 <<<"$1"; }
 srv_type() { cut -d: -f2 <<<"$1"; }
@@ -232,7 +233,7 @@ validate_config() {
   for s in "${SERVERS[@]}"; do
     srv_is_byo "${s}" || continue
     if srv_address_pending "${s}"; then
-      cfg_warn "$(srv_name "${s}"): address $(srv_address "${s}") is pending (bring-your-own host; for the keeper: docs/ops/keeper-aws.md, hand back the Elastic IP)"
+      cfg_warn "$(srv_name "${s}"): address $(srv_address "${s}") is pending (bring-your-own host; on AWS: docs/ops/keeper-aws.md, the Elastic IP)"
     fi
   done
   [[ "${SOVA_CHAIN_ID:-82330}" == 82330 ]] || cfg_warn "SOVA_CHAIN_ID is ${SOVA_CHAIN_ID}, not the testnet's 82330"

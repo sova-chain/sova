@@ -1,9 +1,15 @@
-# The keeper on AWS
+**Optional, not the default since 2026-09-23:** Rob then put all four
+servers, the keeper included, on Hetzner (`docs/ops/testnet-launch.md`,
+section 0). This runbook is for running the keeper on AWS instead, as a
+bring-your-own host; nothing in the default launch needs it.
 
-Rob decided on 2026-09-23 that the disclosed keeper miner (infra-2 **D8**,
-`docs/ops/keeper-miner.md`) runs on **AWS EC2**. The seed and RPC servers
-stay on Hetzner. The launch kit doesn't create anything on AWS and holds
-no AWS credentials. Rob creates one instance by hand (steps below) and
+# The keeper on AWS (optional)
+
+Earlier on 2026-09-23 Rob had decided that the disclosed keeper miner
+(infra-2 **D8**, `docs/ops/keeper-miner.md`) would run on **AWS EC2**;
+later that day he reversed it (all four servers on Hetzner). The steps
+below still work if the keeper should ever run on AWS. The launch kit
+doesn't create anything on AWS and holds no AWS credentials. Rob creates one instance by hand (steps below) and
 hands back its IP address. From then on the kit treats it like any other
 host: it logs in over SSH, sets it up, and checks it.
 
@@ -125,8 +131,8 @@ so chat is fine. Nothing else: no AWS password, no keys.
 
 ## B. What the orchestrator does with it
 
-1. In `infra/testnet/config.env`, replace the placeholder in the keeper's
-   line with the IP:
+1. In `infra/testnet/config.env`, replace the keeper's Hetzner line
+   (`sova-keeper-1:cx33:fsn1:40:keeper`) with a byo line carrying the IP:
    ```bash
    "sova-keeper-1:byo:3.120.45.67:40:keeper:ubuntu"
    ```
@@ -176,7 +182,7 @@ The kit's measured needs (this repo, 2026-09-22/23):
 | zebrad testnet sync from zero | **~11.7 h** on an 8-core Apple M3 (12:09 → 99.8% at 23:54 UTC) | that node's log |
 | zebrad regtest container | 612 MiB | `docker stats`. That's regtest, far below testnet, so it isn't used for sizing |
 | `sova` node | ~35 MB RSS | a local sim's node, with a tiny chain. Not used for sizing either |
-| The kit's own keeper sizing | Hetzner CX33: 4 vCPU, 8 GB | the previous `config.env.example` |
+| The kit's own keeper sizing | Hetzner CX33: 4 vCPU, 8 GB | `config.env.example` (the default again since 2026-09-23) |
 
 **Not measured yet:** testnet zebrad's RAM during the sync and at the tip.
 Zebra's documentation recommends 16 GB for **mainnet** [ext]. Testnet is
@@ -221,8 +227,8 @@ on the EC2 pricing page when ordering.]
 | CPU surplus for the initial sync | ~$0.05/vCPU-hour | ~$2–4, once |
 | **Total** | | **≈ $70/month**, plus ~$3 once |
 
-For comparison, the Hetzner CX33 the kit first planned cost about
-€12/month. In US East the same box is about $62/month. A 1-year Compute
+For comparison, the Hetzner CX33 the kit uses by default costs about
+€8–12/month [est]. In US East the same box is about $62/month. A 1-year Compute
 Savings Plan takes about 30% off, but wait until the keeper has run a
 month and the size is settled.
 

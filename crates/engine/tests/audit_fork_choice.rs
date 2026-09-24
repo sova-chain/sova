@@ -59,6 +59,7 @@ fn epoch() -> EpochData {
         burns: vec![burn(1, 0xAA, 600_000), burn(2, 0xBB, 400_000)],
         time: 0,
         txs: Vec::new(),
+        pools: None,
     }
 }
 

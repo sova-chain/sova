@@ -620,6 +620,7 @@ mod tests {
             burns,
             time: 0,
             txs: Vec::new(),
+            pools: None,
         }
     }
 
@@ -727,6 +728,7 @@ mod tests {
                 },
             ],
             version: 5,
+            shielded: Default::default(),
         };
         OneShotView {
             blocks: vec![
@@ -736,6 +738,7 @@ mod tests {
                     prev_hash: [0; 32],
                     txs: vec![],
                     time: 0,
+                    pools: None,
                 },
                 BlockView {
                     height: 2,
@@ -743,6 +746,7 @@ mod tests {
                     prev_hash: [1; 32],
                     txs: vec![burn_tx],
                     time: 0,
+                    pools: None,
                 },
             ],
         }
@@ -878,6 +882,7 @@ mod tests {
                 },
             ],
             version: 5,
+            shielded: Default::default(),
         };
         OneShotView {
             blocks: vec![
@@ -887,6 +892,7 @@ mod tests {
                     prev_hash: [0; 32],
                     txs: vec![],
                     time: 0,
+                    pools: None,
                 },
                 BlockView {
                     height: 2,
@@ -894,6 +900,7 @@ mod tests {
                     prev_hash: [1; 32],
                     txs: vec![tx(9, top, 60_000), tx(8, second, 40_000)],
                     time: 0,
+                    pools: None,
                 },
             ],
         }
@@ -958,6 +965,7 @@ mod tests {
             burns: vec![eb(9, 0xBB, 60_000), eb(8, 0xAA, 40_000)],
             time: 0,
             txs: Vec::new(),
+            pools: None,
         };
         let ranked = ranked_miners(&e.burns);
         assert_eq!(
@@ -1201,6 +1209,7 @@ mod tests {
             burns: vec![eb(9, 0xBB, 50_000)],
             time: 0,
             txs: Vec::new(),
+            pools: None,
         };
         assert_eq!(
             identify_sealer(&e, &ranked_miners(&e.burns), DRAFT_EPOCH_REWARD_GWEI, &w),

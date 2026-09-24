@@ -30,13 +30,16 @@ public.
 
 ## Where it runs (M1 testnet)
 
-On the M1 public testnet the keeper is `sova-keeper-1`, an **AWS EC2**
-instance (Rob, 2026-09-23). The seed and RPC servers stay on Hetzner, so
-the keeper doesn't share a provider with them. Rob creates it by hand
-(`docs/ops/keeper-aws.md`), and the launch kit adopts it over SSH and sets
-it up like every other host (`infra/testnet`, role `keeper`). Its
-security group admits only SSH from the operator's IP, so it takes part in
-Zcash and Sova P2P through outbound connections only.
+On the M1 public testnet the keeper is `sova-keeper-1`, a **Hetzner
+CX33** (fsn1, 40 GB volume) that the launch kit creates and sets up like
+the other three servers (Rob, 2026-09-23: all four servers on Hetzner;
+`infra/testnet`, role `keeper`). Its Hetzner firewall admits only SSH
+from the operator's IP, so it takes part in Zcash and Sova P2P through
+outbound connections only.
+
+Optionally, the keeper can run elsewhere (other hardware, another
+provider) as a bring-your-own host the kit adopts over SSH. That isn't
+the default; the AWS runbook is `docs/ops/keeper-aws.md`.
 
 The kit's layout differs from the generic commands below. The keystore is
 `/var/lib/sova/keeper`, the burner is the `sova-keeper` systemd unit (its
@@ -75,9 +78,9 @@ What the kit sets up on `sova-keeper-1` (`setup-host.sh`, role `keeper`):
   `init` reports a legacy or `--evm-address` credit target, the deploy
   stops and prints the fix (below).
 - **The seal journal** is `/var/lib/sova/node/seal-journal/<address>/`,
-  under the node's persistent `SOVA_DATADIR` (`/var/lib/sova/node`, the
-  AWS root disk). Before the node releases a signed block, it fsyncs the
-  block there. If a retried build asks it to seal the same slot (height,
+  under the node's persistent `SOVA_DATADIR` (`/var/lib/sova/node`, on
+  the keeper's Hetzner volume). Before the node releases a signed block,
+  it fsyncs the block there. If a retried build asks it to seal the same slot (height,
   parent and Zcash anchor) again, it re-publishes the journaled block
   instead of signing a second one.
 

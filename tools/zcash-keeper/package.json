@@ -1,0 +1,18 @@
+{
+  "name": "sova-zcash-keeper",
+  "version": "0.1.0",
+  "description": "Reference SIP-7 keeper: watches the node's Zcash block feed and pokes ZcashTrigger contracts when a configured condition holds.",
+  "private": true,
+  "type": "module",
+  "license": "MIT OR Apache-2.0",
+  "engines": {
+    "node": ">=23.6"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning src/main.ts",
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.ts"
+  },
+  "dependencies": {
+    "viem": "2.56.8"
+  }
+}

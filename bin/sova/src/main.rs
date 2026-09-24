@@ -43,6 +43,15 @@
 //! `SOVA_EPOCH_BASE` (first Zcash height to treat as an epoch, default 1),
 //! `SOVA_PEERS` (comma-separated authrpc URLs to relay to).
 //!
+//! SIP-7 Zcash pool state (`SOVA_SIP7=1`, see `evm::zcash`): contracts can
+//! read pool totals, block stats and per-tx shielded flows from 0x…5A00,
+//! and the Zcash scan holds (never skips) on missing or inconsistent pool
+//! accounting. Every node must agree on it. (`engine::zcash_index::activate_sip7`)
+//! With it on, the node also serves SIP-7 §4.2's feed (see [`zcash_feed`]):
+//! `sova_getZcashBlocks(from, to)` over HTTP (and WS), and
+//! `sova_subscribe("zcashBlocks")` over WS, which is off unless
+//! `SOVA_WS_PORT` is set (local profile only; public forces WS off).
+//!
 //! SIP-6 sealer signatures (`SOVA_SIP6=1`, see `engine::seal`): every node
 //! then requires each block to be sealed (or a null block) under this
 //! chain's ID; a mine-mode node signs its blocks with the key in
@@ -91,6 +100,7 @@ mod discovery;
 mod gossip;
 mod pending_rpc;
 mod rpc;
+mod zcash_feed;
 
 use std::{path::PathBuf, time::Duration};
 
@@ -154,8 +164,8 @@ async fn main() -> eyre::Result<()> {
         zebrad_rpc.clone()
     };
 
-    let mut node_config =
-        NodeConfig::new(chain_profile.chain_spec()).with_rpc(RpcServerArgs::default().with_http());
+    let mut node_config = NodeConfig::new(chain_profile.chain_spec_with(env_flag("SOVA_SIP7")))
+        .with_rpc(RpcServerArgs::default().with_http());
     // The relay (crates/engine/src/relay.rs) sends `execution_requests` as
     // `RequestsOrHash::Hash` (the header's `requests_hash`, not the request
     // list itself -- see relay.rs's doc comment on why that's the right
@@ -200,6 +210,10 @@ async fn main() -> eyre::Result<()> {
     // `.dev()` and the old hand-set flag both did.
     discovery::apply(&mut node_config.network, discovery_on, &addr_overrides)?;
     let discovery_line = discovery::describe(&node_config.network);
+    // SOVA_WS_PORT: WS JSON-RPC on 127.0.0.1 (off by default; the public
+    // profile forces it off again below).
+    let ws_port = env_u16("SOVA_WS_PORT");
+    rpc::apply_ws(&mut node_config.rpc, ws_port);
     rpc_profile.apply(&mut node_config.rpc);
     rpc_cors.apply(&mut node_config.rpc);
     let jwt = apply_shared_jwt(&mut node_config)?;
@@ -218,6 +232,11 @@ async fn main() -> eyre::Result<()> {
     let sip6_chain_id = env_flag("SOVA_SIP6").then(|| node_config.chain.chain().id());
     if let Some(chain_id) = sip6_chain_id {
         engine::seal::activate(chain_id);
+    }
+    // SIP-7 (`SOVA_SIP7=1`): the precompile's pool reads exist and the
+    // Zcash scan holds on bad pool accounting — from the first block on.
+    if env_flag("SOVA_SIP7") {
+        engine::zcash_index::activate_sip7();
     }
 
     // NOTE: bind `node` (not `_`, which drops immediately) — the `FullNode`
@@ -238,10 +257,29 @@ async fn main() -> eyre::Result<()> {
                 .layer_rpc_middleware(pending_rpc::PendingAsLatestLayer),
         )
         .extend_rpc_modules(move |ctx| {
+            // SIP-7 §4.2 path A: the `sova` namespace (Zcash block feed),
+            // only when SIP-7 is active. Merged before the public filter,
+            // which keeps `sova_getZcashBlocks` and drops the rest.
+            let sip7 = engine::zcash_index::sip7_active();
+            if sip7 {
+                let feed = zcash_feed::Feed::new(
+                    zcash_feed::NodeChain(ctx.provider().clone()),
+                    engine::zcash_index::global(),
+                );
+                ctx.modules.merge_configured(zcash_feed::module(feed)?)?;
+                println!(
+                    "sip-7 feed: sova_getZcashBlocks over HTTP{}",
+                    if ws_port.is_some() && rpc_profile == rpc::RpcProfile::Local {
+                        ", sova_subscribe(\"zcashBlocks\") over WS"
+                    } else {
+                        " (no WS: sova_subscribe unavailable; set SOVA_WS_PORT, local profile)"
+                    }
+                );
+            }
             // `public` only: strip every HTTP method outside the
             // allowlist. `local` installs no filter (today's behaviour).
-            if let Some(allowlist) = rpc_profile.method_allowlist() {
-                let (kept, removed, missing) = rpc::restrict_http_methods(ctx.modules, allowlist);
+            if let Some(allowlist) = rpc_profile.method_allowlist(sip7) {
+                let (kept, removed, missing) = rpc::restrict_http_methods(ctx.modules, &allowlist);
                 println!(
                     "rpc profile: public (HTTP serves {kept} allowlisted method(s), removed {removed})"
                 );

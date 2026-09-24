@@ -350,6 +350,7 @@ mod tests {
                 burns: Vec::new(),
                 time: 0,
                 txs: Vec::new(),
+                pools: None,
             },
             ranked: Vec::new(),
         }

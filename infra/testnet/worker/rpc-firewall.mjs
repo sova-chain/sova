@@ -38,6 +38,9 @@ export const ALLOWED = new Set([
   "eth_getLogs",
   // Broadcast.
   "eth_sendRawTransaction",
+  // SIP-7 Zcash block feed (read-only; the node caps it at 1,000 heights
+  // per call and serves it only with SOVA_SIP7=1).
+  "sova_getZcashBlocks",
 ]);
 
 export const MAX_BODY_BYTES = 64 * 1024;

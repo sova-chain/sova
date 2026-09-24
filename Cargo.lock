@@ -9703,10 +9703,12 @@ dependencies = [
 name = "sova"
 version = "0.1.0"
 dependencies = [
+ "alloy-genesis",
  "alloy-primitives",
  "alloy-rpc-types",
  "consensus",
  "engine",
+ "evm",
  "eyre",
  "hex",
  "jsonrpsee",

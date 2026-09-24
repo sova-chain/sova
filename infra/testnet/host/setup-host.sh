@@ -89,8 +89,8 @@ mount_volume() {
   for d in /dev/disk/by-id/scsi-0HC_Volume_*; do [[ -e "${d}" ]] && devs+=("${d}"); done
   mkdir -p "${DATA}"
   if [[ ${#devs[@]} -eq 0 ]]; then
-    # Also the normal case on a byo host (the AWS keeper: one 40 GB gp3
-    # root volume).
+    # Also the normal case on an (optional) byo host, e.g. an AWS keeper
+    # with one 40 GB gp3 root volume.
     log "no Hetzner volume attached; state lives on the root disk"
     return 0
   fi

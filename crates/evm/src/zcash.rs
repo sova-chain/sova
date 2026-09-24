@@ -70,6 +70,24 @@ pub const TX_OUTPUT_SELECTOR: [u8; 4] = [0x2d, 0x45, 0x82, 0x8e];
 /// `bytes4(keccak256("burnInfo(bytes32)"))`.
 pub const BURN_INFO_SELECTOR: [u8; 4] = [0x7c, 0xe1, 0x6a, 0x38];
 
+/// SIP-7: `bytes4(keccak256("poolValue(uint64,uint8)"))`.
+pub const POOL_VALUE_SELECTOR: [u8; 4] = [0x0c, 0xd0, 0xbd, 0xbc];
+/// SIP-7: `bytes4(keccak256("poolTotals(uint64)"))`.
+pub const POOL_TOTALS_SELECTOR: [u8; 4] = [0x1c, 0x47, 0x6c, 0x7e];
+/// SIP-7: `bytes4(keccak256("blockStats(uint64)"))`.
+pub const BLOCK_STATS_SELECTOR: [u8; 4] = [0x84, 0xdf, 0x4c, 0x97];
+/// SIP-7: `bytes4(keccak256("txShielded(bytes32)"))`.
+pub const TX_SHIELDED_SELECTOR: [u8; 4] = [0xda, 0xa3, 0x95, 0x83];
+
+/// SIP-7 §4.1: the `ZcashBlocks` system contract (genesis predeploy).
+pub const ZCASH_BLOCKS: Address = address!("0x0000000000000000000000000000000000005A01");
+/// The EIP-4788 / EIP-2935 system caller, the only writer of
+/// [`ZCASH_BLOCKS`].
+pub const SYSTEM_ADDRESS: Address = address!("0xfffffffffffffffffffffffffffffffffffffffe");
+/// `record((uint64,bytes32,uint32×10,uint64[6],int64[6],uint64[3]))`'s
+/// selector (see `contracts/src/zcash/ZcashBlocks.sol`).
+pub const RECORD_SELECTOR: [u8; 4] = [0x45, 0x4a, 0x07, 0x45];
+
 /// Gas for `anchor()` (SIP-4 §4 draft table).
 pub const ANCHOR_GAS: u64 = 200;
 /// Gas for `blockAt`.
@@ -93,6 +111,8 @@ pub mod status {
     pub const NO_SUCH_OUTPUT: u8 = 4;
     /// `burnInfo`: the tx exists but is not a SIP-1 burn.
     pub const NOT_A_BURN: u8 = 5;
+    /// SIP-7 `poolValue`: no pool with that id at this height.
+    pub const NO_SUCH_POOL: u8 = 6;
 }
 
 /// A Zcash transaction as the index stores it.
@@ -110,6 +130,8 @@ pub struct IndexedTx {
     /// the parse walks every output, so doing it per `burnInfo` call would
     /// make a flat-priced query linear in the tx's output count.
     burn: Option<consensus::sip1::Burn>,
+    /// SIP-7: transparent input count and shielded flows.
+    pub shielded: consensus::pools::TxShielded,
 }
 
 impl IndexedTx {
@@ -129,7 +151,15 @@ impl IndexedTx {
             version,
             outputs,
             burn,
+            shielded: consensus::pools::TxShielded::default(),
         }
+    }
+
+    /// The same record with its SIP-7 shielded summary.
+    #[must_use]
+    pub const fn with_shielded(mut self, shielded: consensus::pools::TxShielded) -> Self {
+        self.shielded = shielded;
+        self
     }
 
     /// The SIP-1 burn these outputs carry, if any.
@@ -161,6 +191,36 @@ pub trait ZcashSource: Send + Sync + fmt::Debug + 'static {
     /// branch on this node only — a node-local state root would be a
     /// permanent fork.
     fn generation(&self) -> u64;
+    /// SIP-7: the indexed block's value pools and activity counters, when
+    /// zebrad reported them. Sources that predate SIP-7 answer `None`.
+    fn block_summary(&self, _zcash_height: u64) -> Option<Arc<BlockSummary>> {
+        None
+    }
+}
+
+/// SIP-7: what the index keeps per block for `poolValue`, `poolTotals`
+/// and `blockStats` — fixed-size, shared, never cloned per query.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlockSummary {
+    /// The block's value pools (checked by the follower before indexing).
+    pub pools: consensus::pools::BlockPools,
+    /// The block's activity counters.
+    pub stats: consensus::pools::BlockStats,
+}
+
+static SIP7: OnceLock<()> = OnceLock::new();
+
+/// Switch SIP-7 on for this process: the precompile answers the pool
+/// queries and the expectations follower holds on bad pool accounting.
+/// Call at startup, before the node launches; only the first call counts.
+pub fn activate_sip7() -> bool {
+    SIP7.set(()).is_ok()
+}
+
+/// Whether SIP-7 is active in this process.
+#[must_use]
+pub fn sip7_active() -> bool {
+    SIP7.get().is_some()
 }
 
 static ZCASH_SOURCE: OnceLock<Arc<dyn ZcashSource>> = OnceLock::new();
@@ -198,6 +258,13 @@ fn word_address(a: [u8; 20]) -> [u8; 32] {
     w
 }
 
+/// A signed 64-bit ABI word (two's complement, sign-extended).
+fn word_i64(v: i64) -> [u8; 32] {
+    let mut w = if v < 0 { [0xff; 32] } else { [0; 32] };
+    w[24..].copy_from_slice(&v.to_be_bytes());
+    w
+}
+
 fn encode_words(words: &[[u8; 32]]) -> Bytes {
     let mut out = Vec::with_capacity(words.len() * 32);
     for w in words {
@@ -224,6 +291,63 @@ fn encode_tx_output(status: u8, value_zat: u64, script: &[u8]) -> Bytes {
     Bytes::from(out)
 }
 
+/// SIP-7 §4.1: the `ZcashBlocks.record` calldata for Zcash block `height`
+/// (hash, time and summary from the same index record the precompile
+/// serves): the selector and 27 static words, in the order
+/// `contracts/src/zcash/ZcashBlocks.sol` documents — height, hash, time,
+/// the nine `blockStats` counters, six pool totals, six deltas
+/// (sign-extended) and three tree sizes.
+#[must_use]
+pub fn encode_zcash_blocks_record(
+    height: u64,
+    hash: [u8; 32],
+    time: u32,
+    summary: &BlockSummary,
+) -> Bytes {
+    let st = summary.stats;
+    let p = summary.pools;
+    let mut words = vec![
+        word_u64(height),
+        hash,
+        word_u64(u64::from(time)),
+        word_u64(u64::from(st.tx_count)),
+        word_u64(u64::from(st.shielded_tx_count)),
+        word_u64(u64::from(st.t_in)),
+        word_u64(u64::from(st.t_out)),
+        word_u64(u64::from(st.sapling_spends)),
+        word_u64(u64::from(st.sapling_outputs)),
+        word_u64(u64::from(st.orchard_actions)),
+        word_u64(u64::from(st.ironwood_actions)),
+        word_u64(u64::from(st.joinsplits)),
+    ];
+    words.extend(p.chain_value_zat.iter().map(|v| word_u64(*v)));
+    words.extend(p.delta_zat.iter().map(|v| word_i64(*v)));
+    words.extend([p.trees.sapling, p.trees.orchard, p.trees.ironwood].map(word_u64));
+    let mut out = RECORD_SELECTOR.to_vec();
+    out.extend_from_slice(&encode_words(&words));
+    Bytes::from(out)
+}
+
+/// ABI-encode `poolTotals`'s `(uint8, uint64[], int64[])`; empty arrays
+/// for any status but `OK`.
+fn encode_pool_totals(status: u8, pools: Option<&consensus::pools::BlockPools>) -> Bytes {
+    let n = pools.map_or(0, |_| consensus::pools::POOLS);
+    let mut words = vec![
+        word_u64(u64::from(status)),
+        word_u64(0x60),
+        word_u64(0x60 + 32 * (1 + n as u64)),
+        word_u64(n as u64),
+    ];
+    if let Some(p) = pools {
+        words.extend(p.chain_value_zat.iter().map(|v| word_u64(*v)));
+    }
+    words.push(word_u64(n as u64));
+    if let Some(p) = pools {
+        words.extend(p.delta_zat.iter().map(|v| word_i64(*v)));
+    }
+    encode_words(&words)
+}
+
 /// A decoded call.
 enum Query {
     Anchor,
@@ -231,11 +355,17 @@ enum Query {
     TxInfo([u8; 32]),
     TxOutput([u8; 32], u32),
     BurnInfo([u8; 32]),
+    PoolValue(u64, u8),
+    PoolTotals(u64),
+    BlockStats(u64),
+    TxShielded([u8; 32]),
 }
 
 /// Strict ABI decoding: exact length, and integer words with clean high
 /// bytes (as Solidity itself would reject). `None` = malformed → revert.
-fn decode(data: &[u8]) -> Option<Query> {
+/// SIP-7's selectors exist only when `sip7` (before activation they revert
+/// like any unknown selector, so pre-SIP-7 chains execute identically).
+fn decode(data: &[u8], sip7: bool) -> Option<Query> {
     let (sel, args) = data.split_first_chunk::<4>()?;
     let word = |i: usize| -> Option<[u8; 32]> { args.get(i * 32..(i + 1) * 32)?.try_into().ok() };
     let uint = |w: [u8; 32], bytes: usize| -> Option<u64> {
@@ -258,6 +388,13 @@ fn decode(data: &[u8]) -> Option<Query> {
             u32::try_from(uint(word(1)?, 4)?).ok()?,
         )),
         (BURN_INFO_SELECTOR, 1) => Some(Query::BurnInfo(word(0)?)),
+        (POOL_VALUE_SELECTOR, 2) if sip7 => Some(Query::PoolValue(
+            uint(word(0)?, 8)?,
+            u8::try_from(uint(word(1)?, 1)?).ok()?,
+        )),
+        (POOL_TOTALS_SELECTOR, 1) if sip7 => Some(Query::PoolTotals(uint(word(0)?, 8)?)),
+        (BLOCK_STATS_SELECTOR, 1) if sip7 => Some(Query::BlockStats(uint(word(0)?, 8)?)),
+        (TX_SHIELDED_SELECTOR, 1) if sip7 => Some(Query::TxShielded(word(0)?)),
         _ => None,
     }
 }
@@ -265,8 +402,12 @@ fn decode(data: &[u8]) -> Option<Query> {
 const fn base_gas(q: &Query) -> u64 {
     match q {
         Query::Anchor => ANCHOR_GAS,
-        Query::BlockAt(_) => BLOCK_AT_GAS,
-        Query::TxInfo(_) | Query::TxOutput(..) | Query::BurnInfo(_) => TX_GAS,
+        Query::BlockAt(_) | Query::PoolValue(..) | Query::PoolTotals(_) | Query::BlockStats(_) => {
+            BLOCK_AT_GAS
+        }
+        Query::TxInfo(_) | Query::TxOutput(..) | Query::BurnInfo(_) | Query::TxShielded(_) => {
+            TX_GAS
+        }
     }
 }
 
@@ -310,7 +451,7 @@ fn answer_zcash_query(
     if input.is_direct_call() && !input.value.is_zero() {
         return Ok(PrecompileOutput::revert(0, Bytes::new(), reservoir));
     }
-    let Some(query) = decode(input.data) else {
+    let Some(query) = decode(input.data, sip7_active()) else {
         return Ok(PrecompileOutput::revert(0, Bytes::new(), reservoir));
     };
     let gas = base_gas(&query);
@@ -439,6 +580,104 @@ fn answer_zcash_query(
             };
             ok(gas, answer, reservoir)
         }
+        // SIP-7 height queries: the same NOT_YET / OUT_OF_RANGE horizon as
+        // blockAt; inside it a missing record is a hole (fatal, retried),
+        // since the strict follower never indexes a block without one.
+        Query::PoolValue(h, _) | Query::PoolTotals(h) | Query::BlockStats(h)
+            if h > e || h < base =>
+        {
+            let status = if h > e {
+                status::NOT_YET
+            } else {
+                status::OUT_OF_RANGE
+            };
+            let answer = match query {
+                Query::PoolTotals(_) => encode_pool_totals(status, None),
+                Query::BlockStats(_) => {
+                    let mut words = vec![[0u8; 32]; 13];
+                    words[0] = word_u64(u64::from(status));
+                    encode_words(&words)
+                }
+                _ => encode_words(&[word_u64(u64::from(status)), [0; 32], [0; 32]]),
+            };
+            ok(gas, answer, reservoir)
+        }
+        Query::PoolValue(h, pool) => {
+            let Some(s) = source.block_summary(h) else {
+                return fatal(&format!("zcash index has no pool record at height {h}"));
+            };
+            let pool = usize::from(pool);
+            let answer = if pool < consensus::pools::POOLS {
+                encode_words(&[
+                    word_u64(u64::from(status::OK)),
+                    word_u64(s.pools.chain_value_zat[pool]),
+                    word_i64(s.pools.delta_zat[pool]),
+                ])
+            } else {
+                encode_words(&[word_u64(u64::from(status::NO_SUCH_POOL)), [0; 32], [0; 32]])
+            };
+            ok(gas, answer, reservoir)
+        }
+        Query::PoolTotals(h) => {
+            let Some(s) = source.block_summary(h) else {
+                return fatal(&format!("zcash index has no pool record at height {h}"));
+            };
+            ok(
+                gas,
+                encode_pool_totals(status::OK, Some(&s.pools)),
+                reservoir,
+            )
+        }
+        Query::BlockStats(h) => {
+            let Some(s) = source.block_summary(h) else {
+                return fatal(&format!("zcash index has no pool record at height {h}"));
+            };
+            let st = s.stats;
+            let t = s.pools.trees;
+            let answer = encode_words(&[
+                word_u64(u64::from(status::OK)),
+                word_u64(u64::from(st.tx_count)),
+                word_u64(u64::from(st.shielded_tx_count)),
+                word_u64(u64::from(st.t_in)),
+                word_u64(u64::from(st.t_out)),
+                word_u64(u64::from(st.sapling_spends)),
+                word_u64(u64::from(st.sapling_outputs)),
+                word_u64(u64::from(st.orchard_actions)),
+                word_u64(u64::from(st.ironwood_actions)),
+                word_u64(u64::from(st.joinsplits)),
+                word_u64(t.sapling),
+                word_u64(t.orchard),
+                word_u64(t.ironwood),
+            ]);
+            ok(gas, answer, reservoir)
+        }
+        Query::TxShielded(txid) => {
+            let answer = match visible(&txid) {
+                None => {
+                    let mut words = vec![[0u8; 32]; 12];
+                    words[0] = word_u64(u64::from(status::NOT_FOUND));
+                    encode_words(&words)
+                }
+                Some(t) => {
+                    let z = t.shielded.summary.unwrap_or_default();
+                    encode_words(&[
+                        word_u64(u64::from(status::OK)),
+                        word_u64(t.height),
+                        word_i64(z.deltas[0]),
+                        word_i64(z.deltas[1]),
+                        word_i64(z.deltas[2]),
+                        word_i64(z.deltas[3]),
+                        word_u64(u64::from(t.shielded.n_in)),
+                        word_u64(u64::from(z.sapling_spends)),
+                        word_u64(u64::from(z.sapling_outputs)),
+                        word_u64(u64::from(z.orchard_actions)),
+                        word_u64(u64::from(z.ironwood_actions)),
+                        word_u64(u64::from(z.joinsplits)),
+                    ])
+                }
+            };
+            ok(gas, answer, reservoir)
+        }
     };
     Ok(out)
 }
@@ -552,6 +791,8 @@ mod tests {
     struct MapSource {
         blocks: BTreeMap<u64, ([u8; 32], u32)>,
         txs: BTreeMap<[u8; 32], Arc<IndexedTx>>,
+        /// SIP-7 pool records by height.
+        summaries: BTreeMap<u64, Arc<BlockSummary>>,
         /// When set, every `tx()` read bumps the generation: simulates a
         /// Zcash reorg landing mid-execution.
         reorg_on_read: bool,
@@ -584,6 +825,9 @@ mod tests {
         }
         fn generation(&self) -> u64 {
             self.generation.load(std::sync::atomic::Ordering::SeqCst)
+        }
+        fn block_summary(&self, zcash_height: u64) -> Option<Arc<BlockSummary>> {
+            self.summaries.get(&zcash_height).cloned()
         }
     }
 
@@ -880,6 +1124,7 @@ mod tests {
         let factory = SovaEvmFactory::with_zcash_source(Arc::new(MapSource {
             blocks: src.blocks.clone(),
             txs: src.txs.clone(),
+            summaries: src.summaries.clone(),
             ..MapSource::default()
         }));
         let mut evm = factory.create_evm(funded_db(), env(sova_block));
@@ -1150,5 +1395,265 @@ mod tests {
             panic!("expected a fatal error, got {err:?}");
         };
         assert!(msg.contains("reorged during execution"), "{msg}");
+    }
+
+    // --- SIP-7 queries: poolValue / poolTotals / blockStats / txShielded --
+
+    const SHIELD_TXID: [u8; 32] = [0x44; 32];
+
+    fn as_i64(w: &[u8]) -> i64 {
+        let fill = if w[24] & 0x80 == 0 { 0 } else { 0xff };
+        assert!(w[..24].iter().all(|b| *b == fill), "bad sign extension");
+        i64::from_be_bytes(w[24..].try_into().expect("8 bytes"))
+    }
+
+    /// Pool records at B+2 ..= B+10 (B+1 deliberately missing), and a
+    /// shielded tx at B+4 moving 1,035,000 zat out of Ironwood.
+    fn with_pools() -> MapSource {
+        let _ = activate_sip7();
+        let mut m = with_txs();
+        for h in BASE + 2..=BASE + 10 {
+            m.summaries.insert(
+                h,
+                Arc::new(BlockSummary {
+                    pools: consensus::pools::BlockPools {
+                        chain_value_zat: [1_000 + h, 0, 500, 0, 7, 9_000],
+                        delta_zat: [12, 0, 0, 0, 3, -1_035_000],
+                        chain_supply_zat: 0,
+                        trees: consensus::pools::TreeSizes {
+                            sapling: 10,
+                            orchard: 20,
+                            ironwood: 30 + h,
+                        },
+                    },
+                    stats: consensus::pools::BlockStats {
+                        tx_count: 3,
+                        shielded_tx_count: 2,
+                        ironwood_actions: 6,
+                        ..consensus::pools::BlockStats::default()
+                    },
+                }),
+            );
+        }
+        m.txs.insert(
+            SHIELD_TXID,
+            Arc::new(
+                IndexedTx::new(BASE + 4, 2, 6, vec![(1_000_000, vec![0x51])]).with_shielded(
+                    consensus::pools::TxShielded {
+                        n_in: 0,
+                        summary: Some(consensus::pools::ShieldedSummary {
+                            deltas: [0, 0, 0, -1_035_000],
+                            ironwood_actions: 4,
+                            ..consensus::pools::ShieldedSummary::default()
+                        }),
+                    },
+                ),
+            ),
+        );
+        m
+    }
+
+    #[test]
+    fn sip7_selectors_and_activation() {
+        for (sig, sel) in [
+            ("poolValue(uint64,uint8)", POOL_VALUE_SELECTOR),
+            ("poolTotals(uint64)", POOL_TOTALS_SELECTOR),
+            ("blockStats(uint64)", BLOCK_STATS_SELECTOR),
+            ("txShielded(bytes32)", TX_SHIELDED_SELECTOR),
+        ] {
+            assert_eq!(keccak256(sig)[..4], sel, "{sig}");
+        }
+        // Before activation the new selectors are unknown (revert).
+        let q = calldata(POOL_TOTALS_SELECTOR, &[word_u64(BASE)]);
+        assert!(decode(&q, false).is_none());
+        assert!(decode(&q, true).is_some());
+        // Strict decoding: a pool id word with dirty high bytes reverts.
+        let mut dirty = word_u64(3);
+        dirty[30] = 1;
+        assert!(
+            decode(
+                &calldata(POOL_VALUE_SELECTOR, &[word_u64(BASE), dirty]),
+                true
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn pool_value_statuses_and_signs() {
+        let m = with_pools();
+        let pv = |h: u64, pool: u64| {
+            call(
+                &m,
+                10,
+                &calldata(POOL_VALUE_SELECTOR, &[word_u64(h), word_u64(pool)]),
+            )
+        };
+        // Sova block 10 anchors to B+9.
+        let out = pv(BASE + 9, 5);
+        assert_eq!(as_u64(word(&out, 0)), u64::from(status::OK));
+        assert_eq!(as_u64(word(&out, 1)), 9_000);
+        assert_eq!(as_i64(word(&out, 2)), -1_035_000, "value out of Ironwood");
+        assert_eq!(as_u64(word(&pv(BASE + 9, 0), 1)), 1_000 + BASE + 9);
+        assert_eq!(
+            as_u64(word(&pv(BASE + 10, 0), 0)),
+            u64::from(status::NOT_YET)
+        );
+        assert_eq!(
+            as_u64(word(&pv(BASE - 1, 0), 0)),
+            u64::from(status::OUT_OF_RANGE)
+        );
+        assert_eq!(
+            as_u64(word(&pv(BASE + 9, 6), 0)),
+            u64::from(status::NO_SUCH_POOL)
+        );
+    }
+
+    #[test]
+    fn pool_totals_is_two_length_six_arrays() {
+        let m = with_pools();
+        let out = call(
+            &m,
+            10,
+            &calldata(POOL_TOTALS_SELECTOR, &[word_u64(BASE + 9)]),
+        );
+        assert_eq!(as_u64(word(&out, 0)), u64::from(status::OK));
+        let (a, b) = (
+            as_u64(word(&out, 1)) as usize / 32,
+            as_u64(word(&out, 2)) as usize / 32,
+        );
+        assert_eq!(as_u64(word(&out, a)), 6);
+        assert_eq!(
+            as_u64(word(&out, a + 1)),
+            1_000 + BASE + 9,
+            "transparent first"
+        );
+        assert_eq!(as_u64(word(&out, a + 6)), 9_000, "ironwood last");
+        assert_eq!(as_u64(word(&out, b)), 6);
+        assert_eq!(as_i64(word(&out, b + 6)), -1_035_000);
+        assert_eq!(out.len(), 32 * (3 + 7 + 7));
+        let late = call(
+            &m,
+            10,
+            &calldata(POOL_TOTALS_SELECTOR, &[word_u64(BASE + 10)]),
+        );
+        assert_eq!(as_u64(word(&late, 0)), u64::from(status::NOT_YET));
+        assert_eq!(late.len(), 32 * 5, "empty arrays outside the horizon");
+    }
+
+    #[test]
+    fn block_stats_and_tx_shielded() {
+        let m = with_pools();
+        let st = call(
+            &m,
+            10,
+            &calldata(BLOCK_STATS_SELECTOR, &[word_u64(BASE + 9)]),
+        );
+        assert_eq!(st.len(), 13 * 32);
+        assert_eq!(as_u64(word(&st, 1)), 3);
+        assert_eq!(as_u64(word(&st, 2)), 2);
+        assert_eq!(as_u64(word(&st, 8)), 6);
+        assert_eq!(as_u64(word(&st, 12)), 30 + BASE + 9, "ironwood tree size");
+        let z = call(&m, 10, &calldata(TX_SHIELDED_SELECTOR, &[SHIELD_TXID]));
+        assert_eq!(as_u64(word(&z, 0)), u64::from(status::OK));
+        assert_eq!(as_u64(word(&z, 1)), BASE + 4);
+        assert_eq!(as_i64(word(&z, 5)), -1_035_000);
+        assert_eq!(as_u64(word(&z, 10)), 4);
+        // A transparent-only tx: OK with zero flows. Unknown: NOT_FOUND.
+        let pay = call(&m, 10, &calldata(TX_SHIELDED_SELECTOR, &[PAY_TXID]));
+        assert_eq!(as_u64(word(&pay, 0)), u64::from(status::OK));
+        assert_eq!(as_i64(word(&pay, 5)), 0);
+        let none = call(&m, 10, &calldata(TX_SHIELDED_SELECTOR, &[[0x99; 32]]));
+        assert_eq!(as_u64(word(&none, 0)), u64::from(status::NOT_FOUND));
+    }
+
+    /// SIP-7 §4.1: the `ZcashBlocks.record` calldata for a fixed summary.
+    /// The same hex is fed to the real contract in
+    /// `contracts/test/ZcashBlocksRecord.t.sol`, so the Rust encoder and the
+    /// Solidity decoder are pinned to each other.
+    pub(crate) fn record_fixture() -> (u64, [u8; 32], u32, BlockSummary) {
+        (
+            4_384_160,
+            [0x5a; 32],
+            1_790_184_000,
+            BlockSummary {
+                pools: consensus::pools::BlockPools {
+                    chain_value_zat: [1_573_837_835_978_306, 42, 125_035_000, 7, 18_750_000, 9_000],
+                    delta_zat: [13_500_000, 0, 125_035_000, 0, 18_750_000, -1_035_000],
+                    chain_supply_zat: 0,
+                    trees: consensus::pools::TreeSizes {
+                        sapling: 404_304,
+                        orchard: 248_902,
+                        ironwood: 354_039,
+                    },
+                },
+                stats: consensus::pools::BlockStats {
+                    tx_count: 3,
+                    shielded_tx_count: 3,
+                    t_in: 0,
+                    t_out: 2,
+                    sapling_spends: 0,
+                    sapling_outputs: 1,
+                    orchard_actions: 0,
+                    ironwood_actions: 6,
+                    joinsplits: 0,
+                },
+            },
+        )
+    }
+
+    #[test]
+    fn zcash_blocks_record_calldata_is_pinned() {
+        let (h, hash, time, s) = record_fixture();
+        let data = encode_zcash_blocks_record(h, hash, time, &s);
+        assert_eq!(data.len(), 4 + 27 * 32);
+        assert_eq!(data[..4], RECORD_SELECTOR);
+        assert_eq!(
+            keccak256(
+                "record((uint64,bytes32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint64[6],int64[6],uint64[3]))"
+            )[..4],
+            RECORD_SELECTOR
+        );
+        let w = |i: usize| &data[4 + i * 32..4 + (i + 1) * 32];
+        assert_eq!(as_u64(w(0)), h);
+        assert_eq!(w(1), &hash);
+        assert_eq!(as_u64(w(10)), 6, "ironwood actions");
+        assert_eq!(as_u64(w(17)), 9_000, "ironwood total, last pool");
+        assert_eq!(as_i64(w(23)), -1_035_000, "ironwood delta, sign-extended");
+        assert_eq!(as_u64(w(26)), 354_039, "ironwood tree, last word");
+        // Same bytes as contracts/test/ZcashBlocksRecord.t.sol's NODE_CALLDATA.
+        assert_eq!(
+            reth_ethereum::evm::revm::primitives::hex::encode(&data),
+            concat!(
+                "454a0745",
+                "000000000000000000000000000000000000000000000000000000000042e5a0",
+                "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+                "000000000000000000000000000000000000000000000000000000006ab40a40",
+                "0000000000000000000000000000000000000000000000000000000000000003",
+                "0000000000000000000000000000000000000000000000000000000000000003",
+                "0000000000000000000000000000000000000000000000000000000000000000",
+                "0000000000000000000000000000000000000000000000000000000000000002",
+                "0000000000000000000000000000000000000000000000000000000000000000",
+                "0000000000000000000000000000000000000000000000000000000000000001",
+                "0000000000000000000000000000000000000000000000000000000000000000",
+                "0000000000000000000000000000000000000000000000000000000000000006",
+                "0000000000000000000000000000000000000000000000000000000000000000",
+                "00000000000000000000000000000000000000000000000000059765ad25c642",
+                "000000000000000000000000000000000000000000000000000000000000002a",
+                "000000000000000000000000000000000000000000000000000000000773e1f8",
+                "0000000000000000000000000000000000000000000000000000000000000007",
+                "00000000000000000000000000000000000000000000000000000000011e1a30",
+                "0000000000000000000000000000000000000000000000000000000000002328",
+                "0000000000000000000000000000000000000000000000000000000000cdfe60",
+                "0000000000000000000000000000000000000000000000000000000000000000",
+                "000000000000000000000000000000000000000000000000000000000773e1f8",
+                "0000000000000000000000000000000000000000000000000000000000000000",
+                "00000000000000000000000000000000000000000000000000000000011e1a30",
+                "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffff03508",
+                "0000000000000000000000000000000000000000000000000000000000062b50",
+                "000000000000000000000000000000000000000000000000000000000003cc46",
+                "00000000000000000000000000000000000000000000000000000000000566f7",
+            )
+        );
     }
 }

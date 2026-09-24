@@ -7,6 +7,7 @@
 //! (research spike: only `anchor()` is implemented; see
 //! `docs/design/sip4-evm-seam.md`).
 
+pub mod blocks;
 pub mod zcash;
 
 use reth_ethereum::{
@@ -50,7 +51,7 @@ impl<Node> ExecutorBuilder<Node> for SovaExecutorBuilder
 where
     Node: FullNodeTypes<Types: NodeTypes<ChainSpec = ChainSpec, Primitives = EthPrimitives>>,
 {
-    type EVM = EthEvmConfig<ChainSpec, SovaEvmFactory>;
+    type EVM = crate::blocks::SovaEvmConfig;
 
     async fn build_evm(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::EVM> {
         if ctx.config().jit.enabled {
@@ -61,7 +62,7 @@ where
         if let Some(cache) = ctx.sender_recovery_cache() {
             evm_config = evm_config.with_sender_recovery_cache(cache.clone());
         }
-        Ok(evm_config)
+        Ok(crate::blocks::SovaEvmConfig::new(evm_config))
     }
 }
 

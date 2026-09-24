@@ -298,6 +298,8 @@ All optional env vars, read by `box/up.sh`:
 | `SOVA_BOX_RPC_PORT` | `8545` | Sova HTTP JSON-RPC port. Pass the new URL to `./box/deploy-dapps.sh http://127.0.0.1:<port>` if you change it. |
 | `SOVA_BOX_RPC_CORS` | `*` | Browser origins the Sova RPC allows (passed to `bin/sova` as `SOVA_RPC_CORS`), so the site's `/pulse` and `/ashwings/*` pages work against `http://localhost:8545` via `?rpc=` with no proxy. A comma-separated origin list narrows it; empty turns CORS off. |
 | `SOVA_BOX_AUTH_PORT` | `8551` | Sova authrpc (Engine API) port. |
+| `SOVA_BOX_WS_PORT` | unset (no WS) | Sova WS JSON-RPC port (passed to `bin/sova` as `SOVA_WS_PORT`, bound on 127.0.0.1). Needed for SIP-7's `sova_subscribe("zcashBlocks")`. |
+| `SOVA_BOX_SIP7` | `0` | `1` runs `bin/sova` with `SOVA_SIP7=1`: SIP-7 pool reads on `0x…5A00` and the `sova_getZcashBlocks` feed. |
 | `SOVA_BOX_P2P_PORT` | `30303` | Sova p2p port. |
 | `SOVA_BOX_ZEBRAD_CONTAINER` | `sova-zebrad-regtest` | zebrad container name. |
 | `SOVA_BOX_COMPOSE_PROJECT` | `regtest`, or the container name if you changed it | Compose project name for the zebrad stack. |

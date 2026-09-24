@@ -4,8 +4,9 @@
 //!
 //! - `local` (default, and what an unset `SOVA_RPC_PROFILE` means): exactly
 //!   the pre-m1-c behaviour — reth's standard HTTP module set (`eth`, `net`,
-//!   `web3`, every method in them) on 127.0.0.1, no WebSocket, no IPC.
-//!   The box, sims and wallets-on-localhost use this.
+//!   `web3`, every method in them) on 127.0.0.1, no WebSocket unless
+//!   `SOVA_WS_PORT` is set ([`apply_ws`]), no IPC. The box, sims and
+//!   wallets-on-localhost use this.
 //! - `public`: for an RPC origin that strangers reach (behind the
 //!   Cloudflare Worker in `docs/design/infra-m1.md` §2). Two layers, both
 //!   through reth's own APIs:
@@ -78,7 +79,15 @@ pub(crate) const PUBLIC_RPC_METHODS: &[&str] = &[
     "eth_getLogs",
     // Broadcast.
     "eth_sendRawTransaction",
+    // SIP-7 Zcash block feed (read-only, at most 1,000 heights per call);
+    // registered only when SIP-7 is active, see `SIP7_METHODS`.
+    "sova_getZcashBlocks",
 ];
+
+/// Allowlisted methods that exist only when SIP-7 is active
+/// (`zcash_feed`): left out of the expected set otherwise, so their absence
+/// is not reported as a typo.
+pub(crate) const SIP7_METHODS: &[&str] = &["sova_getZcashBlocks"];
 
 /// An RPC profile, parsed from `SOVA_RPC_PROFILE`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,12 +128,30 @@ impl RpcProfile {
         }
     }
 
-    /// The per-method HTTP allowlist, if this profile has one.
-    pub(crate) const fn method_allowlist(self) -> Option<&'static [&'static str]> {
+    /// The per-method HTTP allowlist, if this profile has one. `sip7`:
+    /// whether the SIP-7 feed is registered (its methods are expected).
+    pub(crate) fn method_allowlist(self, sip7: bool) -> Option<Vec<&'static str>> {
         match self {
             Self::Local => None,
-            Self::Public => Some(PUBLIC_RPC_METHODS),
+            Self::Public => Some(
+                PUBLIC_RPC_METHODS
+                    .iter()
+                    .copied()
+                    .filter(|m| sip7 || !SIP7_METHODS.contains(m))
+                    .collect(),
+            ),
         }
+    }
+}
+
+/// `SOVA_WS_PORT`: serve WS JSON-RPC on 127.0.0.1 at `port` (reth's default
+/// WS namespaces, plus `sova` when SIP-7 is on — its subscription is
+/// WS-only). Unset leaves WS off, today's behaviour. Apply before
+/// [`RpcProfile::apply`]: the public profile forces WS off regardless.
+pub(crate) fn apply_ws(rpc: &mut RpcServerArgs, port: Option<u16>) {
+    if let Some(port) = port {
+        rpc.ws = true;
+        rpc.ws_port = port;
     }
 }
 
@@ -253,7 +280,7 @@ mod tests {
             rpc.http_api.is_none(),
             "local keeps reth's standard default"
         );
-        assert!(RpcProfile::Local.method_allowlist().is_none());
+        assert!(RpcProfile::Local.method_allowlist(true).is_none());
     }
 
     #[test]
@@ -282,10 +309,11 @@ mod tests {
 
     #[test]
     fn allowlist_is_read_and_broadcast_only() {
-        let allow = RpcProfile::Public.method_allowlist().unwrap();
-        for m in allow {
+        let allow = RpcProfile::Public.method_allowlist(true).unwrap();
+        for m in &allow {
             assert!(
-                ["eth_", "net_", "web3_"].iter().any(|p| m.starts_with(p)),
+                ["eth_", "net_", "web3_"].iter().any(|p| m.starts_with(p))
+                    || SIP7_METHODS.contains(m),
                 "{m}"
             );
         }
@@ -307,6 +335,26 @@ mod tests {
         assert!(allow.contains(&"eth_sendRawTransaction"));
         let unique: HashSet<_> = allow.iter().collect();
         assert_eq!(unique.len(), allow.len(), "no duplicates");
+        // SIP-7: the bounded feed read is public, the subscription is not
+        // (WS is off in public), and without SIP-7 it isn't expected.
+        assert!(allow.contains(&"sova_getZcashBlocks"));
+        assert!(!allow.contains(&"sova_subscribe"));
+        let without = RpcProfile::Public.method_allowlist(false).unwrap();
+        assert!(!without.contains(&"sova_getZcashBlocks"));
+        assert_eq!(without.len() + SIP7_METHODS.len(), allow.len());
+    }
+
+    #[test]
+    fn ws_is_opt_in_and_public_forces_it_off() {
+        let mut rpc = base();
+        apply_ws(&mut rpc, None);
+        assert_eq!(rpc, base(), "unset: today's config");
+        apply_ws(&mut rpc, Some(8546));
+        assert!(rpc.ws);
+        assert_eq!(rpc.ws_port, 8546);
+        assert!(rpc.ws_addr.is_loopback());
+        RpcProfile::Public.apply(&mut rpc);
+        assert!(!rpc.ws);
     }
 
     #[test]

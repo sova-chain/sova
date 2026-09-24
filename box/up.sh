@@ -67,6 +67,13 @@
 #                               against the box with ?rpc=; set it empty to
 #                               send no CORS headers)
 #   SOVA_BOX_AUTH_PORT          Sova authrpc (Engine API) port (default 8551)
+#   SOVA_BOX_WS_PORT            Sova WS JSON-RPC port, passed to bin/sova as
+#                               SOVA_WS_PORT (default: unset = no WS, as
+#                               before); needed for SIP-7's
+#                               sova_subscribe("zcashBlocks")
+#   SOVA_BOX_SIP7               1 = run bin/sova with SOVA_SIP7=1 (SIP-7
+#                               pool reads on 0x...5A00 and the
+#                               sova_getZcashBlocks feed); default 0 (off)
 #   SOVA_BOX_P2P_PORT           Sova p2p port (default 30303)
 #   SOVA_BOX_ZEBRAD_CONTAINER   zebrad container name
 #                               (default sova-zebrad-regtest)
@@ -138,6 +145,8 @@ RPC_PORT="${SOVA_BOX_RPC_PORT:-8545}"
 # `-` not `:-`: an explicitly empty value turns CORS off.
 RPC_CORS="${SOVA_BOX_RPC_CORS-*}"
 AUTH_PORT="${SOVA_BOX_AUTH_PORT:-8551}"
+WS_PORT="${SOVA_BOX_WS_PORT:-}"
+SIP7="${SOVA_BOX_SIP7:-0}"
 P2P_PORT="${SOVA_BOX_P2P_PORT:-30303}"
 ZEBRAD_CONTAINER="${SOVA_BOX_ZEBRAD_CONTAINER:-${DEFAULT_ZEBRAD_CONTAINER}}"
 if [[ "${ZEBRAD_CONTAINER}" == "${DEFAULT_ZEBRAD_CONTAINER}" ]]; then
@@ -203,6 +212,7 @@ record_config() {
     printf 'ZEBRAD_PORT=%q\n' "${ZEBRAD_PORT}"
     printf 'RPC_PORT=%q\n' "${RPC_PORT}"
     printf 'AUTH_PORT=%q\n' "${AUTH_PORT}"
+    printf 'WS_PORT=%q\n' "${WS_PORT}"
     printf 'P2P_PORT=%q\n' "${P2P_PORT}"
     printf 'ZEBRAD_CONTAINER=%q\n' "${ZEBRAD_CONTAINER}"
     printf 'COMPOSE_PROJECT=%q\n' "${COMPOSE_PROJECT}"
@@ -250,6 +260,13 @@ preflight() {
     "SOVA_BOX_AUTH_PORT ${AUTH_PORT} Sova-authrpc"
     "SOVA_BOX_P2P_PORT ${P2P_PORT} Sova-p2p"
   )
+  if [[ -n "${WS_PORT}" ]]; then
+    checks+=("SOVA_BOX_WS_PORT ${WS_PORT} Sova-WS-RPC")
+  fi
+  if [[ "${SIP7}" != "0" && "${SIP7}" != "1" ]]; then
+    echo "error: SOVA_BOX_SIP7 must be 0 or 1, got: ${SIP7}" >&2
+    failed=1
+  fi
   # A healthy zebrad under our container name is reused, so its port being
   # bound is expected.
   if [[ "$(zebrad_health)" != "healthy" ]]; then
@@ -798,7 +815,11 @@ start_background_processes() {
   node_tmpdir="$(cd "${node_tmpdir}" && pwd -P)"
   echo "${node_tmpdir}" >"${NODE_TMPDIR_FILE}"
 
-  env "${NO_COLOR_ENV[@]}" \
+  # Optional bin/sova env, only when asked for (unset = bin/sova's default).
+  local opt_env=()
+  [[ -n "${WS_PORT}" ]] && opt_env+=(SOVA_WS_PORT="${WS_PORT}")
+  [[ "${SIP7}" == "1" ]] && opt_env+=(SOVA_SIP7=1)
+  env "${NO_COLOR_ENV[@]}" ${opt_env[@]+"${opt_env[@]}"} \
     TMPDIR="${node_tmpdir}" \
     SOVA_ZEBRAD_RPC="${ZEBRAD_RPC}" \
     SOVA_MINER_EVM_ADDRESS="${EVM_ADDR}" \
@@ -885,6 +906,23 @@ Tear down:
 
   ./box/up.sh down
 EOF
+  if [[ -n "${WS_PORT}" ]]; then
+    echo
+    echo "WS JSON-RPC: ws://127.0.0.1:${WS_PORT}"
+  fi
+  if [[ "${SIP7}" == "1" ]]; then
+    cat <<EOF
+
+SIP-7 is on (SOVA_SIP7=1). Anchored Zcash block summaries:
+
+  curl -s -d '{"jsonrpc":"2.0","method":"sova_getZcashBlocks","params":[1,10],"id":1}' \\
+    -H 'Content-Type: application/json' ${SOVA_RPC}
+EOF
+    if [[ -n "${WS_PORT}" ]]; then
+      echo '  and sova_subscribe(["zcashBlocks"]) over the WS endpoint above'
+    fi
+  fi
+  return 0
 }
 
 # SIGTERM a tracked host process and wait (up to ~10s, then SIGKILL) until

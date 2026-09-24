@@ -132,6 +132,44 @@ impl ChainProfile {
             Self::SovaTestnet => sova_testnet_chain_spec(),
         }
     }
+
+    /// The chainspec, with SIP-7's `ZcashBlocks` predeploy when `sip7`
+    /// (every node of a chain must agree: it changes the genesis hash).
+    pub(crate) fn chain_spec_with(self, sip7: bool) -> Arc<ChainSpec> {
+        let spec = self.chain_spec();
+        if sip7 { with_zcash_blocks(&spec) } else { spec }
+    }
+}
+
+/// SIP-7 §4.1: the `ZcashBlocks` runtime bytecode (`forge inspect
+/// ZcashBlocks deployedBytecode` in `contracts/`; regenerate with
+/// `contracts/script/export-zcash-blocks.sh`, which also checks drift).
+const ZCASH_BLOCKS_RUNTIME_HEX: &str = include_str!("zcash_blocks.runtime.hex");
+
+/// SIP-7's system-contract address (`evm::zcash::ZCASH_BLOCKS`).
+const ZCASH_BLOCKS_ADDRESS: alloy_primitives::Address =
+    alloy_primitives::address!("0x0000000000000000000000000000000000005A01");
+
+/// `spec` with the `ZcashBlocks` predeploy in its genesis alloc: the
+/// runtime code at `0x…5A01`, nonce 1, balance 0, empty storage (the
+/// contract has no constructor or immutables), and the genesis header
+/// rebuilt for the new state root.
+pub(crate) fn with_zcash_blocks(spec: &ChainSpec) -> Arc<ChainSpec> {
+    let mut spec = spec.clone();
+    let code = alloy_primitives::hex::decode(ZCASH_BLOCKS_RUNTIME_HEX.trim()).unwrap_or_default();
+    spec.genesis.alloc.insert(
+        ZCASH_BLOCKS_ADDRESS,
+        alloy_genesis::GenesisAccount {
+            nonce: Some(1),
+            balance: alloy_primitives::U256::ZERO,
+            code: Some(Bytes::from(code)),
+            storage: None,
+            private_key: None,
+        },
+    );
+    spec.genesis_header =
+        SealedHeader::seal_slow(make_genesis_header(&spec.genesis, &spec.hardforks));
+    Arc::new(spec)
 }
 
 /// reth's built-in dev chain spec (20 pre-funded dev accounts).
@@ -322,5 +360,27 @@ mod tests {
         assert!(ChainProfile::parse(Some("mainnet")).is_err());
         assert!(ChainProfile::parse(Some("")).is_err());
         assert!(Arc::ptr_eq(&ChainProfile::Dev.chain_spec(), &DEV));
+    }
+
+    /// SIP-7: the predeploy puts the ZcashBlocks runtime at 0x…5A01 with
+    /// nonce 1 and no storage, and changes the genesis hash; nothing else.
+    #[test]
+    fn sip7_adds_the_zcash_blocks_predeploy() {
+        for profile in [ChainProfile::Dev, ChainProfile::SovaTestnet] {
+            let plain = profile.chain_spec_with(false);
+            let sip7 = profile.chain_spec_with(true);
+            let account = sip7
+                .genesis
+                .alloc
+                .get(&ZCASH_BLOCKS_ADDRESS)
+                .expect("predeployed");
+            assert_eq!(account.nonce, Some(1));
+            assert!(account.storage.is_none());
+            let code = account.code.as_ref().expect("code");
+            assert!(code.len() > 1_000 && code[0] == 0x60, "runtime bytecode");
+            assert_eq!(sip7.genesis.alloc.len(), plain.genesis.alloc.len() + 1);
+            assert_ne!(sip7.genesis_hash(), plain.genesis_hash());
+            assert_eq!(sip7.chain, plain.chain);
+        }
     }
 }

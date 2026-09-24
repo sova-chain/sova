@@ -11,11 +11,13 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+alloy-genesis.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-types = { workspace = true, features = ["engine"] }
 hex.workspace = true
 consensus = { path = "../../crates/consensus" }
 engine = { path = "../../crates/engine" }
+evm = { path = "../../crates/evm" }
 reth-ethereum = { workspace = true, features = ["node", "network", "test-utils"] }
 reth-network-peers.workspace = true
 reth-rpc-layer.workspace = true

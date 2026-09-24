@@ -50,6 +50,8 @@ pub struct TxView {
     pub version: u32,
     /// Transparent outputs in order.
     pub outputs: Vec<TxOut>,
+    /// SIP-7: transparent input count and shielded flows.
+    pub shielded: crate::pools::TxShielded,
 }
 
 /// One block as the follower consumes it.
@@ -66,6 +68,8 @@ pub struct BlockView {
     /// Transactions, block order (coinbase included — the burn rule is
     /// total over every transaction).
     pub txs: Vec<TxView>,
+    /// SIP-7: the block's value pools (`None` if zebrad omitted them).
+    pub pools: Option<Box<crate::pools::BlockPools>>,
 }
 
 /// Errors a chain view can produce. Transport-level only: "no block at
@@ -103,6 +107,8 @@ pub struct EpochData {
     /// Every transaction, block order (coinbase first). Feeds the SIP-4
     /// Zcash index; consumers that only need burns may drop it.
     pub txs: Vec<TxView>,
+    /// SIP-7: the block's value pools (`None` if zebrad omitted them).
+    pub pools: Option<Box<crate::pools::BlockPools>>,
 }
 
 /// Events from [`Follower::poll`], in application order.
@@ -128,6 +134,15 @@ pub struct Follower {
     base_height: u64,
     /// Window capacity; reorgs deeper than this unwind to base.
     window_cap: usize,
+    /// SIP-7: refuse to emit a block whose value pools are missing or fail
+    /// [`crate::pools::check_pools`] — the follower stops before it and
+    /// retries next poll (a hold, never a skip).
+    strict_pools: bool,
+    /// The last emitted block's pools, for the continuity check (`None`
+    /// after a rollback: continuity is skipped once).
+    last_pools: Option<(u64, crate::pools::BlockPools)>,
+    /// Why the last poll stopped short under `strict_pools`, if it did.
+    held: Option<String>,
 }
 
 impl Follower {
@@ -140,7 +155,24 @@ impl Follower {
             next_height: base_height,
             base_height,
             window_cap: window_cap.max(1),
+            strict_pools: false,
+            last_pools: None,
+            held: None,
         }
+    }
+
+    /// SIP-7: hold on missing or inconsistent value pools (see
+    /// [`crate::pools::check_pools`]).
+    #[must_use]
+    pub const fn with_strict_pools(mut self, strict: bool) -> Self {
+        self.strict_pools = strict;
+        self
+    }
+
+    /// Why the last poll stopped before the tip under strict pools.
+    #[must_use]
+    pub fn hold_reason(&self) -> Option<&str> {
+        self.held.as_deref()
     }
 
     /// Poll the view once: detect reorgs, then scan forward to the tip.
@@ -170,10 +202,12 @@ impl Follower {
                 .back()
                 .map_or(self.base_height.saturating_sub(1), |&(h, _)| h);
             self.next_height = to_height.saturating_add(1).max(self.base_height);
+            self.last_pools = None;
             events.push(FollowerEvent::Rollback { to_height });
         }
 
         // 2. Scan forward to the tip.
+        self.held = None;
         let tip = view.tip_height()?;
         while self.next_height <= tip {
             let Some(block) = view.block_at(self.next_height)? else {
@@ -187,6 +221,22 @@ impl Follower {
                 && block.prev_hash != parent_hash
             {
                 break;
+            }
+            if self.strict_pools {
+                let prev = self
+                    .last_pools
+                    .as_ref()
+                    .filter(|(h, _)| h.saturating_add(1) == block.height)
+                    .map(|(_, p)| p);
+                let verdict = match block.pools.as_deref() {
+                    None => Err("zebrad reported no valuePools".to_string()),
+                    Some(pools) => crate::pools::check_pools(prev, pools, &block.txs)
+                        .map_err(|e| format!("zebrad pool accounting inconsistent: {e}")),
+                };
+                if let Err(why) = verdict {
+                    self.held = Some(format!("zcash block {}: {why}", block.height));
+                    break;
+                }
             }
             let mut burns = Vec::new();
             for tx in &block.txs {
@@ -206,12 +256,14 @@ impl Follower {
                 self.window.pop_front();
             }
             self.next_height = block.height.saturating_add(1);
+            self.last_pools = block.pools.as_deref().map(|p| (block.height, *p));
             events.push(FollowerEvent::Epoch(EpochData {
                 height: block.height,
                 hash: block.hash,
                 burns,
                 time: block.time,
                 txs: block.txs,
+                pools: block.pools,
             }));
         }
 
@@ -252,6 +304,7 @@ mod tests {
                 },
             ],
             version: 5,
+            shielded: Default::default(),
         }
     }
 
@@ -263,6 +316,7 @@ mod tests {
                 script: vec![0x51],
             }],
             version: 5,
+            shielded: Default::default(),
         }
     }
 
@@ -284,6 +338,7 @@ mod tests {
                 prev_hash,
                 txs,
                 time: 0,
+                pools: None,
             });
         }
 
@@ -419,5 +474,53 @@ mod tests {
         let mut f = Follower::new(1, 10);
         let _ = f.poll(&view).unwrap_or_default();
         assert!(f.window.len() <= 10);
+    }
+
+    /// SIP-7: with strict pools the follower stops before a block whose
+    /// pools are missing or inconsistent, and emits it once they add up;
+    /// without, nothing changes.
+    #[test]
+    fn strict_pools_hold_rather_than_skip() {
+        use crate::pools::BlockPools;
+        let supply = |v: u64| BlockPools {
+            chain_value_zat: [v, 0, 0, 0, 0, 0],
+            delta_zat: [if v > 100 { 10 } else { 100 }, 0, 0, 0, 0, 0],
+            chain_supply_zat: v,
+            ..BlockPools::default()
+        };
+        let view = MockView::new();
+        view.push(1, vec![plain_tx(1)]);
+        view.push(2, vec![plain_tx(2)]);
+        // Lenient: both emitted, pools or not.
+        let mut lenient = Follower::new(1, 8);
+        assert_eq!(lenient.poll(&view).map(|e| e.len()).ok(), Some(2));
+        // Strict: block 1 has no pools -> hold at 1.
+        let mut strict = Follower::new(1, 8).with_strict_pools(true);
+        assert_eq!(strict.poll(&view).map(|e| e.len()).ok(), Some(0));
+        assert!(
+            strict
+                .hold_reason()
+                .is_some_and(|r| r.contains("no valuePools"))
+        );
+        // Pools for both, but block 2 breaks continuity (100 + 10 != 111).
+        view.blocks.borrow_mut()[0].pools = Some(Box::new(supply(100)));
+        let mut bad = supply(111);
+        bad.chain_supply_zat = 111;
+        view.blocks.borrow_mut()[1].pools = Some(Box::new(bad));
+        assert_eq!(
+            strict.poll(&view).map(|e| e.len()).ok(),
+            Some(1),
+            "block 1 only"
+        );
+        assert!(
+            strict
+                .hold_reason()
+                .is_some_and(|r| r.contains("continuity"))
+        );
+        // Fixed: block 2 is emitted on the next poll, not skipped.
+        view.blocks.borrow_mut()[1].pools = Some(Box::new(supply(110)));
+        let events = strict.poll(&view).unwrap_or_else(|e| panic!("{e}"));
+        assert!(matches!(events.as_slice(), [FollowerEvent::Epoch(e)] if e.height == 2));
+        assert!(strict.hold_reason().is_none());
     }
 }

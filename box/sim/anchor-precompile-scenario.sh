@@ -572,6 +572,40 @@ for n in a b j; do
 done
 
 # ============================================================
+# (e) SIP-7 (only with SOVA_SIP7=1): every node's ZcashBlocks record at
+# the common tip names the tip's own anchor, and the precompile's pool
+# reads answer there.
+# ============================================================
+if [[ "${SOVA_SIP7:-}" == "1" ]]; then
+  echo ""
+  echo "=== (e) SIP-7 ZcashBlocks record and pool reads at the common tip ==="
+  sip7_call() { # <url> <block> <to> <data>
+    eth_rpc "$1" eth_call "[{\"to\":\"$3\",\"data\":\"$4\"},\"$(printf '0x%x' "$2")\"]" \
+      | python3 -c "import sys,json;print(json.load(sys.stdin).get('result','')[2:])"
+  }
+  want_h=$((COMMON + EPOCH_BASE - 1))
+  for node in "${NODES[@]}"; do
+    read -r label url <<<"${node}"
+    root="$(block_field "${url}" "${COMMON}" parentBeaconBlockRoot)"
+    got="$(sip7_call "${url}" "${COMMON}" 0x0000000000000000000000000000000000005A01 0x52bfe789)"
+    want="$(printf '%064x' "${want_h}")${root#0x}"
+    if [[ -n "${root}" && "${got}" == "${want}" ]]; then
+      pass "(e) node ${label}: ZcashBlocks.latest() @${COMMON} == (${want_h}, ${root})"
+    else
+      fail "(e) node ${label}: ZcashBlocks.latest() @${COMMON} = ${got:-<empty>}, want (${want_h}, ${root:-<no root>})"
+    fi
+    pt="$(sip7_call "${url}" "${COMMON}" 0x0000000000000000000000000000000000005A00 "0x1c476c7e$(printf '%064x' "${want_h}")")"
+    status=$((16#${pt:0:64}))
+    transparent=$((16#${pt:$((4*64)):64}))
+    if [[ -n "${pt}" && "${status}" -eq 0 && "${transparent}" -gt 0 ]]; then
+      pass "(e) node ${label}: poolTotals(${want_h}) OK, transparent ${transparent} zat"
+    else
+      fail "(e) node ${label}: poolTotals(${want_h}) = ${pt:-<empty>}"
+    fi
+  done
+fi
+
+# ============================================================
 # Diagnostics (not asserted)
 # ============================================================
 echo ""

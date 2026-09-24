@@ -162,6 +162,8 @@ server auction; both can be cheaper while supply lasts.
       `eth_getStorageAt`, `eth_call`, `eth_estimateGas`, `eth_getLogs`
       (range-capped).
     - Broadcast: `eth_sendRawTransaction`.
+    - SIP-7 feed: `sova_getZcashBlocks` (read-only, capped at 1,000
+      heights per call by the node; exists only with `SOVA_SIP7=1`).
   - *Denied:* `admin_*`, `debug_*`, `trace_*`, `txpool_*`, `engine_*`,
     `personal_*`, `miner_*`, `eth_sign*`, `eth_sendTransaction`, the filter
     methods (`eth_newFilter`/`getFilterChanges` are stateful and costly),
@@ -365,6 +367,7 @@ $0 plus registration.
 | D7 | Explorer at M1 | Otterscan on Pages. Blockscout later. |
 | D8 | Project "keeper" miner on testnet | Allowed only as a disclosed, ordinary miner on non-public infra, with its own key and budget. |
 | D9 | Let seed-1's zebrad serve inbound Zcash testnet peers | Yes. It costs a little bandwidth and makes us a good citizen. |
+| D10 | Where the M1 servers run | **Decided (Rob, 2026-09-23): all four on Hetzner** (seed, RPC, faucet and the D8 keeper), Cloudflare for the edge, one server account. This reverses the same day's earlier "keeper on AWS". The launch kit can still adopt a keeper on other hardware as an option (`docs/ops/keeper-aws.md`), but the default provisions everything on Hetzner (`docs/ops/testnet-launch.md`, section 0). |
 
 ## Sources (accessed 2026-09-22)
 

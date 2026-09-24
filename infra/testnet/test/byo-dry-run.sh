@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # infra/testnet/test/byo-dry-run.sh -- offline proof that a bring-your-own
-# host (the AWS keeper) is a first-class kit host: its config validates,
+# host (optional since 2026-09-23, when every server moved to Hetzner; e.g.
+# a keeper on other hardware, docs/ops/keeper-aws.md) is a first-class kit
+# host: its config validates,
 # its files render and lint (and pass systemd-analyze verify with
 # --systemd-verify, which needs Docker), and `launch.sh --dry-run` includes
 # it in every stage that touches hosts, without ever creating it on
@@ -11,8 +13,9 @@
 #
 # No token, no SSH, no API call: every run is --dry-run, or dies on
 # purpose before anything leaves this machine. Uses config.env.example
-# with the keeper's placeholder replaced by a documentation address
-# (198.51.100.20, RFC 5737), in a temp dir; never reads secrets.env.
+# with its (Hetzner) keeper line swapped for a byo one at a documentation
+# address (198.51.100.20, RFC 5737), in a temp dir; never reads
+# secrets.env. Also checks that the unmodified example is all-Hetzner.
 set -uo pipefail
 KIT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERIFY=()
@@ -39,9 +42,19 @@ kit() {
     SOVA_TESTNET_CONFIG="${CFG}" "$@"
 }
 
-sed "s/<keeper-elastic-ip>/${KEEPER_IP}/" "${KIT}/config.env.example" >"${TMP}/config.env"
+# The example's keeper is a Hetzner server (the default); swap that one
+# line for a byo entry (the option under test).
+HZ_KEEPER="sova-keeper-1:cx33:fsn1:40:keeper"
+with_keeper() { # entry -> the example with the keeper line replaced, on stdout
+  sed "s|\"${HZ_KEEPER}\"|\"$1\"|" "${KIT}/config.env.example"
+}
+check "config: the example's keeper is a Hetzner server ('${HZ_KEEPER}')" \
+  grep -q "\"${HZ_KEEPER}\"" "${KIT}/config.env.example"
+check "config: the example has no byo entry (all on Hetzner by default)" \
+  lacks '^[[:space:]]*"[^"]*:byo:' "$(cat "${KIT}/config.env.example")"
+with_keeper "sova-keeper-1:byo:${KEEPER_IP}:40:keeper:ubuntu" >"${TMP}/config.env"
 CFG="${TMP}/config.env"
-check "config: the example's keeper is 'sova-keeper-1:byo:${KEEPER_IP}:40:keeper:ubuntu'" \
+check "config: the test's keeper is 'sova-keeper-1:byo:${KEEPER_IP}:40:keeper:ubuntu'" \
   grep -q "\"sova-keeper-1:byo:${KEEPER_IP}:40:keeper:ubuntu\"" "${CFG}"
 
 # ---- check + render ---------------------------------------------------------
@@ -103,21 +116,32 @@ check "stage 6 chain: keeper re-deployed (sova-node starts)" \
 check "stage 6 chain: keeper's enode verified" grep -q "bootnodes --verify: sova-keeper-1" <<<"${s6}"
 check "stage 8 smoke: keeper checked" grep -q "smoke: sova-keeper-1\[byo ${KEEPER_IP}\] (keeper)" <<<"$(stage 8)"
 
+# ---- the default: the unmodified example, keeper on Hetzner -------------------
+CFG="${KIT}/config.env.example"
+out="$(cd "${KIT}" && kit ./launch.sh --dry-run 2>&1)"
+check "example config: launch.sh --dry-run runs end to end" grep -q 'launch sequence complete' <<<"${out}"
+s2="$(stage 2)"
+check "example config: stage 2 creates the keeper on Hetzner (cx33, fsn1)" \
+  has "hcloud server create --name sova-keeper-1 --type cx33 --image [^ ]+ --location fsn1 " "${s2}"
+check "example config: stage 2 creates the keeper's 40 GB volume" \
+  has "hcloud volume create --name sova-keeper-1-data --size 40 " "${s2}"
+check "example config: stage 2 adopts no byo host" lacks "byo" "${s2}"
+
 # ---- refusals -----------------------------------------------------------------
 CFG="${TMP}/pending.env"
-cp "${KIT}/config.env.example" "${CFG}"
+with_keeper "sova-keeper-1:byo:<keeper-ip>:40:keeper:ubuntu" >"${CFG}"
 out="$(cd "${KIT}" && kit ./deploy.sh check 2>&1)"
-check "example config: the pending keeper address is an open item" \
-  has "sova-keeper-1: address <keeper-elastic-ip> is pending" "${out}"
-check "example config: ... and not an error" has "^==> config OK" "${out}"
+check "pending byo address: an open item" \
+  has "sova-keeper-1: address <keeper-ip> is pending" "${out}"
+check "pending byo address: ... and not an error" has "^==> config OK" "${out}"
 out="$(cd "${KIT}" && kit ./launch.sh --dry-run 2>&1)"
-check "example config: launch.sh --dry-run still runs end to end" grep -q 'launch sequence complete' <<<"${out}"
+check "pending byo address: launch.sh --dry-run still runs end to end" grep -q 'launch sequence complete' <<<"${out}"
 out="$(cd "${KIT}" && kit ./provision.sh up 2>&1)"
 check "a real provision.sh up refuses the pending address (before any token or network use)" \
-  grep -q "error: sova-keeper-1: address <keeper-elastic-ip> is still pending" <<<"${out}"
+  grep -q "error: sova-keeper-1: address <keeper-ip> is still pending" <<<"${out}"
 
 bad_entry() { # description entry
-  sed "s|\"sova-keeper-1:byo:<keeper-elastic-ip>:40:keeper:ubuntu\"|\"$2\"|" "${KIT}/config.env.example" >"${TMP}/bad.env"
+  with_keeper "$2" >"${TMP}/bad.env"
   CFG="${TMP}/bad.env"
   local o
   if o="$(cd "${KIT}" && kit ./deploy.sh check 2>&1)"; then

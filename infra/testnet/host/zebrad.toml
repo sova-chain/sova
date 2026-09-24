@@ -6,8 +6,8 @@
 [network]
 network = "Testnet"
 # Inbound Zcash P2P is only reachable where the Hetzner firewall opens it
-# (seed hosts, D9: a courtesy testnet peer). Elsewhere, including the byo
-# keeper behind its AWS security group, it is outbound-only.
+# (seed hosts, D9: a courtesy testnet peer). Elsewhere, including an
+# optional byo host behind its own firewall, it is outbound-only.
 listen_addr = "0.0.0.0:@ZEBRA_P2P_PORT@"
 
 [state]

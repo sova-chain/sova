@@ -5,9 +5,10 @@
 # each point that needs time or a person:
 #
 #   1 check      config.env is valid; the cloud tokens are present
-#   2 provision  provision.sh up --my-ip          (Hetzner; byo hosts such
-#                                                  as the AWS keeper are
-#                                                  adopted over SSH)
+#   2 provision  provision.sh up --my-ip          (Hetzner: all four
+#                                                  servers; an optional
+#                                                  byo host is adopted
+#                                                  over SSH)
 #   3 hosts      deploy.sh                        (zebrad starts syncing)
 #   4 edge       cloudflare.sh all [+ deploy.sh alerts]
 #   5 sync       STOP until every host's zebrad is at the Zcash tip

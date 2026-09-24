@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # infra/testnet/provision.sh -- create the M1 testnet's Hetzner Cloud
-# resources with the `hcloud` CLI, and adopt the bring-your-own hosts
-# (SERVERS type "byo", e.g. the AWS keeper). Idempotent: every resource is
+# resources with the `hcloud` CLI (every server, by default), and adopt
+# any optional bring-your-own hosts (SERVERS type "byo", e.g. a keeper on
+# other hardware). Idempotent: every resource is
 # looked up by name first and only created if absent; firewall rules are
 # re-applied from config every run, so a re-run converges.
 #
 # A byo host is never created or firewalled here: the operator made it
 # (Ubuntu 24.04, x86_64, the kit's SSH key; its firewall/security group
-# per docs/ops/keeper-aws.md). `up` records its address and, if sova-admin
+# e.g. per docs/ops/keeper-aws.md). `up` records its address and, if sova-admin
 # can't log in yet, bootstraps it over SSH as the entry's first-login user
 # with host/byo-bootstrap.py, which applies the same host/cloud-init.yaml
 # a Hetzner server boots with. From then on it is an ordinary kit host.

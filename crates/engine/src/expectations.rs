@@ -380,10 +380,16 @@ pub async fn run_expectations<V: ZcashView>(
     schedule: consensus::schedule::Schedule,
     poll_interval: std::time::Duration,
 ) {
-    let mut follower = Follower::new(base_height, REORG_WINDOW);
+    // SIP-7: the follower that feeds the index holds on missing or
+    // inconsistent pool accounting (a stall and an alert, never an answer).
+    let mut follower =
+        Follower::new(base_height, REORG_WINDOW).with_strict_pools(evm::zcash::sip7_active());
     loop {
         match follower.poll(&view) {
             Ok(events) => {
+                if let Some(why) = follower.hold_reason() {
+                    tracing::error!(%why, "sip-7 hold: zcash scan stopped before this block");
+                }
                 for event in events {
                     match event {
                         FollowerEvent::Rollback { to_height } => {
@@ -467,6 +473,7 @@ mod tests {
                 burns: Vec::new(),
                 time: 0,
                 txs: Vec::new(),
+                pools: None,
             },
             ranked: Vec::new(),
         }
@@ -540,6 +547,7 @@ mod tests {
             burns,
             time: 0,
             txs: Vec::new(),
+            pools: None,
         };
         let ranked = ranked_miners(&epoch.burns);
 
@@ -634,6 +642,7 @@ mod tests {
             burns: vec![burn(1, 600_000), burn(2, 400_000)],
             time: 0,
             txs: Vec::new(),
+            pools: None,
         };
         let ranked = ranked_miners(&epoch.burns);
         let derive = |sealer: [u8; 20]| {
@@ -723,6 +732,7 @@ mod tests {
                 burns: Vec::new(),
                 time: 0,
                 txs: Vec::new(),
+                pools: None,
             },
             ranked: Vec::new(),
         }

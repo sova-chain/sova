@@ -155,6 +155,7 @@ fn normal_tx(block: u64, j: u64) -> TxView {
         txid: txid(block, j),
         version: 5,
         outputs,
+        shielded: Default::default(),
     }
 }
 
@@ -185,6 +186,7 @@ fn special_tx(kind: Special, block: u64) -> TxView {
         txid: txid(block, 1),
         version: 5,
         outputs,
+        shielded: Default::default(),
     }
 }
 
@@ -195,6 +197,7 @@ fn epoch(height: u64, txs: Vec<TxView>) -> EpochData {
         burns: Vec::new(),
         time: 1_700_000_000 + (height * 75) as u32,
         txs,
+        pools: None,
     }
 }
 

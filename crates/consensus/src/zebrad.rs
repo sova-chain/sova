@@ -3,7 +3,8 @@
 //! Uses the same RPC surface the burn-wallet e2e proved against Zebra
 //! 6.3.0: `getblockcount`, `getblockhash`, `getblock <hash> 1` (txids +
 //! `previousblockhash`), and `getrawtransaction <txid> 1` (decoded
-//! `vout[].valueZat` + `vout[].scriptPubKey.hex`). Plain HTTP, blocking,
+//! `vout[].valueZat` + `vout[].scriptPubKey.hex`), plus SIP-7's pool and
+//! shielded-flow fields from those same answers ([`crate::pools`]). Plain HTTP, blocking,
 //! no TLS — the node is always local or on a trusted link; anything else
 //! is out of scope for the follower.
 //!
@@ -144,6 +145,11 @@ impl ZcashView for ZebradClient {
                 txid: hash_from_hex(txid_hex)?,
                 version,
                 outputs,
+                // Lenient here, strict in the SIP-7 cross-checks: a field
+                // we can't read counts as absent, so a node without SIP-7
+                // keeps following, and one with it holds on the mismatch
+                // (`pools::check_pools`) rather than here.
+                shielded: crate::pools::parse_tx_shielded(&tx).unwrap_or_default(),
             });
         }
 
@@ -153,6 +159,12 @@ impl ZcashView for ZebradClient {
             prev_hash,
             time,
             txs,
+            // Same leniency: unreadable pools are `None`, which SIP-7
+            // treats as missing (hold) once active.
+            pools: crate::pools::parse_block_pools(&block)
+                .ok()
+                .flatten()
+                .map(Box::new),
         }))
     }
 }

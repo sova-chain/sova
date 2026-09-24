@@ -99,7 +99,7 @@ export const sips = [
   {
     n: 7, id: 'sip-7', file: 'sip-7-draft-zcash-events.md', title: 'Zcash pool state and events', st: 'accepted',
     sum: 'Contracts read the value in each shielded pool and every change to it; each Sova block records a summary of its Zcash block in state.',
-    note: 'Accepted. Implementation pending; targets the testnet reset.',
+    note: 'Accepted and built; switches on at the testnet reset.',
   },
   {
     n: 8, id: 'sip-8', file: 'sip-8-draft-anchored-burns.md', title: 'Anchored burns', st: 'accepted',
