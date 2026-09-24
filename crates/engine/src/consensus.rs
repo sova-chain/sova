@@ -208,12 +208,43 @@ impl SovaConsensus {
     }
 }
 
+/// reth's backfill reports a header rejection only at trace level and
+/// retries about twice a second, so a node with a wrong checkpoint would
+/// stall with nothing at the default level saying why. Warn, at most every
+/// 30 seconds.
+fn warn_checkpoint_mismatch(mismatch: &crate::checkpoints::CheckpointMismatch) {
+    static LAST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let last = LAST.load(std::sync::atomic::Ordering::Relaxed);
+    if now.saturating_sub(last) >= 30
+        && LAST
+            .compare_exchange(
+                last,
+                now,
+                std::sync::atomic::Ordering::Relaxed,
+                std::sync::atomic::Ordering::Relaxed,
+            )
+            .is_ok()
+    {
+        tracing::warn!(
+            %mismatch,
+            "refusing a block that contradicts a checkpoint: the peers serving it follow \
+             another history, or the checkpoint is wrong (SOVA_CHECKPOINTS / this release)"
+        );
+    }
+}
+
 impl HeaderValidator for SovaConsensus {
     fn validate_header(&self, header: &SealedHeader) -> Result<(), ConsensusError> {
         // Checkpoints first, and permanent: no block at a checkpoint height
         // with another hash is ever acceptable, and reth's invalid-ancestor
         // handling then rejects its descendants too.
-        (self.checkpoint)(header.number(), header.hash().0).map_err(ConsensusError::other)?;
+        if let Err(mismatch) = (self.checkpoint)(header.number(), header.hash().0) {
+            warn_checkpoint_mismatch(&mismatch);
+            return Err(ConsensusError::other(mismatch));
+        }
         self.inner.validate_header(header)?;
         crate::seal::check_header(header.header(), (self.sip6)())
             .map(|_| ())

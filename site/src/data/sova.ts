@@ -3,6 +3,11 @@
 // file each block comes from. The three direction pages render these, so a
 // fact changes in one place.
 
+// The Sova RPC the live pages (/pulse, /ashwings/*) read by default. The
+// local box until the public testnet launches; then the public endpoint
+// (docs/ops/testnet-launch.md, B5 f). Each page still takes ?rpc= per visit.
+export const SOVA_RPC = 'http://127.0.0.1:8545';
+
 // The owner-picked positioning line (docs/marketing/positioning.md).
 export const EDGE_LINE = 'The programmable edge of the shielded pool.';
 

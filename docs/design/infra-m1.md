@@ -181,11 +181,13 @@ server auction; both can be cheaper while supply lasts.
     testers. That would be a capped, testnet-only hot key on its own host.
 - **Explorer.**
   - Recommended for M1: **Otterscan** as a static SPA on Pages. Reth ships
-    the `ots` namespace [fact], so there's no indexer and no database, and
-    users can point it at their own node.
-  - This still needs a verification run against v2.6.0 for coverage of the
-    Erigon-flavoured calls, and a check of how settlement withdrawals
-    render.
+    the `ots` namespace [fact], so there's no indexer and no database.
+  - *Verified 2026-09-24 (`docs/design/explorer-m1.md`, which supersedes
+    this bullet):* it works against our node, but mints (withdrawals) don't
+    render, reth has no address history, and `bin/sova` serves no `ots`
+    namespace on either profile yet, so users can't point it at their own
+    node until a switch exists. Recommendation there: none at launch,
+    Otterscan shortly after.
   - **Blockscout** (Postgres plus indexer, ~8 GB+ RAM [est]) waits for real
     demand for contract verification (G1 dapp users).
   - A tiny "epochs and burns" page can be built from RPC withdrawals later.

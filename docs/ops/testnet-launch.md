@@ -221,6 +221,11 @@ f. **Stranger guide.** Fill every `<<…>>` placeholder in
    `docs/guides/testnet.md` (its "Filled at launch" table names the
    script behind each), then wire the `data-placeholder="testnet"` spans
    in `site/src/pages/mine.astro` and `site/src/pages/node.astro` to it.
+   Point the live pages at the network: `SOVA_RPC` in
+   `site/src/data/sova.ts` becomes `https://rpc.testnet.sova.io` (`/pulse`
+   needs nothing else; `ZcashBlocks` is the fixed predeploy), and the
+   `/ashwings/*` pages' contract addresses come from
+   `deployments/sova-testnet.json`. Deploy the site.
 
 Commit `out/seeds.json`, `out/testnet.env`, `out/epoch-base.json` and
 `deployments/sova-testnet.json`, so the canonical copies aren't only in

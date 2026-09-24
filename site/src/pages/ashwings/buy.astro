@@ -3,13 +3,14 @@
 // noindex, not in sitePages (nav, footer, sitemap). Runbook:
 // docs/design/ashwing-zec-checkout.md. Logic: src/scripts/checkout/.
 import Site from '../../layouts/Site.astro';
+import { SOVA_RPC } from '../../data/sova';
 
 // Defaults target the local box after box/deploy-dapps.sh: the checkout is
 // the one the Ashwings constructor creates (Ashwings.zecCheckout(), listing
 // #1, terms fixed at deploy). /ashwings/mint links here with ?rpc=&co= set.
 // Override per visit: ?rpc=&co=&listing=&relayer=<url|none>&net=test|main
 const config = {
-  rpc: 'http://127.0.0.1:8545',
+  rpc: SOVA_RPC,
   checkout: '0x856e4424f806D16E8CBC702B3c0F2ede5468eae5',
   listing: 1,
   relayer: 'http://127.0.0.1:8787',

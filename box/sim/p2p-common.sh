@@ -86,7 +86,11 @@ cleanup() {
 
   if [[ "${exit_code}" -ne 0 || "${FAILURES}" -gt 0 ]]; then
     echo "--- ${SCENARIO} failed (exit ${exit_code}, ${FAILURES} assertion failure(s)); logs follow ---" >&2
-    for log in node-a.log node-b.log node-c.log node-j.log; do
+    # Every node log (node-a/b/c/j and scenario-specific ones such as
+    # checkpoint-scenario.sh's node-j1*.log / node-j2*.log).
+    local path log
+    for path in "${WORK_DIR:-/nonexistent}"/node-*.log; do
+      log="${path##*/}"
       if [[ -n "${WORK_DIR}" && -f "${WORK_DIR}/${log}" ]]; then
         echo "--- ${log} (last 80 lines) ---" >&2
         tail -n 80 "${WORK_DIR}/${log}" >&2 || true

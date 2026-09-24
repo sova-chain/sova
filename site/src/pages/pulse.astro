@@ -5,10 +5,11 @@
 // footer, sitemap). Logic: src/scripts/pulse/app.ts. Local e2e:
 // tools/pulse-feed (anvil + the system call played from real testnet data).
 import Site from '../layouts/Site.astro';
+import { SOVA_RPC } from '../data/sova';
 
 // Override per visit: ?rpc=<sova rpc>&at=<ZcashBlocks address>&n=<history blocks>
 const config = {
-  rpc: 'http://127.0.0.1:8545',
+  rpc: SOVA_RPC,
   at: '0x0000000000000000000000000000000000005a01',
   n: 96,
   pollMs: 2000,

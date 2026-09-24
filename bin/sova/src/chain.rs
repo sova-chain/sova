@@ -89,6 +89,15 @@ pub(crate) enum ScheduleName {
     Sip3,
 }
 
+impl std::fmt::Display for ScheduleName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Flat => "flat",
+            Self::Sip3 => "sip3",
+        })
+    }
+}
+
 impl ScheduleName {
     fn parse(raw: &str) -> eyre::Result<Self> {
         match raw {
@@ -220,8 +229,8 @@ impl ChainProfile {
             (Self::SovaTestnet, None) => Ok(SOVA_TESTNET_SCHEDULE),
             (Self::SovaTestnet, Some(e)) if e == SOVA_TESTNET_SCHEDULE => Ok(e),
             (Self::SovaTestnet, Some(e)) => Err(eyre::eyre!(
-                "SOVA_EMISSION_SCHEDULE={e:?} contradicts the sova-testnet schedule \
-                 ({SOVA_TESTNET_SCHEDULE:?}); unset it"
+                "SOVA_EMISSION_SCHEDULE={e} contradicts the sova-testnet schedule \
+                 ({SOVA_TESTNET_SCHEDULE}); unset it"
             )),
         }
     }

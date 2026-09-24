@@ -845,6 +845,102 @@ trust". Proposed:
    e.g. `catch-up: target H (hash), follower scanned S; waiting` and
    `catch-up: FCU to H (download|backfill)`.
 
+## Client checkpoints: `checkpoint-scenario.sh` (nightly)
+
+This scenario checks audit F2 measure B, client checkpoints
+(`crates/engine/src/checkpoints.rs`, `docs/design/f2-join-and-restart.md`
+§B), on the real multi-node join path over sova/1. Operators pin history
+with `SOVA_CHECKPOINTS=height:0xhash,...`. The node must not import a block
+at a checkpoint height unless it has the listed hash
+(`SovaConsensus::validate_header`). It must not backfill toward a target
+that contradicts a checkpoint (`candidates::actionable_target`). It must
+refuse to start when its stored chain contradicts a checkpoint (the
+startup check in `bin/sova`).
+
+- **A** runs in mine mode (sova/1, dev profile, epoch base 1) and is the
+  only producer. It mines empty epochs alone up to `GROW_TO` (70). Then
+  Zcash is frozen, so both joiners face a 70-block gap. That is more than
+  sova/1's 33-block chase window, so the joiners sync through the sync
+  driver and reth's backfill pipeline.
+- **J1** is follow-only and C5-enforcing. It uses a persistent
+  `SOVA_DATADIR`, and `SOVA_CHECKPOINTS=40:<A's real hash at 40>`.
+- **J2** is follow-only and C5-enforcing, with an empty datadir and
+  `SOVA_CHECKPOINTS=40:0x5e5e…5e`, a hash no chain here produces. It runs
+  with `RUST_LOG=info,downloaders::headers=trace` (see the finding below).
+  J1 and J2 start together. Both have A as their only static peer.
+
+Assertions:
+
+- **(0)** All three nodes run sova/1. J1 and J2 enforce C5 and log
+  `checkpoints: 1 (newest at height 40)`. The gap is larger than the chase
+  window. The sessions are up.
+- **(1)** J1 catches up (lag ≤ 1 on 3 samples). Hashes on A and J1 match at
+  1, 20, 40, the middle and the tip. J1's block 40 is the checkpointed
+  hash. J1 logs no mismatch. Once J1 follows live blocks it answers
+  `eth_syncing=false`. That is the control for (2).
+- **(2)** J2 is watched for `STALL_OBSERVE_S` (45 s) after J1 catches up.
+  Its head, sampled every second, never reaches 40, and it has no block
+  at 40. It logs `checkpoint mismatch at height 40`. `eth_syncing` never
+  answers `false` while J2 is below 40, so it never falsely claims to be
+  synced. J2 stays up, answers RPC and does not panic.
+- **(c) control.** J2 is stopped with SIGTERM and restarted on the same
+  ports with an empty datadir and no checkpoint. It syncs to A, and its
+  block 40 is A's. So the stall in (2) comes from the checkpoint, not from
+  the slot, the peer or the gap.
+- **(3)** J1 is stopped with SIGTERM and restarted on its datadir with
+  `SOVA_CHECKPOINTS=20:<wrong hash>`. It exits nonzero and logs `this
+  datadir follows another history: block 20 is …`.
+- **(3b) control.** J1 is restarted on the same datadir with the correct
+  checkpoints for 40 and 20. It starts, still has A's block 20, and
+  follows A again.
+
+Isolation: zebrad runs on `:18372` (project `sova-checkpoint-sim`,
+container `sova-zebrad-checkpoint`). A uses 10245/10251/30911, J1 uses
+10345/10351/30912 (B slot) and J2 uses 10445/10451/30913 (C slot).
+`p2p-common.sh`'s teardown now dumps every `node-*.log`, so J1's and J2's
+restart logs are included. A run takes about 4 minutes. Local runner name:
+`checkpoint-scenario`.
+
+### Results on 2026-09-24: green twice in a row; fails when the check is removed
+
+Runs 6 and 7 on the final script both passed all 33 assertions (`rc=0`).
+J1 caught up 6 s after start. J2 stayed at head 0 while A reached 96–97,
+and logged 156 `checkpoint mismatch at height 40` lines in about 65 s. J2
+without the checkpoint synced in 4 s.
+
+**Negative test.** `checkpoints::check` was temporarily changed to always
+return `Ok`, then reverted. The scenario failed 3 assertions, all in (2):
+J2 reached head 97 with A's block at 40 and logged no mismatch. (3)
+still passed, as expected, because the startup check reads the installed
+list directly and does not call `check`.
+
+### Findings
+
+- **The backfill stall is silent at the default log level.** On the
+  pipeline path, reth's reverse headers downloader reports a
+  `validate_header` failure only at **trace**
+  (`downloaders::headers`, "Failed to validate header"). It then retries
+  the same range about twice a second. At `info`, J2 shows `Preparing
+  stage … Headers checkpoint=0` and a new `catching up to sync target` line
+  for each higher announcement, but nothing about why. Proposed
+  (orchestrator-owned): a warn line from Sova's own code the first time a
+  checkpoint rejects a header, for example in `SovaConsensus::validate_header`,
+  rate-limited per height.
+- **`caught up to sync target` is not a usable "synced" signal.** It never
+  appeared in any run, even for J1 and the J2 control, which did catch up.
+  The driver logs it only if the head reaches the target inside the same
+  loop turn as the FCU. So (2) checks `eth_syncing` instead. Right after a
+  backfill, reth still answers "syncing". It flips to idle on the first
+  live canonical head.
+- **SIGTERM drops the in-memory tail.** `bin/sova` installs no signal
+  handler, so SIGTERM ends the process at once. reth keeps up to
+  `DEFAULT_PERSISTENCE_THRESHOLD` (50) canonical blocks in memory. J1's
+  head was 99–100 before the stop and 70 after the restart: the backfilled
+  range was on disk, the live tail was not. J1 re-fetched the tail within
+  seconds, so this is harmless here. It does mean the startup checkpoint
+  check only sees persisted blocks. Unpersisted blocks are re-imported
+  through `validate_header`, so they are still checked.
+
 ## SIP-4 anchor precompile: `anchor-precompile-scenario.sh` (nightly CI)
 
 Proves the SIP-4 `anchor()` precompile (`0x…5A00`, `crates/evm/src/zcash.rs`,
