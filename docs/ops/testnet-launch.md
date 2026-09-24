@@ -33,7 +33,7 @@ before step 1.
 | **SIP-7 Zcash pool state** | On from genesis, or off (debug only). A consensus switch that is also in the genesis: with it on, the chain spec predeploys the `ZcashBlocks` contract at `0x…5A01`, which changes the genesis hash and fork ID. Every node, ours and strangers', must use the same value, so `testnet.env` and `seeds.json` carry it. | **SIP-7: on at the reset (Rob accepted SIP-7, 2026-09-23).** Contracts read Zcash pool totals, block stats and shielded flows (`0x…5A00`, `ZcashBlocks` at `0x…5A01`), and every node serves `sova_getZcashBlocks`. | `SOVA_SIP7=1` |
 | **Chain ID at the reset** | Keep **82330**: the new genesis already gets a new fork ID, and chainlist doesn't change. Or take a fresh ID (e.g. 82331), so wallets don't mix up the old chain's nonces and history with the new one's. | **Decided 2026-09-23: keep 82330.** | `SOVA_CHAIN_ID`, plus `chain.rs` at the reset |
 | **Servers** | Where the seed, RPC, faucet and keeper run | **Decided: all on Hetzner (Rob, 2026-09-23)**, one server account, Cloudflare for the edge. This replaces the same day's earlier "keeper on AWS". | `SERVERS` |
-| **Keeper host** | Without a mine-mode node somewhere, the chain doesn't advance (see B5b). | **Decided 2026-09-23: Hetzner CX33** (fsn1, 40 GB volume), created by the kit like the other three. A keeper elsewhere stays possible as an option ("Optional: a keeper elsewhere", below R9). | `SERVERS` (`sova-keeper-1:cx33:fsn1:40:keeper`) |
+| **Keeper host** | Without a mine-mode node somewhere, the chain doesn't advance (see B5b). | **Decided 2026-09-23: Hetzner** (fsn1, 40 GB volume; CX23 since 2026-09-24), created by the kit like the other three. A keeper elsewhere stays possible as an option ("Optional: a keeper elsewhere", below R9). | `SERVERS` (`sova-keeper-1:cx23:fsn1:40:keeper`) |
 | **Volume sizes** | Testnet zebrad state is 12 GB today, so small volumes still leave room for a year. | **Decided 2026-09-23: seed 60 GB, RPC 40 GB, keeper 40 GB** (Hetzner volumes). The faucet wasn't part of the decision: it's set to **40 GB** to match. | `SERVERS` (4th field) |
 | **Ashwings prices** | Mint price in SOVA (wei) and in ZEC (zatoshis) | **Decided 2026-09-23:** 625 SOVA, 0.05 ZEC; payee = a project testnet key (`tmQKm7CN5LaVg83YNRzXPLNy1qBMs8qcqNz`, keystore on the orchestrator's SSD), Rob's own t-address before mainnet | `ASHWINGS_PRICE_WEI`, `ASHWINGS_PRICE_ZAT`, `ASHWINGS_ZEC_PAYEE` |
 | **Market fee** | basis points | 100 (1%) | `MARKET_FEE_BPS` |
@@ -300,10 +300,10 @@ the gitleaks CI scan.
 
 | Server | Type / location [est] | Runs | Inbound |
 | --- | --- | --- | --- |
-| `sova-seed-1` | Hetzner CX43, fsn1, 60 GB volume | zebrad, sova (follow-only, C5-enforcing) | SSH (admin IPs), Sova P2P 30303 tcp+udp, Zcash P2P 18233 |
-| `sova-rpc-1` | Hetzner CX43, nbg1, 40 GB volume | zebrad, sova (follow-only, `SOVA_RPC_PROFILE=public`), cloudflared → `rpc.testnet.sova.io` | SSH only |
-| `sova-faucet-1` | Hetzner CX33, hel1, 40 GB volume | zebrad, `sova-faucet` (its own hot key, D5), cloudflared → `faucet.testnet.sova.io` | SSH only |
-| `sova-keeper-1` | Hetzner CX33, fsn1, 40 GB volume | zebrad, sova in **mine** mode (SIP-6: signs with the keeper's miner key), `sova-keeper` (disclosed, D8) | SSH only |
+| `sova-seed-1` | Hetzner CX33, fsn1, 60 GB volume | zebrad, sova (follow-only, C5-enforcing) | SSH (admin IPs), Sova P2P 30303 tcp+udp, Zcash P2P 18233 |
+| `sova-rpc-1` | Hetzner CX23, nbg1, 40 GB volume | zebrad, sova (follow-only, `SOVA_RPC_PROFILE=public`), cloudflared → `rpc.testnet.sova.io` | SSH only |
+| `sova-faucet-1` | Hetzner CX23, hel1, 40 GB volume | zebrad, `sova-faucet` (its own hot key, D5), cloudflared → `faucet.testnet.sova.io` | SSH only |
+| `sova-keeper-1` | Hetzner CX23, fsn1, 40 GB volume | zebrad, sova in **mine** mode (SIP-6: signs with the keeper's miner key), `sova-keeper` (disclosed, D8) | SSH only |
 
 | Script | What it does |
 | --- | --- |
@@ -320,13 +320,13 @@ the gitleaks CI scan.
 | `publish.sh` | Join files and zebrad snapshots to R2 |
 | `smoke.sh` | Edge (incl. the published genesis hash, and SIP-7's `ZcashBlocks.latest()` and `sova_getZcashBlocks`), host, mint and contract checks |
 
-**Budget** [est, 2026-09-22/23 prices; re-check at order time, because
-Hetzner repriced three times in 2026]: **Hetzner only** (all four servers,
-Rob, 2026-09-23). 2 × CX43 (seed, RPC) ≈ €33; 2 × CX33 (faucet, keeper)
-≈ €16–24 (€8–12 each [est]: the CX33 price isn't in infra-m1's sourced
-table); the volumes (60 + 40 + 40 + 40 GB at €0.0572/GB) ≈ €10. Cloudflare
-is $0 ($5 if the RPC exceeds 100k requests a day), and R2 is under $1.
-**Total ≈ €60–70 a month [est], Hetzner only.** Traffic: 20 TB per server
+**Budget** (server prices from the Hetzner API on 2026-09-24, incl. VAT;
+volume price [est] from infra-m1): **Hetzner only** (all four servers,
+Rob, 2026-09-23; sizes Rob, 2026-09-24). CX33 seed €9.99 + 3 × CX23 (RPC,
+faucet, keeper) €6.49 each = **€29.46**; the volumes (60 + 40 + 40 + 40 GB
+at €0.0572/GB) ≈ €10. Cloudflare is $0 ($5 if the RPC exceeds 100k
+requests a day), and R2 is under $1. **Total ≈ €40 a month, Hetzner
+only.** Traffic: 20 TB per server
 is included on Hetzner in the EU. There is no hard spend cap: the
 project's server limit is the ceiling.
 
