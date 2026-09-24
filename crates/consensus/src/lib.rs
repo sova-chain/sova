@@ -17,6 +17,7 @@
 
 pub mod epoch;
 pub mod follower;
+pub mod forkchoice;
 pub mod pools;
 pub mod schedule;
 pub mod sealer;
