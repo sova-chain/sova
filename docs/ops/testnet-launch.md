@@ -455,12 +455,16 @@ Section 0 settled the schedule (`flat`) and the chain ID (82330) on
 
 - **`SOVA_DATADIR` is on release.** With it set, the node keeps its
   datadir, uses production MDBX geometry, and its key lives at
-  `<datadir>/discovery-secret`. **Caveat:** reth persists blocks to disk
-  only once they are 50 behind the head, and `bin/sova` has no
-  graceful-shutdown handler. So a restart drops up to ~50 recent blocks
-  (about an hour of 75 s epochs) and re-fetches them from peers. That is
-  harmless while any peer is up. The follow-ups are graceful shutdown and
-  a lower persistence threshold for persistent datadirs.
+  `<datadir>/discovery-secret`. reth writes blocks to disk only once
+  they are about 50 behind the head, but `bin/sova` shuts down gracefully
+  on SIGTERM and SIGINT (`systemctl stop`/`restart`, ctrl-c): it writes
+  the blocks still in memory first, so a restart resumes at the head it
+  stopped at. It logs `SIGTERM: shutting down; persisting head N` and
+  then `shutdown complete in Xs: on disk through N`. **Caveat:** a hard
+  kill (SIGKILL, OOM, power loss) still drops up to ~50 recent blocks
+  (about an hour of 75 s epochs), which the node re-fetches from peers.
+  That is harmless while any peer is up. The remaining follow-up is a
+  lower persistence threshold for persistent datadirs.
 - **B and the schedule are profile constants now (audit F9); SIP-6 and
   SIP-7 are still env vars.** `sova-testnet` fixes the schedule (flat)
   and, once `SOVA_TESTNET_EPOCH_BASE` in `chain.rs` is set, B: an env

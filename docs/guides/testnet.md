@@ -555,8 +555,10 @@ node has no such limit.
 ## Keeping it running
 
 - **Restarts.** The node keeps its chain and node key in `SOVA_DATADIR`.
-  A restart drops up to about 50 recent blocks and fetches them again
-  from peers. That's expected.
+  Stop it with SIGTERM or ctrl-c (`systemctl stop` sends SIGTERM): it
+  writes its recent blocks to disk first and restarts at the same
+  height. A hard kill (`kill -9`, a crash, power loss) drops up to about
+  50 recent blocks, which it fetches again from peers. That's expected.
 - **As a service.** `infra/testnet/host/systemd/sova-node.service` is
   the unit the project's hosts use (with `EnvironmentFile=`). If you
   adapt it, write `SOVA_DATADIR` as an absolute path: systemd doesn't

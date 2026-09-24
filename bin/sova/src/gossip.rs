@@ -97,8 +97,9 @@ pub(crate) fn network_builder(gossip: Gossip) -> (SovaNetworkBuilder, Option<Ser
 
 /// Spawns the gossip service on a launched node whose network already
 /// carries `sova/1` (see [`network_builder`]), then peers with
-/// `static_peers`.
+/// `static_peers`. Both tasks go on `tasks`, for shutdown to stop.
 pub(crate) fn start<P, N>(
+    tasks: &mut tokio::task::JoinSet<()>,
     provider: P,
     engine: ConsensusEngineHandle<SovaEngineTypes>,
     network: N,
@@ -114,7 +115,7 @@ pub(crate) fn start<P, N>(
     N: Peers + PeersInfo + Clone + Send + Sync + 'static,
 {
     let backend = RethGossipBackend::new(provider, engine, network.clone());
-    tokio::spawn(engine::p2p::service(backend, receivers, HEAD_POLL));
+    tasks.spawn(engine::p2p::service(backend, receivers, HEAD_POLL));
 
     let local = network.local_node_record();
     println!("p2p: sova/1 gossip enabled; local enode {local}");
@@ -143,7 +144,7 @@ pub(crate) fn start<P, N>(
     // Keep static peers connected: reth backs off a peer after a dropped
     // session (e.g. a stalled/SIGSTOPped node missing pings); redial any
     // without a live session so propagation resumes promptly.
-    tokio::spawn(async move {
+    tasks.spawn(async move {
         loop {
             tokio::time::sleep(REDIAL_EVERY).await;
             for (id, addr) in &peers {

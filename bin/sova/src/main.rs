@@ -86,6 +86,9 @@
 //! Datadir (`SOVA_DATADIR`, see [`open_datadir`]): unset = a fresh
 //! ephemeral datadir per start (box, sims, CI); set = a persistent one, so
 //! the chain and the node key (and with it the enode) survive restarts.
+//! SIGTERM and SIGINT shut down gracefully (see [`shut_down`]): the blocks
+//! reth still holds in memory are written first, so a restart resumes at
+//! the head it stopped at.
 //!
 //! RPC profile (`SOVA_RPC_PROFILE`, see [`rpc`]): `local` (default —
 //! reth's standard `eth`/`net`/`web3` over HTTP on 127.0.0.1, unfiltered)
@@ -154,8 +157,27 @@ fn parse_command<I: IntoIterator<Item = String>>(args: I) -> eyre::Result<Comman
     }
 }
 
-#[tokio::main]
-async fn main() -> eyre::Result<()> {
+/// How long a SIGTERM/SIGINT waits for reth's graceful tasks, the engine
+/// flushing its in-memory blocks above all. Well inside systemd's
+/// `TimeoutStopSec=60` and the sims' 60 s stop deadline; a clean flush of a
+/// full in-memory window takes well under a second.
+const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long the tokio runtime may take to wind down after that (blocking
+/// tasks still running): reth's CLI waits 5 s too, then exits regardless.
+const RUNTIME_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+
+fn main() -> eyre::Result<()> {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    let res = rt.block_on(run());
+    // Not a plain drop: that waits for every blocking task without limit.
+    rt.shutdown_timeout(RUNTIME_SHUTDOWN_TIMEOUT);
+    res
+}
+
+async fn run() -> eyre::Result<()> {
     if parse_command(std::env::args().skip(1))? == Command::GenesisHash {
         // The chainspec only: no tracing, datadir, network or zebrad.
         let profile = chain::ChainProfile::from_env()?;
@@ -168,6 +190,8 @@ async fn main() -> eyre::Result<()> {
     let _tracing_guard = RethTracer::new().init()?;
 
     let runtime = Runtime::test();
+    // Kept for the SIGTERM/SIGINT path (see `shut_down`).
+    let shutdown_runtime = runtime.clone();
     let chain_profile = chain::ChainProfile::from_env()?;
     let rpc_profile = rpc::RpcProfile::from_env()?;
     let rpc_cors = rpc::RpcCors::from_env()?;
@@ -420,6 +444,10 @@ async fn main() -> eyre::Result<()> {
 
     engine::expectations::set_schedule(schedule);
 
+    // Our own background tasks (below), stopped before the graceful
+    // shutdown so nothing new is sealed or adopted while the engine flushes.
+    let mut sova_tasks = tokio::task::JoinSet::new();
+
     // C5 + v2 preference, for every mode that has a Zcash view: the
     // expectations follower derives each height's valid settlements from
     // our OWN zebrad (the validator rejects contradictions), and the
@@ -438,6 +466,7 @@ async fn main() -> eyre::Result<()> {
         let receivers =
             sova_receivers.ok_or_else(|| eyre::eyre!("p2p transport without sova/1 receivers"))?;
         gossip::start(
+            &mut sova_tasks,
             node.provider.clone(),
             node.add_ons_handle.beacon_engine_handle.clone(),
             node.network.clone(),
@@ -452,7 +481,7 @@ async fn main() -> eyre::Result<()> {
     }
 
     if let Some(url) = &zebrad_rpc {
-        tokio::spawn(engine::expectations::run_expectations(
+        sova_tasks.spawn(engine::expectations::run_expectations(
             ZebradClient::new(url.clone()),
             base_height,
             schedule,
@@ -462,7 +491,7 @@ async fn main() -> eyre::Result<()> {
             let head_provider = node.provider.clone();
             let lag_provider = node.provider.clone();
             let engine_handle = node.add_ons_handle.beacon_engine_handle.clone();
-            tokio::spawn(engine::candidates::run_arbiter(
+            sova_tasks.spawn(engine::candidates::run_arbiter(
                 arbiter_rx,
                 // SIP-4 §7: after a Zcash reorg, stale blocks don't count,
                 // so a replacement below the stale tip can be adopted.
@@ -524,7 +553,7 @@ async fn main() -> eyre::Result<()> {
         if let Some(sync_rx) = engine::candidates::install_sync() {
             let head_provider = node.provider.clone();
             let engine_handle = node.add_ons_handle.beacon_engine_handle.clone();
-            tokio::spawn(engine::candidates::run_sync_driver(
+            sova_tasks.spawn(engine::candidates::run_sync_driver(
                 sync_rx,
                 move || head_provider.best_block_number().unwrap_or(0),
                 // With a zebrad, "nothing scanned yet" means wait, not "no gate".
@@ -582,7 +611,7 @@ async fn main() -> eyre::Result<()> {
             let head_provider = node.provider.clone();
             let fetch_provider = node.provider.clone();
             let relay_peers = peers.clone();
-            tokio::spawn(run_relay(
+            sova_tasks.spawn(run_relay(
                 move || head_provider.best_block_number().unwrap_or(0),
                 move |height| {
                     let block = fetch_provider.block_by_number(height).ok().flatten()?;
@@ -633,7 +662,7 @@ async fn main() -> eyre::Result<()> {
             }
             None => miner,
         };
-        tokio::spawn(miner.run());
+        sova_tasks.spawn(miner.run());
 
         // Ladder step (SOVA_RANK_STEP_SECS): how long each successive
         // rank waits before sealing in the rank-0 sealer's absence.
@@ -653,7 +682,7 @@ async fn main() -> eyre::Result<()> {
             100,
         );
         let head_provider = node.provider.clone();
-        tokio::spawn(run_sealer(
+        sova_tasks.spawn(run_sealer(
             core,
             ZebradClient::new(zebrad_url.clone()),
             // SIP-4 §7: stale blocks above a Zcash rollback floor are re-sealed.
@@ -676,7 +705,56 @@ async fn main() -> eyre::Result<()> {
         );
     }
 
-    node_exit_future.await
+    // SIGTERM (systemd stop/restart) and SIGINT (ctrl-c) shut down
+    // gracefully. Without handlers either one killed the process outright,
+    // losing every block reth still held in memory (up to ~50).
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
+    let received = tokio::select! {
+        res = node_exit_future => return res,
+        _ = sigterm.recv() => "SIGTERM",
+        _ = sigint.recv() => "SIGINT",
+    };
+    shut_down(received, &node.provider, sova_tasks, shutdown_runtime).await;
+    Ok(())
+}
+
+/// What reth's own CLI does on SIGTERM/SIGINT
+/// (`CliRunner::run_command_until_exit`): fire the runtime's graceful
+/// shutdown and wait for its graceful tasks. The consensus engine is one:
+/// it sends the engine tree `Terminate`, and the tree persists every block
+/// it still holds in memory, up to the head, before it exits. Our own tasks
+/// stop first, so no block is sealed or adopted during the flush (a seal
+/// signed just before stays in the SIP-6 journal, which a restart reuses).
+async fn shut_down<P: BlockNumReader>(
+    signal: &str,
+    provider: &P,
+    mut sova_tasks: tokio::task::JoinSet<()>,
+    runtime: Runtime,
+) {
+    let started = std::time::Instant::now();
+    let head = provider.best_block_number().unwrap_or(0);
+    let on_disk = provider.last_block_number().unwrap_or(0);
+    println!("{signal}: shutting down; persisting head {head} (on disk through {on_disk})");
+    sova_tasks.abort_all();
+    // The wait spins on the calling thread, so keep it off the workers.
+    let clean = tokio::task::spawn_blocking(move || {
+        runtime.graceful_shutdown_with_timeout(GRACEFUL_SHUTDOWN_TIMEOUT)
+    })
+    .await
+    .unwrap_or(false);
+    let on_disk = provider.last_block_number().unwrap_or(0);
+    if clean {
+        println!(
+            "shutdown complete in {:.1}s: on disk through {on_disk}",
+            started.elapsed().as_secs_f64()
+        );
+    } else {
+        eprintln!(
+            "shutdown: WARNING graceful tasks still running after {}s; exiting with blocks on disk through {on_disk}",
+            GRACEFUL_SHUTDOWN_TIMEOUT.as_secs()
+        );
+    }
 }
 
 /// SIP-6: the sealing key from `SOVA_SEALER_KEYSTORE` (a `sova-miner`
