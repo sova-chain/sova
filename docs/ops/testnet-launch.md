@@ -217,6 +217,11 @@ d. **Epoch base record.** Once block B exists, run `./epoch-base.sh record
 e. **Snapshot.** Run `./publish.sh snapshot`. Post the height, hash and
    SHA-256 outside the bucket too (`docs/ops/snapshots.md`).
 
+f. **Stranger guide.** Fill every `<<…>>` placeholder in
+   `docs/guides/testnet.md` (its "Filled at launch" table names the
+   script behind each), then wire the `data-placeholder="testnet"` spans
+   in `site/src/pages/mine.astro` and `site/src/pages/node.astro` to it.
+
 Commit `out/seeds.json`, `out/testnet.env`, `out/epoch-base.json` and
 `deployments/sova-testnet.json`, so the canonical copies aren't only in
 our bucket.
@@ -247,9 +252,10 @@ ours. The laptop plays the stranger. It already has a synced testnet
 zebrad on 127.0.0.1:18234.
 
 a. **A stranger's node syncs.** Download the release tarball and verify
-   `SHA256SUMS`. Then `source` the `testnet.env` from
-   `https://dl.testnet.sova.io/testnet.env`, set `SOVA_DATADIR` to a
-   fresh directory and `SOVA_ZEBRAD_RPC=http://127.0.0.1:18234`, and run
+   `SHA256SUMS`. Then source the `testnet.env` from
+   `https://dl.testnet.sova.io/testnet.env` (every line is an `export`,
+   and it defaults to `SOVA_FOLLOW_ONLY=1`), set `SOVA_DATADIR` to a fresh
+   directory and `SOVA_ZEBRAD_RPC=http://127.0.0.1:18234`, and run
    `sova` (`testnet.env` sets `SOVA_SIP6=1`, so it checks every seal, and
    `SOVA_SIP7=1`, so it boots the same genesis: `sova genesis-hash`
    with that env prints the hash `seeds.json` publishes).
@@ -358,6 +364,39 @@ alert.
   provider's console; on AWS, release its Elastic IP.)
 - **Emergency "project goes dark":** `systemctl stop sova-node` on our
   hosts. The network is unaffected by design; this is the drill.
+
+### Checkpoint refresh (every release; first one about a day in)
+
+Client checkpoints (audit F2 measure B, `docs/design/f2-join-and-restart.md`
+§B) stop a joining node from being fed another history below them. At
+launch the list is empty (genesis is pinned by the chainspec), so it
+protects nothing until the first refresh, once the chain is 1,000 Zcash
+blocks old (about 21 hours).
+
+1. **Pick a height.** The newest Sova block `N` whose epoch
+   `E = N + B − 1` is at least 1,000 blocks below the Zcash testnet tip.
+   Zebra never rolls back that far, so the checkpoint adds no new
+   assumption about Zcash reorgs.
+2. **Compare on two nodes run independently** (the keeper and one other,
+   ideally not ours):
+   `cast block N --field hash --rpc-url <node>` must print the same hash
+   on both. If they differ, stop: the network is split and needs a look,
+   not a checkpoint.
+3. **Build it in.** Add `(N, hash)` to `SOVA_TESTNET_CHECKPOINTS` in
+   `bin/sova/src/chain.rs`, keeping older entries. Tag the release.
+4. **Publish** the line `sova-checkpoint N 0xhash` in the release notes,
+   the public repo and on sova.io, so anyone can check it against any node
+   with `eth_getBlockByNumber`.
+5. **Operators ahead of a release** can add it themselves:
+   `SOVA_CHECKPOINTS=N:0xhash` (comma-separated for several). An entry that
+   contradicts a built-in one makes the node refuse to start, never a
+   silent override. A node whose database already contradicts a
+   checkpoint also refuses to start and says to unwind or resync.
+
+What it trusts: whoever chose the list, to have named the history the
+network followed. Not validity: every block is still checked against the
+node's own zebrad, so a wrong checkpoint can stop a node or put it on
+another valid history, never mint anything.
 
 ### Testnet reset (SIP-4, SIP-6 and SIP-7 activate here)
 

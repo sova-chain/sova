@@ -33,6 +33,7 @@ mod types;
 mod validator;
 
 pub mod candidates;
+pub mod checkpoints;
 pub mod driver;
 pub mod expectations;
 pub mod miner;
@@ -40,6 +41,7 @@ pub mod p2p;
 pub mod relay;
 pub mod seal;
 pub mod signer;
+pub mod votes;
 pub mod zcash_index;
 
 pub use builder::{SovaPayloadBuilder, SovaPayloadBuilderBuilder};

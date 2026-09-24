@@ -123,8 +123,10 @@ check "bootnodes.sh: publishes the nodes' recorded genesis hash in seeds.json" \
   test "$(jq -r .genesis_hash "${TMP}/out/seeds.json" 2>/dev/null)" == "${G1}"
 check "bootnodes.sh: seeds.json carries sip6 and sip7" \
   test "$(jq -c '[.sip6, .sip7]' "${TMP}/out/seeds.json" 2>/dev/null)" == '[true,true]'
-check "bootnodes.sh: testnet.env sets SOVA_SIP7=1" grep -q '^SOVA_SIP7=1$' "${TMP}/out/testnet.env"
+check "bootnodes.sh: testnet.env sets SOVA_SIP7=1" grep -q '^export SOVA_SIP7=1$' "${TMP}/out/testnet.env"
 check "bootnodes.sh: testnet.env names the genesis hash" grep -q "^# Genesis hash: ${G1}$" "${TMP}/out/testnet.env"
+check "bootnodes.sh: testnet.env follows only by default" grep -q "^export SOVA_FOLLOW_ONLY=1$" "${TMP}/out/testnet.env"
+check "bootnodes.sh: testnet.env sources cleanly" bash -c "set -u; HOME=/nonexistent; . \"${TMP}/out/testnet.env\" && [[ \$SOVA_DATADIR == /nonexistent/.sova-testnet/node && \$SOVA_CHAIN == sova-testnet ]]"
 check "bootnodes.sh: no hard-coded genesis hash left in the kit" \
   lacks "0x8b04e8fc|GENESIS_HASH=\"0x" "$(cat "${KIT}"/*.sh "${KIT}"/host/*.sh)"
 record_genesis "${G2}"

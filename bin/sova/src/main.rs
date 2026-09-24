@@ -272,6 +272,18 @@ async fn main() -> eyre::Result<()> {
     if env_flag("SOVA_SIP7") {
         engine::zcash_index::activate_sip7();
     }
+    // Audit F2 measure B: client checkpoints, checked on every import path
+    // from the first block on.
+    let checkpoints =
+        chain_profile.checkpoints(std::env::var("SOVA_CHECKPOINTS").ok().as_deref())?;
+    if !checkpoints.is_empty() {
+        println!(
+            "checkpoints: {} (newest at height {})",
+            checkpoints.len(),
+            checkpoints.keys().next_back().copied().unwrap_or(0)
+        );
+    }
+    engine::checkpoints::install(checkpoints);
 
     // NOTE: bind `node` (not `_`, which drops immediately) — the `FullNode`
     // handle owns the running RPC server.
@@ -351,6 +363,29 @@ async fn main() -> eyre::Result<()> {
             }
             reader_provider.block_hash(h).ok().flatten().map(|b| b.0)
         }));
+        // Audit F2, measure A: after a restart the fork-choice tracker is
+        // empty; it ranks our own canonical blocks from what we store (the
+        // seal's signer, else the withdrawals), with the same rule consensus
+        // enforces, so a competitor must beat our real block.
+        let ranker_provider = node.provider.clone();
+        engine::candidates::set_canonical_ranker(Box::new(move |h| {
+            canonical_record(&ranker_provider, h)
+        }));
+    }
+    // Audit F2 measure B: a database that already follows a history the
+    // checkpoints contradict can't be fixed by importing more blocks.
+    {
+        let head = node.provider.best_block_number().unwrap_or(0);
+        for (&height, &expected) in engine::checkpoints::installed().range(..=head) {
+            let stored = node.provider.block_hash(height).ok().flatten();
+            if let Some(stored) = stored.filter(|h| h.0 != expected) {
+                return Err(eyre::eyre!(
+                    "this datadir follows another history: block {height} is {stored}, \
+                     checkpoint is 0x{}; unwind below {height} or resync from an empty datadir",
+                    alloy_primitives::hex::encode(expected)
+                ));
+            }
+        }
     }
     if chain_profile != chain::ChainProfile::Dev {
         println!(
@@ -370,6 +405,7 @@ async fn main() -> eyre::Result<()> {
     // calls are fatal: such a node cannot execute blocks that use the
     // precompile). EVMs resolve the source per block.
     engine::zcash_index::install(base_height);
+    engine::votes::install(base_height);
 
     // SIP-3 emission schedule (SOVA_EMISSION_SCHEDULE): "flat" (default
     // — regtest/box determinism, the draft 6,250/epoch) or "sip3" (slow
@@ -830,6 +866,46 @@ fn apply_shared_jwt(node_config: &mut NodeConfig<ChainSpec>) -> eyre::Result<Opt
     let secret = JwtSecret::from_file(&path)?;
     node_config.rpc.auth_jwtsecret = Some(path);
     Ok(Some(secret))
+}
+
+/// Our canonical block at `height` ranked as fork choice would rank it
+/// (audit F2 measure A): `None` if there's no block or its epoch isn't
+/// scanned yet, or if it somehow fails today's rules (then it competes as
+/// unobserved, as before).
+fn canonical_record<P>(provider: &P, height: u64) -> Option<engine::candidates::CanonicalRecord>
+where
+    P: BlockReader<Block = reth_ethereum::Block>,
+{
+    use engine::expectations::RankedVerdict;
+    use engine::seal::Sealer;
+    let block = provider.block(height.into()).ok().flatten()?;
+    let header = &block.header;
+    let sealer = engine::seal::sealer(header, engine::seal::active_chain_id()).ok()?;
+    let withdrawals = block.body.withdrawals.as_deref().map(|w| w.as_slice());
+    let rank = match engine::expectations::global().check_sealed(
+        height,
+        withdrawals,
+        engine::expectations::schedule(),
+        sealer,
+    ) {
+        RankedVerdict::Valid { rank } => rank,
+        RankedVerdict::ValidEmpty => usize::MAX,
+        RankedVerdict::Mismatch { .. } | RankedVerdict::Unknown => return None,
+    };
+    let seal = match sealer {
+        Sealer::Signed(signer) => Some(engine::candidates::SealInfo {
+            signer: signer.0.0,
+            anchor: header.parent_beacon_block_root.unwrap_or_default().0,
+            seal_hash: engine::seal::seal_hash(header).0,
+        }),
+        _ => None,
+    };
+    Some(engine::candidates::CanonicalRecord {
+        hash: header.hash_slow().0,
+        parent: header.parent_hash.0,
+        rank,
+        seal,
+    })
 }
 
 /// The canonical block's SIP-4 Zcash anchor (`parent_beacon_block_root`)

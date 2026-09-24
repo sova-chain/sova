@@ -382,8 +382,9 @@ pub async fn run_expectations<V: ZcashView>(
 ) {
     // SIP-7: the follower that feeds the index holds on missing or
     // inconsistent pool accounting (a stall and an alert, never an answer).
-    let mut follower =
-        Follower::new(base_height, REORG_WINDOW).with_strict_pools(evm::zcash::sip7_active());
+    let mut follower = Follower::new(base_height, REORG_WINDOW)
+        .with_strict_pools(evm::zcash::sip7_active())
+        .with_sip8_from(crate::votes::sip8_from());
     loop {
         match follower.poll(&view) {
             Ok(events) => {
@@ -397,6 +398,7 @@ pub async fn run_expectations<V: ZcashView>(
                             global().unwind_above(sova);
                             crate::candidates::global().unwind_above(sova);
                             crate::zcash_index::global().unwind_above(to_height);
+                            crate::votes::global().unwind_above(to_height);
                             tracing::warn!(
                                 to_height,
                                 "expectations and candidates unwound (zcash reorg)"
@@ -407,6 +409,7 @@ pub async fn run_expectations<V: ZcashView>(
                             // lets a block through consensus, the precompile
                             // must already cover its anchor.
                             crate::zcash_index::global().insert(&epoch);
+                            crate::votes::global().insert(&epoch);
                             epoch.txs = Vec::new();
                             let sova_height =
                                 epoch.height.saturating_sub(base_height).saturating_add(1);
@@ -531,6 +534,7 @@ mod tests {
                     signal_bits: 0,
                     value_zat: 600_000,
                 },
+                reference: None,
             },
             EpochBurn {
                 txid: [2; 32],
@@ -539,6 +543,7 @@ mod tests {
                     signal_bits: 0,
                     value_zat: 400_000,
                 },
+                reference: None,
             },
         ];
         let epoch = EpochData {
@@ -635,6 +640,7 @@ mod tests {
                 signal_bits: 0,
                 value_zat: zat,
             },
+            reference: None,
         };
         let epoch = EpochData {
             height: 100,

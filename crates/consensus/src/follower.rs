@@ -143,6 +143,9 @@ pub struct Follower {
     last_pools: Option<(u64, crate::pools::BlockPools)>,
     /// Why the last poll stopped short under `strict_pools`, if it did.
     held: Option<String>,
+    /// SIP-8 activation: the first Zcash height at which version-2 burns
+    /// are recognized (`None`: never, SIP-1 alone).
+    sip8_from: Option<u64>,
 }
 
 impl Follower {
@@ -158,7 +161,16 @@ impl Follower {
             strict_pools: false,
             last_pools: None,
             held: None,
+            sip8_from: None,
         }
+    }
+
+    /// SIP-8: recognize version-2 burns from Zcash height `from` on. Below
+    /// it SIP-1 alone applies, forever, so history replays the same way.
+    #[must_use]
+    pub const fn with_sip8_from(mut self, from: Option<u64>) -> Self {
+        self.sip8_from = from;
+        self
     }
 
     /// SIP-7: hold on missing or inconsistent value pools (see
@@ -238,16 +250,18 @@ impl Follower {
                     break;
                 }
             }
+            let sip8 = self.sip8_from.is_some_and(|from| block.height >= from);
             let mut burns = Vec::new();
             for tx in &block.txs {
                 let outs = tx.outputs.iter().map(|o| TxOutRef {
                     value_zat: o.value_zat,
                     script: o.script.as_slice(),
                 });
-                if let Some(burn) = sip1::extract_burn(outs) {
+                if let Some((burn, reference)) = sip1::extract_burn_at(outs, sip8) {
                     burns.push(EpochBurn {
                         txid: tx.txid,
                         burn,
+                        reference,
                     });
                 }
             }
@@ -274,7 +288,7 @@ impl Follower {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sip1::{BurnPayload, burn_lock_script};
+    use crate::sip1::{BurnPayload, BurnPayloadV2, SovaRef, burn_lock_script};
     use std::cell::RefCell;
 
     /// In-memory chain the tests mutate to simulate growth and reorgs.
@@ -369,6 +383,69 @@ mod tests {
                 FollowerEvent::Rollback { .. } => None,
             })
             .collect()
+    }
+
+    fn v2_burn_tx(txid_byte: u8, addr_byte: u8, value_zat: u64, reference: SovaRef) -> TxView {
+        let payload = BurnPayloadV2 {
+            evm_address: [addr_byte; 20],
+            signal_bits: 0,
+            reference,
+        };
+        TxView {
+            txid: h32(txid_byte),
+            outputs: vec![
+                TxOut {
+                    value_zat: 0,
+                    script: payload.to_script().to_vec(),
+                },
+                TxOut {
+                    value_zat,
+                    script: burn_lock_script().to_vec(),
+                },
+            ],
+            version: 5,
+            shielded: Default::default(),
+        }
+    }
+
+    /// SIP-8 §10 "activation boundary": a v2 burn below the activation
+    /// height is not a burn, one at it is, and v1 burns are untouched on
+    /// both sides.
+    #[test]
+    fn sip8_activation_boundary() {
+        let r = SovaRef {
+            height: 1,
+            hash: h32(0xee),
+        };
+        let view = MockView::new();
+        view.push(
+            1,
+            vec![v2_burn_tx(0x11, 1, 5_000, r), burn_tx(0x12, 2, 5_000)],
+        );
+        view.push(
+            2,
+            vec![v2_burn_tx(0x21, 1, 5_000, r), burn_tx(0x22, 2, 5_000)],
+        );
+        let burns_at = |from: Option<u64>| -> Vec<Vec<(u8, Option<SovaRef>)>> {
+            let mut f = Follower::new(1, 100).with_sip8_from(from);
+            f.poll(&view)
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|e| match e {
+                    FollowerEvent::Epoch(ep) => {
+                        Some(ep.burns.iter().map(|b| (b.txid[0], b.reference)).collect())
+                    }
+                    FollowerEvent::Rollback { .. } => None,
+                })
+                .collect()
+        };
+        // Activation at height 2.
+        assert_eq!(
+            burns_at(Some(2)),
+            vec![vec![(0x12, None)], vec![(0x21, Some(r)), (0x22, None)]]
+        );
+        // Never active: SIP-1 alone, the v2 burns do not exist.
+        assert_eq!(burns_at(None), vec![vec![(0x12, None)], vec![(0x22, None)]]);
     }
 
     #[test]

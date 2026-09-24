@@ -89,34 +89,38 @@ joined="$(IFS=,; echo "${enodes[*]}")"
 [[ -n "${SOVA_EPOCH_BASE}" ]] || warn "SOVA_EPOCH_BASE is not pinned yet: testnet.env / seeds.json carry an empty base (not publishable)"
 
 if [[ "${SOVA_SIP6}" == 1 ]]; then
-  mining_note="# Mining (SIP-6 sealing): set SOVA_SEALER_KEYSTORE to your sova-miner's
-# keystore.json. Its key signs your blocks and holds your SOVA (keep it
-# 0600), and its EVM address must be the one your burns credit. Keep
-# SOVA_DATADIR: the seal journal under it must survive restarts."
+  mining_note="# Mining (SIP-6 sealing): delete the SOVA_FOLLOW_ONLY line and add
+# export SOVA_SEALER_KEYSTORE=<your sova-miner's keystore.json>. Its key
+# signs your blocks and holds your SOVA (keep it 0600), and its EVM address
+# must be the one your burns credit. Keep SOVA_DATADIR: the seal journal
+# under it must survive restarts."
 else
-  mining_note="# Mining: set SOVA_MINER_EVM_ADDRESS to your sova-miner's \"evm address\"."
+  mining_note="# Mining: delete the SOVA_FOLLOW_ONLY line and add
+# export SOVA_MINER_EVM_ADDRESS=<your sova-miner's \"evm address\">."
 fi
 
 cat >"${OUT_DIR}/testnet.env" <<EOF
-# Sova public testnet (M1). Source this in the environment of YOUR node
-# (bin/sova ${SOVA_RELEASE_TAG}), next to your own zebrad on Zcash testnet.
+# Sova public testnet (M1). Source it in the shell that runs YOUR node
+# (bin/sova ${SOVA_RELEASE_TAG}), next to your own zebrad on Zcash testnet:
+#   . ./testnet.env && sova
 # Every value above the line must match the network's; the ones below are
 # yours. Published at https://${DL_HOST}/testnet.env and in the repo.
 # Genesis hash: ${GENESIS_HASH}
 # (\`sova genesis-hash\` with this env sourced prints it; SOVA_SIP7 is part
 # of the genesis, so a node with another value is on another chain).
-SOVA_CHAIN=sova-testnet
-SOVA_GOSSIP=p2p
-SOVA_EPOCH_BASE=${SOVA_EPOCH_BASE}
-SOVA_EMISSION_SCHEDULE=${SOVA_EMISSION_SCHEDULE}
-SOVA_SIP6=${SOVA_SIP6}
-SOVA_SIP7=${SOVA_SIP7}
-SOVA_BOOTNODES=${joined}
+export SOVA_CHAIN=sova-testnet
+export SOVA_GOSSIP=p2p
+export SOVA_EPOCH_BASE=${SOVA_EPOCH_BASE}
+export SOVA_EMISSION_SCHEDULE=${SOVA_EMISSION_SCHEDULE}
+export SOVA_SIP6=${SOVA_SIP6}
+export SOVA_SIP7=${SOVA_SIP7}
+export SOVA_BOOTNODES=${joined}
 # ---- yours ----
-SOVA_ZEBRAD_RPC=http://127.0.0.1:${ZEBRA_RPC_PORT}
-SOVA_DATADIR=\$HOME/.sova-testnet/node
+export SOVA_ZEBRAD_RPC=http://127.0.0.1:${ZEBRA_RPC_PORT}
+export SOVA_DATADIR="\$HOME/.sova-testnet/node"
+# Follows and verifies the chain; seals nothing.
+export SOVA_FOLLOW_ONLY=1
 ${mining_note}
-# Follow only: SOVA_FOLLOW_ONLY=1 instead.
 EOF
 
 bn_json="$(for i in "${!enodes[@]}"; do jq -nc --arg e "${enodes[$i]}" --arg d "${dns[$i]}" '{enode:$e} + (if $d == "" then {} else {dns:$d} end)'; done | jq -sc .)"

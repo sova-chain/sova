@@ -509,18 +509,31 @@ checkpoint."
    of the canonical block at h is recoverable from its withdrawals
    (`identify_sealer`), so the tracker can be reconstructed on demand and
    a restart no longer accepts any rank first (F2, restart).
+   *Done 2026-09-23 (`319c334`): after a restart the tracker ranks the
+   node's own canonical blocks from what it stores (the seal's signer,
+   else the withdrawals), so a competitor must beat the real block.*
 3. **Sync-target hygiene (F3):** refuse targets above `scanned + slack`;
    expire a target that makes no progress for N polls; allow a lower
    target to replace an expired one.
 4. **Held-block hygiene (F4):** evict from `seen` when the LRU evicts from
    `held`; run `validate_header` before parking.
 5. **Ship SIP-6** (already accepted), with §2.8's timestamp bound and
-   pinned `prev_randao`.
+   pinned `prev_randao`. *Built (`f32b896`); on from the testnet reset.*
 6. **Client checkpoints (F2, join/eclipse):** a `(height, hash)` list in
    the chain profile (`bin/sova/src/chain.rs`), refreshed per release; a
    synced history must contain them; the sync driver refuses a target
    whose ancestry contradicts one. A day of work. This is weak subjectivity
    and should be called that.
+   *Done 2026-09-23 (`862d3e3`, `fab48bf`): a permanent
+   `CheckpointMismatch` in `validate_header` (every import path), sync
+   targets that contradict a checkpoint are dropped, startup refuses a
+   database that contradicts one, and `SOVA_CHECKPOINTS` adds operator
+   entries (a contradiction with a built-in entry refuses to start).
+   Proven live on a dev node: a contradicting checkpoint at height 1 makes
+   reth mark every height-1 block invalid, and a restart on a stored chain
+   that contradicts it exits with the unwind/resync message. The list is
+   empty at launch; the refresh procedure is in
+   `docs/ops/testnet-launch.md`.*
 7. **Move `SOVA_EPOCH_BASE` and the emission schedule into the chain
    profile (F9).**
 

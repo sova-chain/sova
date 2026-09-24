@@ -219,7 +219,7 @@ impl SealerCore {
     #[must_use]
     pub fn new(config: SealerConfig, base_height: u64, window: usize) -> Self {
         Self {
-            follower: Follower::new(base_height, window),
+            follower: Follower::new(base_height, window).with_sip8_from(crate::votes::sip8_from()),
             config,
             base_height,
             queue: std::collections::BTreeMap::new(),
@@ -610,6 +610,7 @@ mod tests {
                 signal_bits: 0,
                 value_zat,
             },
+            reference: None,
         }
     }
 

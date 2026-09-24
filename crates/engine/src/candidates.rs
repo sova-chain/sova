@@ -81,6 +81,34 @@ pub type CanonicalReader = Box<dyn Fn(u64) -> Option<[u8; 32]> + Send + Sync>;
 
 static CANONICAL: OnceLock<CanonicalReader> = OnceLock::new();
 
+/// Our own canonical block at a height, ranked from what the node stores
+/// (audit F2, measure A; `docs/design/f2-join-and-restart.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CanonicalRecord {
+    /// The canonical block's hash.
+    pub hash: [u8; 32],
+    /// Its parent.
+    pub parent: [u8; 32],
+    /// Its sealer rank, recomputed from its seal (SIP-6) or withdrawals.
+    pub rank: usize,
+    /// Its seal identity, when sealed.
+    pub seal: Option<SealInfo>,
+}
+
+/// Ranks this node's canonical block at a height (`None`: no block there,
+/// or its epoch isn't scanned yet so its rank is unknown).
+pub type CanonicalRanker = Box<dyn Fn(u64) -> Option<CanonicalRecord> + Send + Sync>;
+
+static RANKER: OnceLock<CanonicalRanker> = OnceLock::new();
+
+/// Install the canonical-block ranker (bin/sova, over its provider). After a
+/// restart the tracker is empty; without this, our own blocks competed as
+/// unobserved (the lowest rank) and any valid branch within
+/// [`MAX_REPLACE_DEPTH`] could move a restarted node off a rank-0 tip.
+pub fn set_canonical_ranker(ranker: CanonicalRanker) -> bool {
+    RANKER.set(ranker).is_ok()
+}
+
 /// Install the canonical-hash reader the **sibling rule** needs (audit
 /// 2026-09-23 F1). Without it (unit tests, tools) every candidate counts as
 /// attached, the pre-rule behaviour.
@@ -155,6 +183,8 @@ pub struct CandidateTracker {
     seen: Mutex<BTreeMap<u64, Vec<Seen>>>,
     /// Per-instance canonical reader (tests); the global one otherwise.
     canonical: Option<CanonicalReader>,
+    /// Per-instance canonical ranker (tests); the global one otherwise.
+    ranker: Option<CanonicalRanker>,
     /// Candidates observed before our follower had scanned their epoch —
     /// held at trust rank `usize::MAX` — with the withdrawals needed to
     /// rank them once it has ([`CandidateTracker::rerank`]). Without this
@@ -178,6 +208,45 @@ impl CandidateTracker {
         Self {
             canonical: Some(reader),
             ..Self::default()
+        }
+    }
+
+    /// The same tracker ranking its canonical blocks with `ranker` (tests).
+    #[must_use]
+    pub fn with_canonical_ranker(mut self, ranker: CanonicalRanker) -> Self {
+        self.ranker = Some(ranker);
+        self
+    }
+
+    fn ranker(&self) -> Option<&(dyn Fn(u64) -> Option<CanonicalRecord> + Send + Sync)> {
+        self.ranker
+            .as_deref()
+            .or_else(|| RANKER.get().map(|b| b.as_ref()))
+    }
+
+    /// Record our own canonical blocks at `height` and the
+    /// [`MAX_REPLACE_DEPTH`] heights below, when the tracker has no record
+    /// of them (a restart): a competitor must then beat our real block, as
+    /// it would have before the restart.
+    fn seed_canonical(&self, seen: &mut BTreeMap<u64, Vec<Seen>>, height: u64) {
+        let Some(ranker) = self.ranker() else {
+            return;
+        };
+        for h in height.saturating_sub(MAX_REPLACE_DEPTH)..=height {
+            let Some(rec) = ranker(h) else {
+                continue;
+            };
+            let entry = seen.entry(h).or_default();
+            if !entry.iter().any(|s| s.candidate.block_hash == rec.hash) {
+                entry.push(Seen {
+                    candidate: Candidate {
+                        sealer_rank: rec.rank,
+                        block_hash: rec.hash,
+                    },
+                    parent: rec.parent,
+                    seal: rec.seal,
+                });
+            }
         }
     }
 
@@ -218,6 +287,7 @@ impl CandidateTracker {
             let Ok(mut seen) = self.seen.lock() else {
                 return Observation::NotBetter;
             };
+            self.seed_canonical(&mut seen, sova_height);
             let entry = seen.entry(sova_height).or_default();
             match entry
                 .iter_mut()
@@ -680,7 +750,9 @@ fn remember_target(target: SyncTarget) {
 /// (`scanned = None` means no gate); drops targets at or below `head`.
 fn actionable_target(head: u64, scanned: Option<u64>) -> Option<SyncTarget> {
     let mut targets = SYNC_TARGETS.lock().ok()?;
-    targets.retain(|&h, _| h > head);
+    // Audit F2 measure B: a target contradicting a checkpoint is never
+    // worth backfilling towards.
+    targets.retain(|&h, hash| h > head && crate::checkpoints::allows(h, hash));
     targets
         .range(..=scanned.unwrap_or(u64::MAX))
         .next_back()
@@ -1127,6 +1199,48 @@ mod tests {
         assert_eq!(t.best(11).map(|c| c.sealer_rank), Some(0));
         let _ = t.observe_sealed(11, cand(0, 0x03), [0xEE; 32], seal(0xA0, 5, 3));
         assert_eq!(t.best(11).map(|c| c.sealer_rank), Some(0));
+    }
+
+    /// A tracker over canonical 0..=10 (`[h; 32]`) that, like a restarted
+    /// node, has observed nothing but can rank its canonical blocks.
+    fn restarted(rank_of: fn(u64) -> usize) -> CandidateTracker {
+        chain_to_10().with_canonical_ranker(Box::new(move |h| {
+            (h <= 10).then(|| CanonicalRecord {
+                hash: [h as u8; 32],
+                parent: [h.saturating_sub(1) as u8; 32],
+                rank: rank_of(h),
+                seal: None,
+            })
+        }))
+    }
+
+    /// Audit F2 measure A: after a restart, a worse sibling doesn't move a
+    /// rank-0 tip (it used to: our block competed as unobserved), a better
+    /// one still wins (the late win), and a worse branch forking below the
+    /// tip stays out.
+    #[test]
+    fn after_restart_our_own_block_sets_the_bar() {
+        let t = restarted(|_| 0);
+        assert_eq!(
+            t.observe(10, cand(1, 0x01), [9; 32]),
+            Observation::NotBetter
+        );
+        assert_eq!(t.best(10).map(|c| c.block_hash), Some([10; 32]));
+        let _ = t.observe(9, cand(1, 0x02), [8; 32]);
+        let _ = t.observe(10, cand(0, 0x03), [0x02; 32]);
+        assert_eq!(
+            t.best(10).map(|c| c.block_hash),
+            Some([10; 32]),
+            "worse fork at 9"
+        );
+
+        let t = restarted(|h| if h == 10 { 2 } else { 0 });
+        assert_eq!(
+            t.observe(10, cand(0, 0x01), [9; 32]),
+            Observation::NewBest,
+            "late win"
+        );
+        assert_eq!(t.best(10).map(|c| c.block_hash), Some([0x01; 32]));
     }
 
     /// No reader installed (tools, other tests): every candidate counts.

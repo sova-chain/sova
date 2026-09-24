@@ -105,6 +105,9 @@ pub struct SovaConsensus {
     /// SIP-6 activation (the chain ID seals are checked under), read per
     /// check for the same reason.
     sip6: fn() -> Option<u64>,
+    /// Client checkpoints (audit F2 measure B): a block at a checkpoint
+    /// height must carry the listed hash.
+    checkpoint: fn(u64, [u8; 32]) -> Result<(), crate::checkpoints::CheckpointMismatch>,
 }
 
 impl SovaConsensus {
@@ -125,6 +128,7 @@ impl SovaConsensus {
             expectations,
             schedule,
             sip6: crate::seal::active_chain_id,
+            checkpoint: crate::checkpoints::check,
         }
     }
 
@@ -132,6 +136,16 @@ impl SovaConsensus {
     #[must_use]
     pub const fn with_sip6(mut self, sip6: fn() -> Option<u64>) -> Self {
         self.sip6 = sip6;
+        self
+    }
+
+    /// The same consensus with checkpoints checked by `checkpoint` (tests).
+    #[must_use]
+    pub const fn with_checkpoints(
+        mut self,
+        checkpoint: fn(u64, [u8; 32]) -> Result<(), crate::checkpoints::CheckpointMismatch>,
+    ) -> Self {
+        self.checkpoint = checkpoint;
         self
     }
 
@@ -196,6 +210,10 @@ impl SovaConsensus {
 
 impl HeaderValidator for SovaConsensus {
     fn validate_header(&self, header: &SealedHeader) -> Result<(), ConsensusError> {
+        // Checkpoints first, and permanent: no block at a checkpoint height
+        // with another hash is ever acceptable, and reth's invalid-ancestor
+        // handling then rejects its descendants too.
+        (self.checkpoint)(header.number(), header.hash().0).map_err(ConsensusError::other)?;
         self.inner.validate_header(header)?;
         crate::seal::check_header(header.header(), (self.sip6)())
             .map(|_| ())
@@ -408,6 +426,44 @@ mod tests {
             extra_data: alloy_primitives::Bytes::copy_from_slice(extra),
             ..Default::default()
         }
+    }
+
+    /// Audit F2 measure B: a header at a checkpoint height must be the
+    /// listed one, the rejection is permanent (never a hold), and other
+    /// heights are untouched.
+    #[test]
+    fn checkpoints_pin_their_height() {
+        static CP: std::sync::OnceLock<crate::checkpoints::Checkpoints> =
+            std::sync::OnceLock::new();
+        let listed = SealedHeader::seal_slow(dev_header(b"listed"));
+        let other = SealedHeader::seal_slow(dev_header(b"other"));
+        let mut elsewhere = dev_header(b"other");
+        elsewhere.number = 6;
+        let elsewhere = SealedHeader::seal_slow(elsewhere);
+        CP.get_or_init(|| [(5, listed.hash().0)].into_iter().collect());
+        let c = consensus(leak())
+            .with_sip6(|| None)
+            .with_checkpoints(|h, x| {
+                CP.get()
+                    .map_or(Ok(()), |cp| crate::checkpoints::check_in(cp, h, x))
+            });
+
+        assert!(
+            c.validate_header(&listed).is_ok(),
+            "{:?}",
+            c.validate_header(&listed)
+        );
+        assert!(c.validate_header(&elsewhere).is_ok());
+        let err = c.validate_header(&other).err();
+        assert!(
+            err.as_ref()
+                .is_some_and(|e| e.to_string().contains("checkpoint mismatch at height 5")),
+            "{err:?}"
+        );
+        assert!(
+            err.is_some_and(|e| !c.is_transient_error(&e)),
+            "must be permanent"
+        );
     }
 
     /// SIP-6 §2.5: before activation the header rule is Ethereum's 32

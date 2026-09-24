@@ -48,6 +48,7 @@ fn burn(txid: u8, addr: u8, zat: u64) -> EpochBurn {
             signal_bits: 0,
             value_zat: zat,
         },
+        reference: None,
     }
 }
 

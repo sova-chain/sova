@@ -153,7 +153,10 @@ unshielded coinbase spends by default. Fund the faucet with
 `generatetoaddress 1 <faucet t-addr>`, then mature that coinbase with
 `generate 100`, the same way the box funds its miner.
 
-## Behind Cloudflare (later; nothing is exposed today)
+## Behind Cloudflare (what the testnet kit sets up)
+
+`infra/testnet` does all of this on `sova-faucet-1` (`setup-host.sh`
+writes the config, `cloudflare.sh tunnels` and `ratelimit` do the edge).
 
 1. Keep `listen` on loopback. Run `cloudflared` on the same host, with an
    ingress rule that sends `faucet.<domain>` to `http://127.0.0.1:18790`.

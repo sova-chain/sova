@@ -19,7 +19,8 @@
 //! would dial mainnet bootnodes the moment discovery is on. The profile
 //! therefore always sets the list explicitly: `SOVA_BOOTNODES`
 //! (comma-separated enode/enr records) if given, else
-//! [`SOVA_TESTNET_BOOTNODES`] (empty until m1-b ships public propagation).
+//! [`SOVA_TESTNET_BOOTNODES`] (empty until a release compiles in the
+//! launch list that `infra/testnet/bootnodes.sh` prints).
 //! Whether discovery runs at all is [`crate::discovery`]'s call (on for
 //! non-dev p2p nodes, which refuse to start with an unpinned list).
 
@@ -58,10 +59,19 @@ pub(crate) const SOVA_TESTNET_GENESIS_EXTRA_DATA: &[u8] = b"sova-testnet-v0";
 /// this changes no EVM rule, only the genesis hash.
 pub(crate) const SOVA_TESTNET_GENESIS_TIMESTAMP: u64 = 1_788_220_800;
 
-/// Default testnet bootnodes (enode/enr strings). Empty until m1-b: an
+/// Default testnet bootnodes (enode/enr strings). Empty until a release
+/// compiles in the launch list `infra/testnet/bootnodes.sh` prints; an
 /// explicit empty list is what keeps reth from falling back to Ethereum
 /// mainnet's bootnodes. `SOVA_BOOTNODES` overrides it.
 pub(crate) const SOVA_TESTNET_BOOTNODES: &[&str] = &[];
+
+/// Built-in testnet checkpoints, `(Sova height, block hash)` (audit F2
+/// measure B, `docs/design/f2-join-and-restart.md` §B). Empty at launch:
+/// genesis is already pinned by the chainspec. Each release adds the
+/// newest block whose Zcash epoch is at least 1,000 Zcash blocks deep and
+/// which two independently run nodes agree on (`docs/ops/testnet-launch.md`,
+/// "Checkpoint refresh"). Operators add entries with `SOVA_CHECKPOINTS`.
+pub(crate) const SOVA_TESTNET_CHECKPOINTS: &[(u64, [u8; 32])] = &[];
 
 /// A chain profile, parsed from `SOVA_CHAIN`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -123,6 +133,20 @@ impl ChainProfile {
             .collect::<eyre::Result<Vec<_>>>()?;
         network.bootnodes = Some(parsed);
         Ok(())
+    }
+
+    /// This profile's checkpoints: the built-in list plus `SOVA_CHECKPOINTS`
+    /// (`raw_override`, comma-separated `height:0xhash`). An entry that
+    /// contradicts a built-in one is an error: the node refuses to start.
+    pub(crate) fn checkpoints(
+        self,
+        raw_override: Option<&str>,
+    ) -> eyre::Result<engine::checkpoints::Checkpoints> {
+        let builtin: &[(u64, [u8; 32])] = match self {
+            Self::Dev => &[],
+            Self::SovaTestnet => SOVA_TESTNET_CHECKPOINTS,
+        };
+        engine::checkpoints::merge(builtin, raw_override).map_err(|e| eyre::eyre!(e))
     }
 
     /// The chainspec this profile boots.
@@ -210,6 +234,32 @@ mod tests {
     use super::*;
     use alloy_primitives::B256;
     use reth_ethereum::chainspec::{EthChainSpec, MAINNET};
+
+    #[test]
+    fn checkpoints_merge_env_and_refuse_contradictions() {
+        let h = format!("0x{}", "ab".repeat(32));
+        let other = format!("0x{}", "cd".repeat(32));
+        for profile in [ChainProfile::Dev, ChainProfile::SovaTestnet] {
+            let base = profile
+                .checkpoints(None)
+                .map(|c| c.len())
+                .unwrap_or(usize::MAX);
+            assert_eq!(
+                base,
+                SOVA_TESTNET_CHECKPOINTS.len() * usize::from(profile != ChainProfile::Dev)
+            );
+            let with = profile
+                .checkpoints(Some(&format!("1000:{h}")))
+                .map(|c| c.len());
+            assert_eq!(with.ok(), Some(base + 1));
+            assert!(
+                profile
+                    .checkpoints(Some(&format!("1000:{h},1000:{other}")))
+                    .is_err()
+            );
+            assert!(profile.checkpoints(Some("1000")).is_err());
+        }
+    }
 
     /// reth v2.6.0's `DEV` genesis hash (what the box has always booted).
     const DEV_GENESIS_HASH: B256 = alloy_primitives::b256!(

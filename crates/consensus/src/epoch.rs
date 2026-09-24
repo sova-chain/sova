@@ -24,7 +24,7 @@
 //! `None` and means "protocol invariants violated" — a block deriving
 //! `None` is invalid, full stop.
 
-use crate::sip1::Burn;
+use crate::sip1::{Burn, SovaRef};
 
 /// Upper bound on an epoch reward, in wei (10^-18 SOVA).
 ///
@@ -44,6 +44,10 @@ pub struct EpochBurn {
     pub txid: [u8; 32],
     /// The recognized burn.
     pub burn: Burn,
+    /// SIP-8: the Sova block a version-2 burn references (`None` for a v1
+    /// burn). Ranking, the mint and the ladder never read it; it matters
+    /// only as a vote ([`SovaRef::votes_at`]).
+    pub reference: Option<SovaRef>,
 }
 
 /// A miner's aggregated standing in one epoch.
@@ -188,6 +192,7 @@ mod tests {
                 signal_bits: 0,
                 value_zat,
             },
+            reference: None,
         }
     }
 
