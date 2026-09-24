@@ -295,7 +295,11 @@ cmd_up() {
       srv_is_byo "${s}" && continue # adopt_byo waited for it
       name="$(srv_name "${s}")"
       local tries=0
-      until kit_ssh "${name}" 'cloud-init status --wait >/dev/null 2>&1; cloud-init status' 2>/dev/null | grep -q 'status: done'; do
+      local ci_out
+      # Output into a variable first: `kit_ssh | grep -q` can SIGPIPE ssh
+      # on a match, and pipefail then reads "done" as not done.
+      until ci_out="$(kit_ssh "${name}" 'cloud-init status --wait >/dev/null 2>&1; cloud-init status' 2>/dev/null)" \
+        && grep -q 'status: done' <<<"${ci_out}"; do
         tries=$((tries + 1))
         [[ ${tries} -lt 40 ]] || die "${name}: cloud-init did not finish (ssh sova-admin@$(server_ip "${name}") and check /var/log/cloud-init-output.log)"
         sleep 15

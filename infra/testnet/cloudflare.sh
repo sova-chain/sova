@@ -145,7 +145,9 @@ step_dns() {
 # ingress path regex $4.
 tunnel_for_role() {
   local role="$1" hostname="$2" service="$3" path="$4" server tname tid body token
-  server="$(servers_with_role "${role}" | head -1)"
+  # sed -n 1p, not head -1: it reads to EOF, so no SIGPIPE (and no set -e
+  # abort under pipefail) once a role has two or more servers.
+  server="$(servers_with_role "${role}" | sed -n 1p)"
   [[ -n "${server}" ]] || { warn "no ${role} server; skipping its tunnel"; return 0; }
   tname="${HC_PROJECT_LABEL}-${server}"
   tid="$(cf GET "/accounts/${ACCT}/cfd_tunnel?name=${tname}&is_deleted=false" | jq -r '.result[0].id // empty')"

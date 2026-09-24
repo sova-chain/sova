@@ -61,6 +61,14 @@ check "render: keeper's RPC profile is local" grep -q '^SOVA_RPC_PROFILE=local$'
 check "render: keeper advertises its byo address (SOVA_NAT=extip:${KEEPER_IP})" \
   grep -q "^SOVA_NAT=extip:${KEEPER_IP}$" "${R}/etc/sova/sova-node.env"
 check "render: emission schedule is flat" grep -q '^SOVA_EMISSION_SCHEDULE=flat$' "${R}/etc/sova/sova-node.env"
+check "render: keeper's node has SIP-6 on" grep -q '^SOVA_SIP6=1$' "${R}/etc/sova/sova-node.env"
+check "render: keeper signs with the node's copy of its miner key" \
+  grep -q '^SOVA_SEALER_KEYSTORE=/var/lib/sova/sealer/keystore.json$' "${R}/etc/sova/sova-node.env"
+check "render: keeper's datadir (seal journal) is persistent" grep -q '^SOVA_DATADIR=/var/lib/sova/node$' "${R}/etc/sova/sova-node.env"
+sip6_follower() { grep -q '^SOVA_SIP6=1$' "$1" && ! grep -q SEALER "$1"; }
+for h in sova-seed-1 sova-rpc-1; do
+  check "render: ${h}'s node has SIP-6 on, no sealing key" sip6_follower "${TMP}/out/render/${h}/etc/sova/sova-node.env"
+done
 check "render: keeper budgets rendered" grep -q '^KEEPER_LIFETIME_BUDGET_ZAT=' "${R}/etc/sova/keeper.env"
 check "render: no cloudflared on the keeper (not public)" test ! -e "${R}/etc/systemd/system/cloudflared.service"
 if [[ ${#VERIFY[@]} -gt 0 ]]; then

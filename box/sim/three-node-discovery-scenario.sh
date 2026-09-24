@@ -231,7 +231,9 @@ while read -r id; do
   echo "  ${who}: ${id:0:16}..."
   [[ "${who}" == "UNKNOWN" ]] && fail "(1) C peered with a node that is neither A nor B: ${id}"
 done <<<"$(sova_active_peers "${WORK_DIR}/node-c.log")"
-if sova_active_peers "${WORK_DIR}/node-a.log" | grep -qx "${ID_C}"; then
+# Not `sova_active_peers | grep -qx`: under pipefail a match can SIGPIPE
+# the producer and drop this pass.
+if PEERS_A="$(sova_active_peers "${WORK_DIR}/node-a.log")" && grep -qx "${ID_C}" <<<"${PEERS_A}"; then
   pass "(1) A reports C as an active sova/1 peer too"
 fi
 C_A_DIR="$(strip_ansi "${WORK_DIR}/node-c.log" | grep 'sova/1: connection established' | grep "0x${ID_A}" \

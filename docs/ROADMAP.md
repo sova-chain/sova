@@ -10,7 +10,7 @@ carries technical risk. The page changes by pull request, like the code.
 Checked boxes are done. Unchecked items say whether they are *in progress*,
 *next* or *later*.
 
-## M0: code, spec and a chain you can run (in progress)
+## M0: code, spec and a chain you can run (announcement before the testnet)
 
 The code, the specs and a runnable local chain go public together. There is
 no public network at M0.
@@ -31,7 +31,7 @@ no public network at M0.
 prebuilt binaries. Building from source instead takes about 11 minutes on
 an idle Apple Silicon laptop and about 25 on a busy one.
 
-## M1: strangers mine a public testnet (in progress)
+## M1: strangers mine a public testnet (target October 2026)
 
 A public Sova testnet anchored to Zcash testnet. Mining burns testnet ZEC
 (TAZ), so it costs nothing real.
@@ -74,9 +74,9 @@ Remaining:
   for 24 hours. The chain keeps sealing and a fresh node joins through a
   community peer. We publish the result.
 
-## Mainnet (later, gated)
+## Mainnet (target Q1 2027, gated)
 
-Gated, not dated. Mainnet launches when all of these hold:
+Target: Q1 2027 (Rob, 2026-09-23; public on sova.io/why). Still gated: mainnet launches only when all of these hold:
 
 - [ ] M1 exit met, and the testnet has been uneventful for a good while
       after that.

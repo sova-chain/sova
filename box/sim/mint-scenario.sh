@@ -337,7 +337,9 @@ SOVA_PID=$!
 
 echo "--- waiting for bin/sova's EVM RPC readiness ---"
 deadline=$((SECONDS + 60))
-until eth_rpc eth_chainId "[]" | grep -q result; do
+# Response into a variable, not `eth_rpc | grep -q`: under pipefail a
+# match can SIGPIPE curl and read as "not ready".
+until ready_resp="$(eth_rpc eth_chainId "[]")" && grep -q result <<<"${ready_resp}"; do
   if ! kill -0 "${SOVA_PID}" 2>/dev/null; then
     fail "setup: bin/sova exited before becoming ready; log follows"
     cat "${WORK_DIR}/sova-node.log" >&2

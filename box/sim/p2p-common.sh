@@ -212,8 +212,10 @@ wait_for_balance_change() {
 
 wait_for_eth_rpc() {
   local url="$1" pid="$2" label="$3" timeout_s="${4:-90}"
-  local deadline=$((SECONDS + timeout_s))
-  until eth_rpc "${url}" eth_chainId "[]" | grep -q result; do
+  local deadline=$((SECONDS + timeout_s)) ready_resp
+  # Response into a variable, not `eth_rpc | grep -q`: under pipefail a
+  # match can SIGPIPE curl and read as "not ready".
+  until ready_resp="$(eth_rpc "${url}" eth_chainId "[]")" && grep -q result <<<"${ready_resp}"; do
     if ! kill -0 "${pid}" 2>/dev/null; then
       fail "setup: ${label} exited before becoming ready"
       return 1
@@ -255,8 +257,10 @@ sova_active_peers() {
 
 # Wait until a node's log shows an active sova/1 session with peer id $2.
 wait_for_sova_peer_id() {
-  local log="$1" id="$2" deadline=$((SECONDS + ${3:-60}))
-  until sova_active_peers "${log}" | grep -qx "${id}"; do
+  local log="$1" id="$2" deadline=$((SECONDS + ${3:-60})) peers_out
+  # Not `sova_active_peers | grep -qx`: under pipefail a match can SIGPIPE
+  # the producer and read as "no such peer".
+  until peers_out="$(sova_active_peers "${log}")" && grep -qx "${id}" <<<"${peers_out}"; do
     [[ ${SECONDS} -ge ${deadline} ]] && return 1
     sleep 1
   done
@@ -318,7 +322,11 @@ wait_for_sova_peer() {
 # --- stack -------------------------------------------------------------
 
 preflight() {
-  if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "${ZEBRAD_CONTAINER}"; then
+  local docker_names
+  # Not `docker ps | grep -qx`: under pipefail a match can SIGPIPE docker
+  # and this guard would silently pass.
+  if docker_names="$(docker ps -a --format '{{.Names}}' 2>/dev/null)" \
+    && grep -qx "${ZEBRAD_CONTAINER}" <<<"${docker_names}"; then
     echo "error: container ${ZEBRAD_CONTAINER} already exists (another run of this scenario?); not touching it" >&2
     exit 1
   fi

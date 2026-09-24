@@ -36,7 +36,9 @@ validate_servers
 need_env R2_ACCESS_KEY_ID
 need_env R2_SECRET_ACCESS_KEY
 need_env CLOUDFLARE_ACCOUNT_ID
-SEED="$(servers_with_role seed | head -1)"
+# sed -n 1p, not head -1: it reads to EOF, so no SIGPIPE (and no set -e
+# abort under pipefail) once a role has two or more servers.
+SEED="$(servers_with_role seed | sed -n 1p)"
 STAGE=/var/lib/sova/publish
 
 # Runs a bash script (stdin of this function) as root on the seed, with the

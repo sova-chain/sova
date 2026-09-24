@@ -10,7 +10,7 @@
 #       past the tip: a round, announceable number, in the future, so
 #       every node (ours and early strangers') can be up before epoch B
 #       exists. Burn-less epochs before the first burn are filled by
-#       rewardless cadence blocks from any mine-mode node (the keeper).
+#       SIP-6 null blocks from any mine-mode node (the keeper).
 #   ./epoch-base.sh pin <B>
 #       Write SOVA_EPOCH_BASE=<B> into config.env. Then ./deploy.sh rolls it
 #       out and starts the sova nodes, ./bootnodes.sh writes it into

@@ -63,10 +63,14 @@ pub const MAX_REPLACE_DEPTH: u64 = 3;
 /// a block with this many blocks built on it.
 pub const SAFE_DEPTH: u64 = MAX_REPLACE_DEPTH;
 
-/// Blocks below the head reported as `finalized` (Rob, 2026-09-23): ten
-/// Zcash confirmations of the anchor, about 12.5 minutes, the depth SIP-4
-/// suggests for mainnet and close to Ethereum's finality.
-pub const FINALIZED_DEPTH: u64 = 10;
+/// Blocks below the head reported as `finalized`. Must exceed how deep
+/// Zcash itself can still reorganize — Zebra rolls back at most 99 blocks
+/// (`MAX_BLOCK_REORG_HEIGHT`) — because reth refuses any head below the
+/// finalized block it was given (`engine::tree` "too deep reorg"), and a
+/// Zcash reorg unwinds Sova block for block (SIP-4 §7). At 10 (Rob's
+/// 2026-09-23 label) a Zcash reorg deeper than ~9 blocks wedged the node:
+/// it could never re-seal on the new branch (zcash-reorg scenario).
+pub const FINALIZED_DEPTH: u64 = 100;
 
 /// The canonical-hash lookup, borrowed.
 type Reader<'a> = &'a (dyn Fn(u64) -> Option<[u8; 32]> + Send + Sync);

@@ -17,8 +17,15 @@
 #   seed   zebrad (inbound 18233) + sova-node follow-only, P2P inbound
 #   rpc    zebrad + sova-node follow-only (public RPC profile) + cloudflared
 #   faucet zebrad + sova-faucet (own hot key) + cloudflared
-#   keeper zebrad + sova-node in MINE mode (seals, incl. cadence blocks)
+#   keeper zebrad + sova-node in MINE mode (seals, incl. null blocks;
+#          with SOVA_SIP6=1 it signs as the keeper's miner key)
 #          + sova-keeper burner (installed, not started)
+#
+# SOVA_SIP6=1 (the default): every node requires SIP-6 sealed or null
+# blocks, and the keeper's node signs with a 0600 copy of the keeper's
+# sova-miner keystore owned by the node's user (sova), at
+# /var/lib/sova/sealer/keystore.json. Its seal journal lives under the
+# persistent SOVA_DATADIR (/var/lib/sova/node/seal-journal/<address>).
 #
 # Lines starting "KIT-OUT " are machine-read by deploy.sh (enode, faucet
 # t-addr, keeper addresses: all public).
@@ -35,10 +42,14 @@ source "${ENV_FILE}"
 SOVA_EPOCH_BASE="${SOVA_EPOCH_BASE:-}"
 SOVA_BOOTNODES="${SOVA_BOOTNODES:-}"
 SOVA_EMISSION_SCHEDULE="${SOVA_EMISSION_SCHEDULE:-sip3}"
+SOVA_SIP6="${SOVA_SIP6:-1}"
 BUILD_FROM_SOURCE="${BUILD_FROM_SOURCE:-0}"
 
 DATA=/var/lib/sova
 ETC=/etc/sova
+# SIP-6: the keeper node's sealing key, a copy of the keeper's miner
+# keystore readable only by the node's user (sova-node.service User=sova).
+SEALER_KEYSTORE="${DATA}/sealer/keystore.json"
 UNIT_DIR=/etc/systemd/system
 RENDER=""
 if [[ "${2:-}" == --render ]]; then
@@ -67,6 +78,7 @@ fi
 case "${ROLE}" in seed | rpc | faucet | keeper) ;; *) die "unknown ROLE ${ROLE}" ;; esac
 [[ -z "${SOVA_EPOCH_BASE}" || "${SOVA_EPOCH_BASE}" =~ ^[1-9][0-9]*$ ]] || die "SOVA_EPOCH_BASE must be a positive integer"
 case "${SOVA_EMISSION_SCHEDULE}" in sip3 | flat) ;; *) die "SOVA_EMISSION_SCHEDULE must be sip3 or flat" ;; esac
+case "${SOVA_SIP6}" in 0 | 1) ;; *) die "SOVA_SIP6 must be 0 or 1" ;; esac
 
 has_node() { [[ "${ROLE}" == seed || "${ROLE}" == rpc || "${ROLE}" == keeper ]]; }
 has_tunnel() { [[ "${ROLE}" == rpc || "${ROLE}" == faucet ]]; }
@@ -303,6 +315,7 @@ $1
 SOVA_ZEBRAD_RPC=http://127.0.0.1:${ZEBRA_RPC_PORT}
 SOVA_EPOCH_BASE=${SOVA_EPOCH_BASE}
 SOVA_EMISSION_SCHEDULE=${SOVA_EMISSION_SCHEDULE}
+SOVA_SIP6=${SOVA_SIP6}
 SOVA_DATADIR=${DATA}/node
 SOVA_BOOTNODES=${SOVA_BOOTNODES}
 SOVA_P2P_PORT=${SOVA_P2P_PORT}
@@ -321,18 +334,24 @@ setup_node() {
 
   local mode_lines rpc_profile=public
   if [[ "${ROLE}" == keeper ]]; then
-    # Mine mode: seals its own burns' epochs, and rewardless cadence
-    # blocks for burn-less epochs, so the chain has a producer on day 1.
-    # It is an ordinary sealer with no privilege (D8).
+    # Mine mode: seals its own burns' epochs, and null blocks (SIP-6
+    # §2.4; rewardless cadence blocks with SIP-6 off) for burn-less
+    # epochs, so the chain has a producer on day 1. It is an ordinary
+    # sealer with no privilege (D8). With SIP-6 it signs as the keeper's
+    # miner key and journals under SOVA_DATADIR (persistent).
     local evm
     evm="$(keeper_evm_address)"
-    mode_lines="SOVA_MINER_EVM_ADDRESS=${evm}"
+    mode_lines="$(keeper_mode_lines "${evm}")"
     rpc_profile=local
   else
     mode_lines="SOVA_FOLLOW_ONLY=1"
   fi
-  node_env_text "${mode_lines}" "${rpc_profile}" >"${ETC}/sova-node.env.new"
   local changed=0
+  if [[ "${ROLE}" == keeper && "${SOVA_SIP6}" == 1 ]]; then
+    install_sealer_key
+    [[ ${SEALER_KEY_CHANGED} == 0 ]] || changed=1
+  fi
+  node_env_text "${mode_lines}" "${rpc_profile}" >"${ETC}/sova-node.env.new"
   if ! cmp -s "${ETC}/sova-node.env.new" "${ETC}/sova-node.env"; then
     mv "${ETC}/sova-node.env.new" "${ETC}/sova-node.env"
     changed=1
@@ -355,7 +374,7 @@ setup_node() {
   if [[ ${changed} == 1 || ${bin_changed} == 1 ]] || ! systemctl is-active --quiet sova-node; then
     systemctl restart sova-node
     readlink /usr/local/bin/sova >"${ETC}/.sova-node.bin"
-    log "sova-node (re)started (epoch base ${SOVA_EPOCH_BASE}, ${SOVA_EMISSION_SCHEDULE})"
+    log "sova-node (re)started (epoch base ${SOVA_EPOCH_BASE}, ${SOVA_EMISSION_SCHEDULE}, SIP-6 $([[ "${SOVA_SIP6}" == 1 ]] && echo on || echo off))"
   else
     log "sova-node unchanged and running"
   fi
@@ -402,13 +421,51 @@ setup_faucet() {
 # ---- keeper ----------------------------------------------------------------------------
 keeper_evm_address() {
   local init
-  init="$(sudo -u sova-keeper /usr/local/bin/sova-miner --network test --data-dir "${DATA}/keeper" init)"
+  # stdout + stderr: the legacy-address warning goes to stderr.
+  init="$(sudo -u sova-keeper /usr/local/bin/sova-miner --network test --data-dir "${DATA}/keeper" init 2>&1)"
+  if [[ "${SOVA_SIP6}" == 1 ]] && grep -qE "LEGACY|not this key's own" <<<"${init}"; then
+    # SIP-6 seals with the keystore key, so burns must credit that key's
+    # own address. bin/sova would refuse the mismatch at start; fail here
+    # first, with the fix. A fresh init always credits the key's own.
+    printf '%s\n' "${init}" >&2
+    die "the keeper's burns do not credit its own key's EVM address; SIP-6 needs them to (run: sudo -u sova-keeper sova-miner --network test --data-dir ${DATA}/keeper init --migrate-evm-address, then re-run deploy.sh; docs/ops/keeper-miner.md)"
+  fi
   out keeper_taddr "$(awk '/t-addr to fund/ {print $NF}' <<<"${init}")"
   local evm
   evm="$(awk '/evm address/ {print $NF}' <<<"${init}")"
   out keeper_evm "${evm}"
   [[ "${evm}" =~ ^0x[0-9a-fA-F]{40}$ ]] || die "could not read the keeper's EVM address from sova-miner init"
   echo "${evm}"
+}
+
+# The keeper node's mode lines. SOVA_MINER_EVM_ADDRESS stays (it is what
+# `sova-miner init` reports the burns credit): with SIP-6 on, bin/sova
+# refuses to start unless it equals the sealing key's address, so the
+# node can never seal as one address while burning for another.
+keeper_mode_lines() { # evm
+  printf 'SOVA_MINER_EVM_ADDRESS=%s\n' "$1"
+  [[ "${SOVA_SIP6}" == 1 ]] && printf 'SOVA_SEALER_KEYSTORE=%s\n' "${SEALER_KEYSTORE}"
+  return 0
+}
+
+# SIP-6: copy the keeper's miner keystore (sova-keeper's own 0600 file,
+# which the burner keeps using) to the node's copy, 0600 and owned by sova,
+# in a 0700 directory. Two files, each readable by exactly one service
+# user. SEALER_KEY_CHANGED=1 if the copy changed (first install, or a
+# re-init / migrate of the miner keystore), so the node restarts.
+SEALER_KEY_CHANGED=0
+install_sealer_key() {
+  local src="${DATA}/keeper/keystore.json"
+  [[ -s "${src}" ]] || die "no keeper keystore at ${src} (sova-miner init failed?)"
+  install -d -m 0700 -o sova -g sova "$(dirname "${SEALER_KEYSTORE}")"
+  if ! cmp -s "${src}" "${SEALER_KEYSTORE}"; then
+    (umask 077 && install -m 0600 -o sova -g sova "${src}" "${SEALER_KEYSTORE}.new")
+    mv -f "${SEALER_KEYSTORE}.new" "${SEALER_KEYSTORE}"
+    SEALER_KEY_CHANGED=1
+    log "sealing key installed at ${SEALER_KEYSTORE} (0600, sova)"
+  fi
+  chown sova:sova "${SEALER_KEYSTORE}"
+  chmod 0600 "${SEALER_KEYSTORE}"
 }
 
 keeper_env_text() {
@@ -474,10 +531,13 @@ check_no_keys() {
     seed | rpc)
       local found
       # -xdev per starting point: the root disk and the data volume.
+      # sed -n 1,5p, not head -5: it reads to EOF, so find is never SIGPIPEd
+      # into a silent set -e abort (pipefail) before the die below.
       found="$(find / "${DATA}" -xdev \( -name 'keystore*.json' -o -name 'miner.json' -o -name '*.keystore' \) \
-        -not -path '/var/lib/docker/*' 2>/dev/null | head -5)"
+        -not -path '/var/lib/docker/*' 2>/dev/null | sed -n 1,5p)"
       [[ -z "${found}" ]] || die "signing key material on a public ${ROLE} box: ${found}"
-      [[ ! -d "${DATA}/faucet" && ! -d "${DATA}/keeper" ]] || die "faucet/keeper state on a public ${ROLE} box"
+      [[ ! -d "${DATA}/faucet" && ! -d "${DATA}/keeper" && ! -d "${DATA}/sealer" ]] ||
+        die "faucet/keeper/sealer state on a public ${ROLE} box"
       log "no-keys check passed (only the p2p node key and SSH host keys)"
       ;;
   esac
@@ -495,7 +555,7 @@ render_host() {
     local mode_lines="SOVA_FOLLOW_ONLY=1" rpc_profile=public
     if [[ "${ROLE}" == keeper ]]; then
       # The real value comes from `sova-miner init` on the host.
-      mode_lines="SOVA_MINER_EVM_ADDRESS=0x<keeper-evm-from-sova-miner-init>"
+      mode_lines="$(keeper_mode_lines "0x<keeper-evm-from-sova-miner-init>")"
       rpc_profile=local
     fi
     node_env_text "${mode_lines}" "${rpc_profile}" >"${ETC}/sova-node.env"

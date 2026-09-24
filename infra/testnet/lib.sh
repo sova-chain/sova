@@ -179,9 +179,18 @@ validate_edge_config() {
   [[ "${CF_RATELIMIT_REQUESTS_PER_10S}" =~ ^[1-9][0-9]*$ ]] || die "config: CF_RATELIMIT_REQUESTS_PER_10S must be a positive integer"
 }
 
+# SIP-6 sealer signatures (config.env.example, "Consensus parameters"). A
+# consensus switch: every node must agree, so only 0 or 1, default on.
+validate_sip6() {
+  SOVA_SIP6="${SOVA_SIP6:-1}"
+  [[ "${SOVA_SIP6}" == 0 || "${SOVA_SIP6}" == 1 ]] || die "config: SOVA_SIP6 must be 0 or 1, got '${SOVA_SIP6}'"
+  [[ "${SOVA_SIP6}" == 1 ]] || cfg_warn "SOVA_SIP6=0: SIP-6 is off (debug only; the public testnet runs with it on from genesis)"
+}
+
 validate_config() {
   validate_servers
   validate_edge_config
+  validate_sip6
   local v h p ports=" " n s
   [[ "${SOVA_RELEASE_TAG:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] ||
     die "config: SOVA_RELEASE_TAG '${SOVA_RELEASE_TAG:-}' is not a vX.Y.Z tag"

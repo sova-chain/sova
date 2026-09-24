@@ -66,7 +66,10 @@ CO="$(cast call "${ASHW}" 'zecCheckout()(address)' --rpc-url "${RPC}")"
 # scripts in its own EVM, which lacks it, so this step talks to the node
 # with cast. It only reserves: paying is a real Zcash transaction.
 echo "--- ZEC path: reserve an order (needs SIP-4 at 0x…5a00) ---"
-if ANCHOR="$(cast call "${ZCASH}" 'anchor()(uint64,bytes32)' --rpc-url "${RPC}" 2>/dev/null | head -1)" && [ -n "${ANCHOR}" ]; then
+# Not `cast call | head -1`: under pipefail, head's early exit can SIGPIPE
+# cast (it prints two lines) and turn a live SIP-4 into "not answering".
+if ANCHOR_OUT="$(cast call "${ZCASH}" 'anchor()(uint64,bytes32)' --rpc-url "${RPC}" 2>/dev/null)" \
+  && ANCHOR="$(head -1 <<<"${ANCHOR_OUT}")" && [ -n "${ANCHOR}" ]; then
   BUYER="$(cast wallet address --private-key "${SOVA_DEMO_BUYER_KEY}")"
   # Explicit gas: cast estimates against the pending block, whose Zcash
   # anchor is not indexed until the next Zcash block, and the node then

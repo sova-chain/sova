@@ -46,6 +46,68 @@ documented deviation, `docs/ops/testnet-launch.md`), so `--rpc-cookie-file`
 isn't needed there. `setup-host.sh` runs `init` itself and prints both
 addresses (`out/servers/sova-keeper-1.keeper_*`).
 
+## Sealing key (SIP-6)
+
+The public testnet runs SIP-6 from its genesis (`SOVA_SIP6=1` in
+`config.env`, on every node). Every block is then either **sealed**,
+signed by a burner ranked in its epoch, or a deterministic **null**
+block. So the keeper's `sova-node` needs a key online, and that key is
+**the keeper's miner key**: the same `sova-miner` keystore that funds its
+burns. Its EVM address is the one the burns credit, and it is the address
+the node seals as.
+
+What the kit sets up on `sova-keeper-1` (`setup-host.sh`, role `keeper`):
+
+- **Two copies of one key, each readable by one service user.** The
+  burner's own keystore stays `/var/lib/sova/keeper/keystore.json`
+  (mode 600, owner `sova-keeper`, in a 700 directory). The node gets a copy
+  at `/var/lib/sova/sealer/keystore.json` (mode 600, owner `sova`, the
+  `User=` of `sova-node.service`, in a 700 directory), which
+  `SOVA_SEALER_KEYSTORE` names. Each deploy compares the two files and
+  refreshes the copy if the keystore changed (a re-init or a migration),
+  then restarts `sova-node`. Nobody copies it by hand, and it never leaves
+  the machine.
+- **`SOVA_MINER_EVM_ADDRESS` stays in the node's env** and is set to the
+  address `init` reports. With SIP-6 on, `bin/sova` refuses to start if it
+  differs from the sealing key's own address ("burns must credit the key
+  that seals"). The node can therefore never seal as one address while
+  its burns credit another. `setup-host.sh` checks this earlier too: if
+  `init` reports a legacy or `--evm-address` credit target, the deploy
+  stops and prints the fix (below).
+- **The seal journal** is `/var/lib/sova/node/seal-journal/<address>/`,
+  under the node's persistent `SOVA_DATADIR` (`/var/lib/sova/node`, the
+  AWS root disk). Before the node releases a signed block, it fsyncs the
+  block there. If a retried build asks it to seal the same slot (height,
+  parent and Zcash anchor) again, it re-publishes the journaled block
+  instead of signing a second one.
+
+**Never delete the seal journal while `sova-node` runs**, and don't
+delete it when wiping the chain either (the reset command in
+`docs/ops/testnet-launch.md` keeps it). Without it, a restart or a retried
+build can sign a second, different block for a slot it already signed.
+That is equivocation: every node that sees both blocks demotes all of the
+keeper's blocks for that slot below every honest rank (SIP-6 §2.7).
+
+**If the key is stolen**, the thief can do what the keeper can do, and no
+more:
+
+- **Sign blocks for the keeper's rank.** In any epoch where the keeper's
+  burn ranks, the thief can seal that epoch's block as the keeper: choose
+  and order its transactions and take its priority fees. They can also
+  sign two blocks for one slot, which gets the keeper's blocks for that
+  slot demoted. They can't sign for any other rank, can't forge anyone
+  else's block, and can't change what the epoch mints: the withdrawals
+  are still derived from the Zcash burns (C5).
+- **Spend its SOVA** (every reward credited to the keeper's EVM address)
+  and **its TAZ** (the same key funds the burns), and burn as "the
+  keeper".
+
+The balances are small by design (about one run's TAZ, and testnet SOVA).
+Replace the key if it leaks: `init` a new keystore (a new directory, or
+move the old one aside) and re-run `./deploy.sh --only sova-keeper-1`.
+That installs the new sealing copy and restarts `sova-node`. Then publish
+the new addresses. The new address gets its own journal directory.
+
 ## Set up
 
 ```bash
@@ -65,12 +127,16 @@ hash160 as their EVM address. No key exists for that address, so the
 SOVA it earns can never be spent. `init`, `mine` and `report` print a
 `WARNING: ... LEGACY default EVM address ... UNSPENDABLE` line for such a
 keystore; they keep crediting it until told otherwise, because the
-sealing node has to switch at the same time. To fix it: stop the keeper
-and its `bin/sova`, run `sova-miner --network test --data-dir
-/var/lib/sova-keeper init --migrate-evm-address`, restart `bin/sova` with
-the new `SOVA_MINER_EVM_ADDRESS`, start the keeper again, and update the
-published EVM address. SOVA already credited to the old address stays
-there and can't be moved.
+sealing node has to switch at the same time. Under SIP-6 such a keystore
+can't seal at all: its burns credit an address with no key. To fix it:
+stop the keeper and its `bin/sova`, run `sova-miner --network test
+--data-dir /var/lib/sova-keeper init --migrate-evm-address`, restart
+`bin/sova` with the new `SOVA_MINER_EVM_ADDRESS` (and, with SIP-6,
+`SOVA_SEALER_KEYSTORE` pointing at the keystore), start the keeper again,
+and update the published EVM address. On `sova-keeper-1`, run the
+migration as `sudo -u sova-keeper` with `--data-dir /var/lib/sova/keeper`,
+then `./deploy.sh --only sova-keeper-1` does the node side. SOVA already
+credited to the old address stays there and can't be moved.
 
 Fund the keeper with project-mined TAZ, never from the faucet. Top it up
 to about one run's budget at a time, with a **plain transfer** to its
@@ -173,9 +239,12 @@ Run `mine` as a service, for example a systemd unit `sova-keeper` whose
 - Log every on/off change, with its date, next to the disclosure.
 
 To also *seal* when no one else is sealing, run `bin/sova` in mine mode on
-the same machine with `SOVA_MINER_EVM_ADDRESS=<keeper EVM address>`, the
-same wiring as `box/up.sh`. A burn-only keeper still counts toward
-ranking, and rank-1+ fallbacks seal when the top burner is absent.
+the same machine with `SOVA_SIP6=1`, `SOVA_SEALER_KEYSTORE=<the keeper's
+keystore.json>` (mode 600, readable by the node's user) and a persistent
+`SOVA_DATADIR` for the seal journal (see "Sealing key (SIP-6)"; the kit
+does all of this on `sova-keeper-1`). A burn-only keeper still counts
+toward ranking and still gets its pro-rata share whenever any ranked
+burner seals, and rank-1+ fallbacks seal when the top burner is absent.
 
 ## Public disclosure text
 

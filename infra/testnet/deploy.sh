@@ -57,6 +57,7 @@ if [[ "${CMD}" == check || "${CMD}" == render ]]; then
   validate_config
 else
   validate_servers
+  validate_sip6
 fi
 EXTRA_BOOTNODES="${EXTRA_BOOTNODES:-}"
 REMOTE_DIR=/tmp/sova-infra-kit
@@ -96,6 +97,7 @@ ZEBRA_IMAGE=${ZEBRA_IMAGE}
 ZEBRA_IMAGE_DIGEST=${ZEBRA_IMAGE_DIGEST}
 SOVA_EPOCH_BASE=${SOVA_EPOCH_BASE}
 SOVA_EMISSION_SCHEDULE=${SOVA_EMISSION_SCHEDULE}
+SOVA_SIP6=${SOVA_SIP6}
 SOVA_BOOTNODES=$2
 SOVA_P2P_PORT=${SOVA_P2P_PORT}
 ZEBRA_P2P_PORT=${ZEBRA_P2P_PORT}
@@ -246,9 +248,15 @@ lint_render() { # render-root server
   done
   f="${root}/etc/sova/sova-node.env"
   if [[ -f "${f}" ]]; then
-    for v in SOVA_CHAIN SOVA_ZEBRAD_RPC SOVA_DATADIR SOVA_P2P_PORT SOVA_HTTP_PORT SOVA_AUTH_PORT SOVA_RPC_PROFILE; do
+    for v in SOVA_CHAIN SOVA_ZEBRAD_RPC SOVA_DATADIR SOVA_P2P_PORT SOVA_HTTP_PORT SOVA_AUTH_PORT SOVA_RPC_PROFILE SOVA_SIP6; do
       grep -q "^${v}=." "${f}" || { echo "  FAIL ${name}: sova-node.env has no ${v}"; LINT_FAIL=$((LINT_FAIL + 1)); }
     done
+    # SIP-6 mine mode signs: it needs the sealing key and a persistent
+    # datadir (the seal journal lives under it).
+    if grep -q '^SOVA_SIP6=1$' "${f}" && ! grep -q '^SOVA_FOLLOW_ONLY=1$' "${f}"; then
+      grep -q '^SOVA_SEALER_KEYSTORE=/.' "${f}" ||
+        { echo "  FAIL ${name}: SIP-6 mine mode without SOVA_SEALER_KEYSTORE"; LINT_FAIL=$((LINT_FAIL + 1)); }
+    fi
     grep -q '^SOVA_EPOCH_BASE=.' "${f}" ||
       echo "  note ${name}: SOVA_EPOCH_BASE empty, so no epoch-base-pinned marker: sova-node stays stopped until 'Pin B'"
   fi

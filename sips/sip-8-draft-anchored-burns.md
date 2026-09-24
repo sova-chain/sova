@@ -6,7 +6,7 @@
   The other decisions of §11 take their recommended defaults. Not yet
   implemented. Until it activates, fork choice keeps the bounded branch
   rule (at most 3 blocks replaced) and nodes report `safe` at 3 blocks and
-  `finalized` at 10 (Rob, 2026-09-23); once votes count, depth follows
+  `finalized` at 100 (Rob, 2026-09-23: 10 was unsafe — reth refuses a head below finalized, and Zcash can reorg up to 99 blocks); once votes count, depth follows
   §2.4 and the confirmation margin of §2.6. The paper keeps SIP-8 as named
   future work until it is built (§11 item 14 applies then).
 - Numbering: **SIP-8.** SIP-5 is withdrawn (wrapped ZEC is a Sova Labs

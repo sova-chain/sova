@@ -125,6 +125,11 @@ Protocol changes go through SIPs, in [`sips/`](sips/).
 | `site` | Project website ([sova.io](https://sova.io)) |
 | `brand` | Logos and brand kit ([`brand/readme.md`](brand/readme.md)) |
 
+## Community
+
+- Telegram: [t.me/sovazec](https://t.me/sovazec)
+- X: [x.com/sovazec](https://x.com/sovazec)
+
 ## Contributing
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md). Protocol changes start as a SIP;

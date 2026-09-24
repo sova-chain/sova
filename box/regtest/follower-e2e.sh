@@ -18,9 +18,10 @@ docker compose up -d
 
 echo "--- waiting for zebrad RPC ---"
 for _ in $(seq 1 60); do
-  if curl -s -X POST -H 'Content-Type: application/json' \
+  # Not `curl | grep -q`: under pipefail a match can SIGPIPE curl.
+  if resp="$(curl -s -X POST -H 'Content-Type: application/json' \
     --data '{"jsonrpc":"2.0","id":"w","method":"getblockcount","params":[]}' \
-    "$RPC_URL" | grep -q result; then
+    "$RPC_URL")" && grep -q result <<<"${resp}"; then
     break
   fi
   sleep 2

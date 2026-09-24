@@ -3,6 +3,8 @@
 #
 #   ./smoke.sh edge        from THIS machine, as a stranger would: public
 #                          RPC answers chain 82330 and a moving head; the
+#                          latest block is SIP-6 sealed (97-byte extraData)
+#                          or null (empty) when SOVA_SIP6=1; the
 #                          denylist is enforced (admin/debug/trace/txpool/
 #                          engine/personal/sign/filters); batch cap; the
 #                          per-IP limit answers a burst with a 429 a
@@ -32,6 +34,7 @@ shift || true
 load_config
 validate_servers
 validate_edge_config
+validate_sip6
 need_cmd jq
 need_cmd curl
 PASS=0
@@ -60,6 +63,7 @@ cmd_edge() {
   else
     bad "rpc: eth_blockNumber gave '${h1}'"
   fi
+  check_sip6_latest
   for m in admin_nodeInfo admin_peers debug_traceTransaction trace_block txpool_content \
     engine_forkchoiceUpdatedV3 personal_listAccounts eth_sign eth_sendTransaction \
     eth_newFilter eth_accounts miner_start ots_getApiLevel; do
@@ -124,6 +128,47 @@ cmd_edge() {
   done
 }
 
+# SIP-6 §2.1: a sealed block's extraData is exactly 97 bytes (vanity +
+# signature), a null block's is empty; genesis is exempt.
+check_sip6_latest() {
+  if [[ "${SOVA_SIP6}" != 1 ]]; then
+    ok "rpc: SIP-6 off (SOVA_SIP6=0), extraData not checked"
+    return 0
+  fi
+  local r n x len
+  r="$(pub_rpc eth_getBlockByNumber '["latest",false]')"
+  n="$(jq -r '.result.number // empty' <<<"${r}" 2>/dev/null)"
+  x="$(jq -r '.result.extraData // empty' <<<"${r}" 2>/dev/null)"
+  if ! [[ "${n}" =~ ^0x[0-9a-f]+$ && "${x}" =~ ^0x[0-9a-fA-F]*$ ]]; then
+    bad "rpc: latest block unreadable: ${r:0:120}"
+    return 0
+  fi
+  len=$(((${#x} - 2) / 2))
+  if ((n == 0)); then
+    bad "rpc: head is still genesis (exempt from SIP-6): nothing sealed yet"
+  elif ((len == 97)); then
+    ok "rpc: block $((n)) is SIP-6 sealed (97-byte extraData)"
+  elif ((len == 0)); then
+    ok "rpc: block $((n)) is a SIP-6 null block (empty extraData)"
+  else
+    bad "rpc: block $((n)) has ${len}-byte extraData: neither sealed (97) nor null (0); is SOVA_SIP6=1 on every node?"
+  fi
+}
+
+# The keeper's node logs "sip-6: sealing as 0x..." at start: that must be
+# the keeper's published EVM address (what its burns credit).
+check_keeper_sealer() { # name logged-address
+  local want=""
+  [[ -s "${OUT_DIR}/servers/$1.keeper_evm" ]] && want="$(tr 'A-F' 'a-f' <"${OUT_DIR}/servers/$1.keeper_evm")"
+  if [[ -z "$2" ]]; then
+    bad "$1: no 'sip-6: sealing as' line (sova-node not started in SIP-6 mine mode?)"
+  elif [[ -n "${want}" && "$2" != "${want}" ]]; then
+    bad "$1: seals as $2, but the keeper's EVM address is ${want}"
+  else
+    ok "$1: SIP-6 sealing as $2${want:+ (= out/servers/$1.keeper_evm)}"
+  fi
+}
+
 cmd_hosts() {
   local s name role out
   for s in "${SERVERS[@]}"; do
@@ -136,6 +181,7 @@ cmd_hosts() {
       done
       sudo journalctl -u sova-node --no-pager -q 2>/dev/null | grep -q "expectations: enforcing settlements" && echo "c5 enforcing"
       echo "c5rejects $(sudo journalctl -u sova-node --since -1h --no-pager -q 2>/dev/null | grep -c "settlement mismatch")"
+      echo "sealer $(sudo journalctl -u sova-node --no-pager -q 2>/dev/null | grep -o "sip-6: sealing as 0x[0-9a-f]*" | tail -1 | awk "{print \$NF}")"
       sudo /usr/local/lib/sova-infra/health.sh 2>/dev/null | sed "s/^/health /"
     ' 2>&1)" || { bad "${name}: ssh failed"; continue; }
     while read -r kind a b rest; do
@@ -143,6 +189,7 @@ cmd_hosts() {
         svc) [[ "${b}" == active ]] && ok "${name}: ${a} active" || bad "${name}: ${a} is ${b}" ;;
         c5) ok "${name}: C5 enforcing against its own zebrad" ;;
         c5rejects) [[ "${a}" == 0 ]] && ok "${name}: 0 C5 rejections in the last hour" || bad "${name}: ${a} C5 rejections in the last hour" ;;
+        sealer) [[ "${role}" == keeper && "${SOVA_SIP6}" == 1 ]] && check_keeper_sealer "${name}" "${a:-}" ;;
         health) [[ "${a}" == ALERT ]] && bad "${name}: ${a} ${b} ${rest}" || ok "${name}: ${a} ${b} ${rest}" ;;
       esac
     done <<<"${out}"

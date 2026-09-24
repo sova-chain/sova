@@ -15,19 +15,10 @@
 // commits to the Zcash block it settles). Sources: site/README.md.
 import Direction from '../layouts/Direction.astro';
 import TestnetStats from '../components/TestnetStats.astro';
-import { WORDMARK_PATHS, doors, readLinks, footerLinks } from '../data/sova';
+import { WORDMARK_PATHS, coverToc as toc, footerLinks } from '../data/sova';
 
-// Table of contents: the three doors, then the reading links.
-const toc = [
-  { href: '/paper', label: 'Read the paper', where: '/paper' },
-  ...doors.map((d) => ({ href: d.href, label: d.h, where: d.href })),
-  ...readLinks.filter((r) => r.href !== '/paper').map((r) => ({
-    href: r.href,
-    label: r.label,
-    // github.com/sova-chain/sova for the repo, the file name for a file in it.
-    where: r.href.startsWith('https://') ? (r.href.split('/blob/main/')[1] ?? r.href.replace('https://', '')) : r.href,
-  })),
-];
+// Table of contents (coverToc in src/data/sova.ts): Why, Mine, Run a node,
+// Build, Ecosystem, GitHub, Contributing, Whitepaper, SIPs.
 
 // Figure 1: five Zcash blocks, five Sova blocks, an anchor from each Sova
 // block up to its Zcash block. Drawn in order, one pair at a time.

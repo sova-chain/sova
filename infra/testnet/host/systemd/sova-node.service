@@ -2,6 +2,10 @@
 # (C5-enforcing against this host's own zebrad) unless the env says
 # otherwise (keeper). All knobs: /etc/sova/sova-node.env, written by
 # setup-host.sh. HTTP RPC and authrpc bind to 127.0.0.1 (reth defaults).
+# SIP-6 (SOVA_SIP6=1): the keeper's node signs with
+# /var/lib/sova/sealer/keystore.json (0600, this unit's User) and keeps its
+# seal journal under the datadir, /var/lib/sova/node/seal-journal (the one
+# writable path below; persistent, never deleted while this runs).
 [Unit]
 Description=Sova node (sova-testnet)
 Wants=network-online.target zebrad.service

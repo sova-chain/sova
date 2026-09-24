@@ -1,38 +1,41 @@
 ---
-// The story: how Sova got here, told impersonally as a log. Public level of
-// detail from docs/marketing/comeback-thread.md (old chain, custody, the
-// audit, the pivot); dates from the audit of the old chain; the road from
-// docs/ROADMAP.md. Site v4: the rebuild beats lead with the vision (contracts
-// that see Zcash) and use positive framing. Sources: site/README.md.
+// The story: how Sova got here, told impersonally as a log, in Rob's framing
+// (2026-09-23): a venture-backed Bitcoin-interoperability project; the
+// company pivoted (last year: intent-based solving around Zcash on NEAR);
+// the original plan was shelved; Sova came back as a public-good experiment
+// in support of Zcash. The OP Stack and native BTC from
+// docs/marketing/comeback-thread.md; the custody check from the audit of the
+// old chain; the road from Rob's dated plan (as on /why). No investor names,
+// amounts or dates beyond those. Sources: site/README.md.
 import Site from '../layouts/Site.astro';
 
 // Each beat is a log line: a timestamp (dates only where the record has one)
 // and the event, then a few short paragraphs.
 const beats = [
   {
-    ts: '2025-09', ev: 'v1 on Bitcoin',
+    ts: 'start', ev: 'Bitcoin interoperability',
     p: [
-      'Sova launched in September 2025 as an EVM chain on the OP Stack with native BTC. It ran on mainnet until November 2025.',
+      'Sova started as a venture-backed project focused on Bitcoin interoperability: an EVM chain on the OP Stack, with native BTC.',
     ],
   },
   {
-    ts: '2025-11', ev: 'the flaw',
+    ts: '2025', ev: 'the pivot',
     p: [
-      'Native BTC meant someone held the BTC. On Sova v1, a single operator key did, and the chain leaned on outside services to keep running.',
-      'A chain that holds other people’s coins is only as strong as whoever holds them. Sova v1 was shut down.',
+      'The company pivoted and went on to build other things. Last year that included intent-based solvers, and a lot of intent-based solving around Zcash on NEAR. That is where Sova’s Zcash and NEAR connection comes from.',
     ],
   },
   {
-    ts: 'audit', ev: 'nothing left behind',
+    ts: 'shelved', ev: 'the original plan',
     p: [
-      'After shutdown, every derivable custody address was checked. Zero BTC remained.',
+      'The team decided not to go live with the original plan, and shelved it.',
+      'Every derivable custody address of the Bitcoin-era chain was checked afterwards. Zero BTC remains.',
     ],
   },
   {
-    ts: '2026', ev: 'rebuilt beside Zcash',
+    ts: '2026', ev: 'back, for Zcash',
     p: [
-      'Zcash is private money that works. Money gets useful when programs can react to it.',
-      'The usual answer is to wrap ZEC onto another chain, which brings the custody problem straight back. Sova takes the other path: self-custody. The ZEC stays on Zcash, and Sova’s contracts look at it there.',
+      'Sova is back as a public-good experiment in support of the Zcash network: Zcash’s programmable edge. A fun experiment, built in the open.',
+      'It keeps the old foundation, a reth node, and drops the bridge and the custody. The ZEC stays on Zcash, and Sova’s contracts look at it there.',
     ],
   },
   {
@@ -56,22 +59,23 @@ const beats = [
   },
 ];
 
+// The plan, as on /why (Rob, 2026-09-23). Dates are targets.
 const next = [
-  'Source, specs and the one-command chain go public.',
-  'A public testnet, mined with testnet ZEC, where contracts see Zcash (SIP-4).',
+  'The announcement, before the testnet.',
+  'A public testnet in October 2026, mined with testnet ZEC, where contracts see Zcash (SIP-4).',
   'Contracts that watch Zcash’s value pools, block by block (SIP-7).',
-  'Mainnet when the testnet has earned it.',
+  'Mainnet, expected Q1 2027, when the testnet has earned it.',
 ];
 ---
 <Site
   title="The Sova story"
-  description="Sova started on Bitcoin, where a single key held the BTC. It was shut down, an audit found zero BTC left, and Sova was rebuilt beside Zcash: self-custody, with contracts that see Zcash."
+  description="Sova started as a venture-backed Bitcoin-interoperability project. The company pivoted, the plan was shelved, and Sova came back as a public-good experiment in support of Zcash."
   current="/story"
   cmd="git log --reverse sova"
   status="pre-release · no public network yet"
 >
   <h1>The story</h1>
-  <p class="lead">Sova started on Bitcoin, learned what custody costs, and was rebuilt beside Zcash: self-custody, with contracts that see Zcash.</p>
+  <p class="lead">Sova started on Bitcoin, was shelved, and came back as a public-good experiment for Zcash.</p>
 
   <ol class="beats">
     {beats.map((b) => (
@@ -85,10 +89,11 @@ const next = [
       <ul class="bul">
         {next.map((t) => <li>{t}</li>)}
       </ul>
+      <p class="dim"># Dates are targets.</p>
     </li>
   </ol>
 
-  <p class="next"><a href="/paper">Read the paper</a><a href="/why">Why Sova</a><a href="/node">Run a node</a></p>
+  <p class="next"><a href="/why">Why Sova</a><a href="/paper">Read the whitepaper</a><a href="/node">Run a node</a></p>
 </Site>
 
 <style>

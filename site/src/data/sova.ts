@@ -40,6 +40,12 @@ export const notClaims = [
 // (an export of the `release` trunk, same file layout).
 export const REPO = 'https://github.com/sova-chain/sova';
 export const CLONE = `git clone ${REPO} && cd sova`;
+
+// Community (Rob, 2026-09-23): the project's Telegram group and X account.
+export const SOCIAL = {
+  telegram: 'https://t.me/sovazec',
+  x: 'https://x.com/sovazec',
+} as const;
 export const repo = {
   root: REPO,
   sips: `${REPO}/tree/main/sips`,
@@ -114,13 +120,28 @@ export const doors = [
   { href: '/node', h: 'Run a node', cmd: './box/up.sh', t: 'Zcash and Sova side by side, on a laptop.' },
   { href: '/build', h: 'Build', cmd: 'IZcash.txInfo()', t: 'Contracts that read Zcash.' },
 ] as const;
+// Reading links, in the homepage's order (Rob, 2026-09-23): the whitepaper
+// right before the SIPs, the SIPs last.
 export const readLinks = [
-  { href: '/paper', label: 'The paper' },
-  { href: '/sips', label: 'SIPs' },
+  { href: '/ecosystem', label: 'Ecosystem' },
   { href: REPO, label: 'GitHub' },
   { href: repo.contributing, label: 'Contributing' },
-  { href: '/ecosystem', label: 'Ecosystem' },
+  { href: '/paper', label: 'Whitepaper' },
+  { href: '/sips', label: 'SIPs' },
 ] as const;
+
+// The homepage's table of contents (/ and /v/cover), Rob's order of
+// 2026-09-23: Why first, then Mine, then the other doors and links, then the
+// Whitepaper, the SIPs last. `where` is the right-hand column: the path, the
+// repo without its scheme, or the file name for a file in the repo.
+export const coverToc = [
+  { href: '/why', label: 'Why' },
+  ...doors.map((d) => ({ href: d.href, label: d.h })),
+  ...readLinks,
+].map((t) => ({
+  ...t,
+  where: t.href.startsWith('https://') ? (t.href.split('/blob/main/')[1] ?? t.href.replace('https://', '')) : t.href,
+}));
 
 // Live testnet stats (components/TestnetStats.astro): placeholders until the
 // public testnet runs; `key` is the data-stat hook a later script fills.
@@ -130,20 +151,21 @@ export const testnetStats = [
   { key: 'minted', label: 'SOVA minted' },
 ] as const;
 
-// Every indexable page besides the landing page at `/`, in reading order.
-// `nav` is the short label in the Site.astro header (nine items; /press is
-// footer-only). The paper's title block and margin list, every footer and
-// the sitemap use the full list.
+// Every indexable page besides the landing page at `/`, in the homepage's
+// order (Rob, 2026-09-23): Why, Mine, the rest, then the Whitepaper and the
+// SIPs, then the press kit. `nav` is the short label in the Site.astro header
+// (nine items; /press is footer-only). The paper's title block and margin
+// list, every footer and the sitemap use the full list.
 export const sitePages = [
   { href: '/why', label: 'Why Sova', nav: 'why' },
-  { href: '/paper', label: 'The paper', nav: 'paper' },
-  { href: '/build', label: 'Build', nav: 'build' },
-  { href: '/sips', label: 'SIPs', nav: 'sips' },
   { href: '/mine', label: 'Mine', nav: 'mine' },
   { href: '/node', label: 'Run a node', nav: 'node' },
+  { href: '/build', label: 'Build', nav: 'build' },
   { href: '/ecosystem', label: 'Ecosystem', nav: 'ecosystem' },
   { href: '/ashwings', label: 'Ashwings', nav: 'ashwings' },
   { href: '/story', label: 'Story', nav: 'story' },
+  { href: '/paper', label: 'Whitepaper', nav: 'whitepaper' },
+  { href: '/sips', label: 'SIPs', nav: 'sips' },
   { href: '/press', label: 'Press kit', nav: '' },
 ] as const;
 
@@ -181,7 +203,8 @@ export const footerLinks: readonly { key: string; label: string; href?: string }
   { key: 'sips', label: 'Specs', href: repo.sips },
   { key: 'docs', label: 'Docs', href: repo.docs },
   { key: 'testnet', label: 'Testnet (at launch)' },
-  { key: 'community', label: 'Forum thread (at launch)' },
+  { key: 'telegram', label: 'Telegram', href: SOCIAL.telegram },
+  { key: 'x', label: 'X', href: SOCIAL.x },
 ];
 
 // Sova wordmark paths (brand/SOVA LOGO/COLOR/SOVA_LOGO_COLOR.svg), viewBox 0 0 387 70.

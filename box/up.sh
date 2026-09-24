@@ -767,7 +767,7 @@ fund_miner() {
   resp="$(curl -s -X POST -H 'Content-Type: application/json' \
     --data "{\"jsonrpc\":\"2.0\",\"id\":\"fund\",\"method\":\"generatetoaddress\",\"params\":[${FUND_BLOCKS},\"${TADDR}\"]}" \
     "${ZEBRAD_RPC}/")"
-  if ! echo "${resp}" | grep -q '"result"'; then
+  if ! grep -q '"result"' <<<"${resp}"; then
     echo "error: generatetoaddress funding failed: ${resp}" >&2
     exit 1
   fi
@@ -836,10 +836,12 @@ start_background_processes() {
 
 wait_for_liveness() {
   echo -n "waiting for sova RPC "
-  local deadline=$((SECONDS + 60))
-  until curl -s -X POST -H 'Content-Type: application/json' \
+  local deadline=$((SECONDS + 60)) resp
+  # Response into a variable, not `curl | grep -q`: under pipefail a match
+  # can SIGPIPE curl and read as "not up yet".
+  until resp="$(curl -s -X POST -H 'Content-Type: application/json' \
     --data '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' \
-    "${SOVA_RPC}" | grep -q result; do
+    "${SOVA_RPC}")" && grep -q result <<<"${resp}"; do
     if [[ ${SECONDS} -ge ${deadline} ]]; then
       echo
       echo "error: sova RPC did not come up within 60s on ${SOVA_RPC}; see ${LOG_DIR}/sova-node.log" >&2

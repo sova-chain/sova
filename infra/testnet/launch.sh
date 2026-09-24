@@ -106,7 +106,9 @@ fi
 
 step "6 chain"
 if [[ -z "${SOVA_EPOCH_BASE}" ]]; then
-  seed="$(servers_with_role seed | head -1)"
+  # sed -n 1p, not head -1: it reads to EOF, so no SIGPIPE (and no set -e
+  # abort under pipefail) once a role has two or more servers.
+  seed="$(servers_with_role seed | sed -n 1p)"
   if [[ "${DRY_RUN}" == 1 ]]; then
     echo "+ ./epoch-base.sh propose --via ${seed}; ./epoch-base.sh pin <B>  (only with --go)"
   else
@@ -132,7 +134,9 @@ else
 fi
 
 step "7 contracts"
-rpc_host="$(servers_with_role rpc | head -1)"
+# sed -n 1p, not head -1: it reads to EOF, so no SIGPIPE (and no set -e
+# abort under pipefail) once a role has two or more servers.
+rpc_host="$(servers_with_role rpc | sed -n 1p)"
 if [[ "${DRY_RUN}" == 1 ]]; then
   echo "+ ./deploy-contracts.sh keygen   (once)"
   echo "+ ./deploy-contracts.sh deploy --via ${rpc_host}"

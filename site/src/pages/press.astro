@@ -3,9 +3,10 @@
 // logos (brand/, copied to public/brand/), palette (brand/readme.md), name
 // usage (positioning.md "What we never claim" and "Terminology", Ashwings from
 // contracts/src/Ashwings.sol), and the "what it isn't" list (notClaims, the
-// same positioning rules). Sources: site/README.md.
+// same positioning rules), background in Rob's framing (as /story) and the
+// community links (Rob, 2026-09-23). Sources: site/README.md.
 import Site from '../layouts/Site.astro';
-import { notClaims } from '../data/sova';
+import { notClaims, SOCIAL } from '../data/sova';
 
 const logos = [
   { name: 'Wordmark, gold', use: 'on dark backgrounds', bg: 'dark', img: '/brand/sova-wordmark-gold.svg', files: [['SVG', '/brand/sova-wordmark-gold.svg'], ['PNG', '/brand/sova-wordmark-gold.png']] },
@@ -26,7 +27,7 @@ const palette = [
 ---
 <Site
   title="Sova press kit"
-  description="Sova press kit: one-liners, a short description, background, what Sova isn’t, logo files, colours and how to write the names Sova, SOVA, SIP and Ashwings."
+  description="Sova press kit: one-liners, a short description, background, what Sova isn’t, logo files, colours, how to write the names Sova, SOVA, SIP and Ashwings, and where to find the community."
   current="/press"
   cmd="ls press/"
   status="pre-release · no public network yet"
@@ -43,7 +44,7 @@ const palette = [
   <blockquote class="q">Sova is an EVM sidechain of Zcash whose contracts can see Zcash. Every Sova node runs its own Zcash node, so a contract can verify a real ZEC payment on Zcash itself, and the ZEC stays on Zcash. SOVA, the chain’s gas token, is issued only by burn-mining: anyone who destroys ZEC in a Zcash block earns SOVA in the matching Sova block, and every node checks every mint against its own Zcash node. Contracts that see Zcash ship with the public testnet.</blockquote>
 
   <h2>background</h2>
-  <blockquote class="q">Sova launched in September 2025 as an EVM chain on the OP Stack with native BTC, held under a single operator key. It ran on mainnet until November 2025 and was shut down. An audit of every derivable custody address found zero BTC remaining. Sova was rebuilt beside Zcash as an EVM chain mined by burning ZEC, in self-custody: the ZEC stays on Zcash. <a href="/story">The full story</a>.</blockquote>
+  <blockquote class="q">Sova started as a venture-backed project focused on Bitcoin interoperability, an EVM chain on the OP Stack with native BTC. The company pivoted to other work, including intent-based solving around Zcash on NEAR, and the original plan was shelved. An audit of every derivable custody address found zero BTC remaining. Sova is back as a public-good experiment in support of the Zcash network: an EVM chain mined by burning ZEC, where the ZEC stays on Zcash. <a href="/story">The full story</a>.</blockquote>
 
   <h2>what it isn’t</h2>
   <ul class="not">
@@ -78,6 +79,12 @@ const palette = [
     <dt>Ashwings</dt><dd>The on-chain owl collection. One of them is an Ashwing.</dd>
     <dt>burn-mined</dt><dd>How SOVA is issued (formally, Proof of Burn), anchored to Zcash’s proof of work.</dd>
     <dt>SIP</dt><dd>Sova Improvement Proposal. SIP-4 is the Zcash state precompile behind contracts that see Zcash.</dd>
+  </dl>
+
+  <h2>community</h2>
+  <dl class="kv">
+    <dt>Telegram</dt><dd><a href={SOCIAL.telegram}>t.me/sovazec</a></dd>
+    <dt>X</dt><dd><a href={SOCIAL.x}>x.com/sovazec</a></dd>
   </dl>
 
   <h2>contact</h2>

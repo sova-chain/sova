@@ -194,8 +194,10 @@ wait_for_block_number() {
 
 wait_for_eth_rpc() {
   local url="$1" pid="$2" label="$3" timeout_s="${4:-60}"
-  local deadline=$((SECONDS + timeout_s))
-  until eth_rpc "${url}" eth_chainId "[]" | grep -q result; do
+  local deadline=$((SECONDS + timeout_s)) ready_resp
+  # Response into a variable, not `eth_rpc | grep -q`: under pipefail a
+  # match can SIGPIPE curl and read as "not ready".
+  until ready_resp="$(eth_rpc "${url}" eth_chainId "[]")" && grep -q result <<<"${ready_resp}"; do
     if ! kill -0 "${pid}" 2>/dev/null; then
       fail "setup: ${label} exited before becoming ready"
       return 1
@@ -210,7 +212,11 @@ wait_for_eth_rpc() {
 }
 
 harness_busy() {
-  docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "sova-zebrad-regtest" && return 0
+  local docker_names
+  # Not `docker ps | grep -qx`: under pipefail a match can SIGPIPE docker
+  # and a busy harness would read as idle.
+  docker_names="$(docker ps --format '{{.Names}}' 2>/dev/null)" \
+    && grep -qx "sova-zebrad-regtest" <<<"${docker_names}" && return 0
   pgrep -f "target/(debug|release)/sova(\$| )" >/dev/null 2>&1 && return 0
   pgrep -f "sova-miner .*(init|mine)" >/dev/null 2>&1 && return 0
   pgrep -f "auto-mine\.sh" >/dev/null 2>&1 && return 0

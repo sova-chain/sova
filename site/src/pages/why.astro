@@ -6,6 +6,12 @@
 // agent-keeper}.md, docs/ROADMAP.md, sips/sip-{1,2,3,4}*.md, the paper's own
 // sources. Every claim is in site/README.md. The "what it isn't" list lives
 // on /press.
+//
+// Fair launch, experiment and the plan (Rob, 2026-09-23): the fair-launch
+// section says what Sova doesn't have, plainly, the one place the site
+// describes Sova by negatives. Sources: sips/sip-3.md (SOVA minted only by
+// burns), bin/sova/src/chain.rs (`testnet_genesis_alloc_is_empty`),
+// docs/ROADMAP.md ("What we won't do"). Dates are Rob's targets.
 import Site from '../layouts/Site.astro';
 import Tag from '../components/Tag.astro';
 
@@ -27,8 +33,19 @@ const sova = [
   'Every node recomputes every mint from its own Zcash node.',
 ];
 
+const fair = [
+  { h: 'No premine.', t: 'The genesis allocates nothing. The testnet’s is empty, and a test checks it. Mainnet’s will be too.' },
+  { h: 'No allocation.', t: 'Not to investors, not to the team, not to anyone.' },
+  { h: 'Nothing in escrow.', t: 'No treasury. Nothing held back for later.' },
+];
+
+const plan = [
+  { when: 'first', h: 'Announcement.', t: 'Before the testnet.' },
+  { when: 'Oct 2026', h: 'Public testnet.', t: 'Mined with testnet ZEC.' },
+  { when: 'Q1 2027', h: 'Mainnet, expected.', t: 'When the testnet has earned it.' },
+];
+
 const grassroots = [
-  { h: 'Every SOVA is earned by burning ZEC.', t: 'The genesis is empty; the whole supply is mined.' },
   { h: 'Anyone can mine, in any amount.', t: 'From 1,000 zatoshis up. Mining is burning.' },
   { h: 'Every node verifies every mint.', t: 'Against its own Zcash node, history included.' },
   { h: 'Rules change in the open.', t: 'Through SIPs, in the repository.' },
@@ -60,6 +77,13 @@ const fresh = [
     {who.map((r) => <li><span class="mk">&gt;</span><p><b>{r.h}</b> {r.t}</p></li>)}
   </ul>
 
+  <h2>fair launch</h2>
+  <ul class="rows fair">
+    {fair.map((r) => <li><span class="mk">[0]</span><p><b>{r.h}</b> {r.t}</p></li>)}
+  </ul>
+  <p class="edge">The only way SOVA comes into existence is by producing blocks. Burn ZEC, seal a block, earn SOVA. Whoever burns and seals earns it.</p>
+  <p class="note"># The local box prefunds throwaway dev accounts. They never exist on a public network.</p>
+
   <h2>wrapped ZEC, or Sova</h2>
   <div class="diff">
     <p class="dh old">wrapped ZEC</p>
@@ -89,7 +113,18 @@ const fresh = [
 
   <p class="edge">The EVM is public. Privacy lives at the funding edge: burn from the shielded pool and your SOVA need not link to you. <a class="proof" href="/paper#privacy">→ paper §9</a></p>
 
-  <p class="next"><a href="/paper">Read the paper</a><a href="/build">Build</a><a href="/mine">Mine</a><a href="/story">The story</a></p>
+  <h2>an experiment</h2>
+  <p class="warn">Sova is an experiment and a work in progress. Pre-release and unaudited. The code and the specs still change. Testnet state gets reset. Don’t put in money you can’t afford to lose.</p>
+
+  <h2>the plan</h2>
+  <ol class="plan">
+    {plan.map((r) => <li><span class="when">[{r.when}]</span><p><b>{r.h}</b> {r.t}</p></li>)}
+  </ol>
+  <p class="note"># Dates are targets.</p>
+
+  <p>Where Sova came from: <a href="/story">the story</a>.</p>
+
+  <p class="next"><a href="/paper">Read the whitepaper</a><a href="/build">Build</a><a href="/mine">Mine</a><a href="/story">The story</a></p>
 </Site>
 
 <style>
@@ -118,11 +153,21 @@ const fresh = [
   .rt { margin: 0 !important; }
   .proof { white-space: nowrap; font-size: 13px; margin-left: 4px; }
 
+  .fair .mk { color: var(--g); }
+  .note { color: var(--g3); font-size: 13.5px; margin: 0 0 16px !important; }
+  .fair + .edge { margin: 4px 0 8px !important; }
+  .warn { padding: 10px 14px; border-left: 2px solid var(--ember); background: rgba(194, 90, 51, 0.06); color: var(--cream); max-width: 76ch; }
+  .plan { list-style: none; padding: 0; margin: 0 0 8px; }
+  .plan li { display: grid; grid-template-columns: 11ch 1fr; gap: 10px; margin: 0 0 8px; max-width: none; }
+  .plan li p { margin: 0; }
+  .plan .when { color: var(--g3); white-space: nowrap; }
+  .plan b { color: var(--g); font-weight: 700; }
   .edge { margin: 26px 0 40px !important; padding: 10px 14px; border-left: 2px solid var(--g); background: rgba(244, 183, 40, 0.04); color: var(--cream); }
 
   @media (max-width: 600px) {
     .rows li, .diff li { grid-template-columns: 3ch 1fr; gap: 6px; }
     .reasons li { grid-template-columns: 6ch 1fr; gap: 8px; }
+    .plan li { grid-template-columns: 10ch 1fr; gap: 6px; }
     .rh { font-size: 15px; }
     .diff { padding: 10px 10px 2px; }
   }

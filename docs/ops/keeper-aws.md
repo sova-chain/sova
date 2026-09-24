@@ -147,8 +147,9 @@ so chat is fine. Nothing else: no AWS password, no keys.
      smaller than the 40 GB in the config.
 
    From here the keeper is an ordinary kit host. `deploy.sh` sets it up
-   (zebrad, `sova` in mine mode, the `sova-keeper` burner installed but
-   not started, the health timer), `launch.sh` waits for its zebrad to
+   (zebrad, `sova` in mine mode signing with the keeper's miner key under
+   SIP-6, the `sova-keeper` burner installed but not started, the health
+   timer), `launch.sh` waits for its zebrad to
    sync, and `bootnodes.sh --verify` and `smoke.sh` check it.
    `smoke.sh edge` checks from outside that 30303, 18233, 8545, 8551,
    18232 and 18790 are closed on it. That test is what proves the security
@@ -241,8 +242,11 @@ month and the size is settled.
   orchestrator then clears the old host key
   (`ssh-keygen -R <ip> -f infra/testnet/out/known_hosts`) and re-runs
   `./provision.sh up` and `./deploy.sh --only sova-keeper-1`. A new disk
-  means a new keeper key and a fresh zebrad sync, so it also means a new
-  disclosure (`docs/ops/keeper-miner.md`).
+  means a new keeper key (and with it a new sealing key and an empty seal
+  journal for it) and a fresh zebrad sync, so it also means a new
+  disclosure (`docs/ops/keeper-miner.md`). Don't restore the old
+  instance's `/var/lib/sova` onto a new one with the old key while the old
+  one might still run: two nodes sealing with one key equivocate.
 - **Switch-off drill / teardown:** `./provision.sh teardown` never touches
   AWS. Stop the instance for the drill, or terminate it at the end. Then
   **release the Elastic IP** (Elastic IPs → *Actions* → *Release*),

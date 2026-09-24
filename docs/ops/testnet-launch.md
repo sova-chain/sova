@@ -29,6 +29,7 @@ before step 1.
 | Decision | Options | Kit value | Where |
 | --- | --- | --- | --- |
 | **Emission schedule** | `flat` (a constant 6,250 SOVA per epoch) or `sip3` (SIP-3's schedule) | **Decided 2026-09-23: `flat`.** SIP-3's schedule is for mainnet. | `SOVA_EMISSION_SCHEDULE` |
+| **SIP-6 sealer signatures** | On from genesis, or off (debug only). A consensus switch: every node, ours and strangers', must use the same value, so `testnet.env` and `seeds.json` carry it. | **Decided: on** (SIP-6 is Accepted and activates at the reset, from genesis, SIP-6 §7). Every node requires sealed (97-byte `extraData`) or null (empty) blocks, and the keeper signs with its miner key (`docs/ops/keeper-miner.md`, "Sealing key (SIP-6)"). | `SOVA_SIP6=1` |
 | **Chain ID at the reset** | Keep **82330**: the new genesis already gets a new fork ID, and chainlist doesn't change. Or take a fresh ID (e.g. 82331), so wallets don't mix up the old chain's nonces and history with the new one's. | **Decided 2026-09-23: keep 82330.** | `SOVA_CHAIN_ID`, plus `chain.rs` at the reset |
 | **Keeper host** | Without a mine-mode node somewhere, the chain doesn't advance (see B5b). | **Decided 2026-09-23: AWS EC2** (`t3a.large`, Frankfurt, ≈ $70/month [est]), a bring-your-own host the kit adopts over SSH. Rob's step R3b, `docs/ops/keeper-aws.md`. The seed and RPC stay on Hetzner. | `SERVERS` (`sova-keeper-1:byo:<Elastic IP>:40:keeper:ubuntu`) |
 | **Volume sizes** | Testnet zebrad state is 12 GB today, so small volumes still leave room for a year. | **Decided 2026-09-23: seed 60 GB, RPC 40 GB, keeper 40 GB** (the keeper's is its AWS gp3 root disk). The faucet wasn't part of the decision: it's set to **40 GB** to match. | `SERVERS` (4th field) |
@@ -188,9 +189,10 @@ under the partner-outreach rule. The orchestrator doesn't post anything.
 
 How B is chosen: it is the next multiple of 100 at least 48 Zcash blocks
 (about 1 h) past the tip. That makes it round and announceable, and every
-node can be up before block B exists. Burn-less epochs are filled by
-rewardless cadence blocks from any mine-mode node (the keeper), so the
-chain moves as soon as one sealer runs. Bootnodes travel as
+node can be up before block B exists. With SIP-6, a burn epoch is sealed
+by a ranked burner's key, and a burn-less epoch gets its deterministic
+null block, which any mine-mode node (the keeper) builds. So the chain
+moves as soon as one sealer runs. Bootnodes travel as
 `SOVA_BOOTNODES`: each seed gets the *other* seeds and every other host
 gets all of them. `testnet.env` and `seeds.json` hand the list to
 strangers. Paste the Rust constant that `bootnodes.sh` prints into
@@ -206,8 +208,9 @@ a. **Faucet.** Send a few days of drips (the balance guard caps it at 10
    (`docs/ops/faucet.md`, "Funding").
 
 b. **Keeper (D8, disclosed).** Its `sova-node` runs in mine mode as soon
-   as B is pinned: it seals burn epochs when it ranks and rewardless
-   cadence blocks otherwise. Publish the disclosure
+   as B is pinned: it signs (SIP-6) the burn epochs where it ranks and
+   builds null blocks otherwise. Its log says `sip-6: sealing as 0x…`,
+   which must be the keeper's EVM address (`smoke.sh hosts` checks). Publish the disclosure
    (`docs/ops/keeper-miner.md`, with the addresses from
    `out/servers/sova-keeper-1.keeper_*`). Fund the t-addr with a plain
    transfer, then run `ssh … sudo systemctl start sova-keeper`.
@@ -255,7 +258,8 @@ a. **A stranger's node syncs.** Download the release tarball and verify
    `SHA256SUMS`. Then `source` the `testnet.env` from
    `https://dl.testnet.sova.io/testnet.env`, set `SOVA_DATADIR` to a
    fresh directory and `SOVA_ZEBRAD_RPC=http://127.0.0.1:18234`, and run
-   `sova`. Pass: its log shows `p2p: discovery on … bootnode(s)`, `sova/1:
+   `sova` (`testnet.env` sets `SOVA_SIP6=1`, so it checks every seal).
+   Pass: its log shows `p2p: discovery on … bootnode(s)`, `sova/1:
    peer active` and `expectations: enforcing settlements`, and
    `cast block latest --field hash` matches between it and
    `https://rpc.testnet.sova.io` at the same height.
@@ -294,7 +298,7 @@ the gitleaks CI scan.
 | `sova-seed-1` | Hetzner CX43, fsn1, 60 GB volume | zebrad, sova (follow-only, C5-enforcing) | SSH (admin IPs), Sova P2P 30303 tcp+udp, Zcash P2P 18233 |
 | `sova-rpc-1` | Hetzner CX43, nbg1, 40 GB volume | zebrad, sova (follow-only, `SOVA_RPC_PROFILE=public`), cloudflared → `rpc.testnet.sova.io` | SSH only |
 | `sova-faucet-1` | Hetzner CX33, hel1, 40 GB volume | zebrad, `sova-faucet` (its own hot key, D5), cloudflared → `faucet.testnet.sova.io` | SSH only |
-| `sova-keeper-1` | **AWS EC2** t3a.large, eu-central-1, 40 GB gp3 root disk, Elastic IP (byo: Rob creates it, the kit adopts it) | zebrad, sova in **mine** mode, `sova-keeper` (disclosed, D8) | SSH only (admin IP), via its security group `sova-testnet-keeper` |
+| `sova-keeper-1` | **AWS EC2** t3a.large, eu-central-1, 40 GB gp3 root disk, Elastic IP (byo: Rob creates it, the kit adopts it) | zebrad, sova in **mine** mode (SIP-6: signs with the keeper's miner key), `sova-keeper` (disclosed, D8) | SSH only (admin IP), via its security group `sova-testnet-keeper` |
 
 | Script | What it does |
 | --- | --- |
@@ -386,15 +390,22 @@ Section 0 settled the schedule (`flat`) and the chain ID (82330) on
    including the AWS keeper, wipe the Sova chain but **keep the node
    key**:
    ```bash
-   ssh … 'sudo systemctl stop sova-node && sudo find /var/lib/sova/node -mindepth 1 -maxdepth 1 ! -name discovery-secret -exec rm -rf {} +'
+   ssh … 'sudo systemctl stop sova-node && sudo find /var/lib/sova/node -mindepth 1 -maxdepth 1 ! -name discovery-secret ! -name seal-journal -exec rm -rf {} +'
    ```
+   The seal journal stays: it is never deleted (`docs/ops/keeper-miner.md`,
+   "Sealing key (SIP-6)"). Its old entries name the old chain's parents,
+   so they never match a new slot.
    Move `deployments/sova-testnet.json` to `deployments/sova-testnet-v0.json`
    (`deploy-contracts.sh` refuses a record whose genesis differs), and
    `keygen` a new deployer. Then run `./launch.sh --go`: it pins the new B,
    rolls out, re-publishes the join files and redeploys the contracts.
    zebrad state is untouched: it's the same Zcash testnet.
-5. **Keeper:** re-init it if SIP-6 requires it (new addresses mean a new
-   disclosure). The faucet needs nothing: it's TAZ, unchanged.
+5. **Keeper:** SIP-6 seals with the keeper's miner key, so its burns must
+   credit that key's own EVM address. A keystore made by today's
+   `sova-miner init` does. `deploy.sh` stops with the fix if the keeper's
+   doesn't (a legacy hash160 or `--evm-address` credit target): migrate it
+   (`docs/ops/keeper-miner.md`) and publish the new EVM address. The
+   faucet needs nothing: it's TAZ, unchanged.
 6. **Done proof** again (step 9).
 
 ### Code prerequisites and known deviations
@@ -407,9 +418,10 @@ Section 0 settled the schedule (`flat`) and the chain ID (82330) on
   (about an hour of 75 s epochs) and re-fetches them from peers. That is
   harmless while any peer is up. The follow-ups are graceful shutdown and
   a lower persistence threshold for persistent datadirs.
-- **B and the schedule are env vars, not profile constants.** A stranger
-  who forgets `SOVA_EPOCH_BASE` gets the default 1 and never agrees with
-  the network. The follow-up is to pin both in the `sova-testnet` profile
+- **B, the schedule and SIP-6 are env vars, not profile constants.** A
+  stranger who forgets `SOVA_EPOCH_BASE` gets the default 1 and never
+  agrees with the network, and one who forgets `SOVA_SIP6=1` can't import
+  sealed blocks (their 97-byte `extraData`). The follow-up is to pin them in the `sova-testnet` profile
   in `chain.rs`, the same way bootnodes will be. Until then, `testnet.env`
   carries them.
 - **zebrad cookie auth is off** (loopback-only RPC, single-purpose
