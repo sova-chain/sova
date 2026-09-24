@@ -11,6 +11,9 @@ import { mkdir, open, readFile } from "node:fs/promises";
 import path from "node:path";
 import { MINER_BIN, RUNS_DIR } from "./paths.js";
 import { assertMinerBinaryExists } from "./minerCli.js";
+import { buildMineArgs, type StartMineArgs } from "./mineArgs.js";
+
+export type { StartMineArgs } from "./mineArgs.js";
 
 export type RunStatus = "running" | "exited" | "stopped" | "killed";
 
@@ -74,16 +77,6 @@ function mostRecentRun(): InternalRun | undefined {
   return latest;
 }
 
-export interface StartMineArgs {
-  dataDir: string;
-  network: string;
-  budgetZat: number;
-  perEpochZat: number;
-  rpcUrl: string;
-  pollIntervalMs?: number;
-  maxEpochs?: number;
-}
-
 export async function startMineRun(opts: StartMineArgs): Promise<RunRecord> {
   await assertMinerBinaryExists();
 
@@ -95,25 +88,7 @@ export async function startMineRun(opts: StartMineArgs): Promise<RunRecord> {
   const logPath = path.join(RUNS_DIR, `${runId}.log`);
   const logHandle = await open(logPath, "a");
 
-  const args = [
-    "--data-dir",
-    opts.dataDir,
-    "--network",
-    opts.network,
-    "mine",
-    "--budget-zat",
-    String(opts.budgetZat),
-    "--per-epoch-zat",
-    String(opts.perEpochZat),
-    "--rpc",
-    opts.rpcUrl,
-  ];
-  if (opts.pollIntervalMs !== undefined) {
-    args.push("--poll-interval-ms", String(opts.pollIntervalMs));
-  }
-  if (opts.maxEpochs !== undefined) {
-    args.push("--max-epochs", String(opts.maxEpochs));
-  }
+  const args = buildMineArgs(opts);
 
   const command = `sova-miner ${args.join(" ")}`;
   const header =

@@ -10,9 +10,11 @@
 //! - [`network`] -- the [`Parameters`](zcash_protocol::consensus::Parameters)
 //!   implementation used for transaction building, including a regtest
 //!   configuration matching `box/regtest`'s `zebrad.toml`.
-//! - [`tx`] -- construction and ZIP-244 signing of SIP-1 burn transactions,
-//!   and of plain transparent transfers (used by `sova-faucet`).
-//! - [`fee`] -- the ZIP-317 conventional fee for transparent transactions.
+//! - [`tx`] -- construction and ZIP-244 signing of SIP-1 burn transactions
+//!   (and SIP-8 anchored ones, which also reference a Sova block), and of
+//!   plain transparent transfers (used by `sova-faucet`).
+//! - [`fee`] -- the ZIP-317 conventional fee for transparent transactions,
+//!   including both burn payload sizes.
 //! - [`rpc`] -- a minimal JSON-RPC client for a `zebrad`-compatible node.
 //! - [`utxo`] -- coinbase UTXO discovery over that RPC client.
 

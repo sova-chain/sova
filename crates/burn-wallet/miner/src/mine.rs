@@ -20,6 +20,12 @@
 //! every invocation, for anyone who wants the old (pre-D5) behavior
 //! explicitly. See the miner README's "Budgets" section for the
 //! user-facing statement of both flags' semantics.
+//!
+//! SIP-8 (anchored burns): with `--sova-rpc`, and only once SIP-8 is active
+//! on the network, each burn also references the head of the miner's own
+//! Sova node (a vote) -- see `crate::anchor`. Without `--sova-rpc`, or
+//! before activation, every burn is the SIP-1 v1 burn this loop has always
+//! sent, and nothing here waits on Sova.
 
 use std::path::PathBuf;
 use std::thread;
@@ -27,7 +33,9 @@ use std::time::Duration;
 
 use burn_wallet::rpc::RpcClient;
 use burn_wallet::{Keypair, Network};
+use consensus::sip1::SovaRef;
 
+use crate::anchor::{Anchoring, SOVA_RPC_TIMEOUT, Sip8Gate, resolve_activation};
 use crate::chain::{ANCHOR_HEIGHT, ChainCheck, check_chain};
 use crate::epoch::{
     BudgetKind, EpochError, EpochOutcome, PendingResolution, attempt_epoch, resolve_pending,
@@ -79,6 +87,15 @@ pub(crate) struct MineArgs {
     pub poll_interval_ms: u64,
     /// Optional cap on epochs submitted in this run.
     pub max_epochs: Option<u64>,
+    /// `--sova-rpc`: the miner's own Sova node, for SIP-8 votes. `None`:
+    /// v1 burns only, and nothing waits on Sova.
+    pub sova_rpc: Option<String>,
+    /// `--vote-wait`: how long to wait for the Sova block anchoring a new
+    /// Zcash tip before referencing the head as it is.
+    pub vote_wait: Duration,
+    /// `--sip8-from` (regtest testing only): SIP-8's activation height,
+    /// when the network has none built in.
+    pub sip8_from: Option<u64>,
 }
 
 /// Runs the mining loop until budget is exhausted, `max_epochs` is
@@ -133,6 +150,21 @@ pub(crate) fn run(args: MineArgs) -> Result<(), CliError> {
     // but loudly: SOVA there is unspendable. See `crate::evm_address`.
     if classify(&keypair, evm_address) == CreditTarget::LegacyUnspendable {
         eprintln!("{}", legacy_warning(&keypair));
+    }
+    // SIP-8: `None` (no `--sova-rpc`) is today's v1 miner exactly. With it,
+    // say once whether votes will be cast, and if not, why.
+    let gate =
+        Sip8Gate::new(resolve_activation(args.network, args.sip8_from).map_err(CliError::Message)?);
+    let mut anchoring = args.sova_rpc.as_ref().map(|url| {
+        Anchoring::new(
+            RpcClient::with_timeout(url.clone(), SOVA_RPC_TIMEOUT),
+            url.clone(),
+            gate,
+            args.vote_wait,
+        )
+    });
+    if let Some(anchoring) = &anchoring {
+        println!("{}", anchoring.startup_line(args.network));
     }
 
     // E1d: before trusting any tracked UTXO, make sure the node still
@@ -242,6 +274,15 @@ pub(crate) fn run(args: MineArgs) -> Result<(), CliError> {
             // we advance `last_height` to below, not this.
             let next_height = last_height + 1;
             let target_height = u32::try_from(next_height).unwrap_or(u32::MAX);
+            // SIP-8: short of a Zcash reorg, the burn can't be mined below
+            // `target_height` (the tip is already at least `last_height`),
+            // so that is the height the activation guard checks. Freshness
+            // is judged against the tip as it is now, not when this pass
+            // started.
+            let sova_ref = anchoring.as_mut().and_then(|anchoring| {
+                let tip = rpc.get_block_count().unwrap_or(height);
+                anchoring.reference_for(&rpc, u64::from(target_height), tip)
+            });
 
             let outcome = attempt_epoch_with_retries(
                 &rpc,
@@ -252,6 +293,7 @@ pub(crate) fn run(args: MineArgs) -> Result<(), CliError> {
                 0,
                 args.per_epoch_zat,
                 target_height,
+                sova_ref,
                 &mut state,
             )?;
 
@@ -261,8 +303,11 @@ pub(crate) fn run(args: MineArgs) -> Result<(), CliError> {
                     // kill from here on neither loses the epoch nor lets a
                     // restart spend its inputs again.
                     state.save(&st_path)?;
+                    let vote = sova_ref.map_or_else(String::new, |r| {
+                        format!(" payload=v2 ref={}:0x{}", r.height, hex::encode(r.hash))
+                    });
                     println!(
-                        "burn broadcast: txid={} burn={}zat fee={}zat change={}zat (awaiting confirmation)",
+                        "burn broadcast: txid={} burn={}zat fee={}zat change={}zat{vote} (awaiting confirmation)",
                         pending.txid, pending.burn_zat, pending.fee_zat, pending.change_zat
                     );
                     // Block until the node confirms it, so the recorded
@@ -388,6 +433,7 @@ fn attempt_epoch_with_retries(
     signal_bits: u32,
     burn_zat: u64,
     target_height: u32,
+    sova_ref: Option<SovaRef>,
     state: &mut MinerState,
 ) -> Result<EpochOutcome, EpochError> {
     let mut attempt = 0;
@@ -401,6 +447,7 @@ fn attempt_epoch_with_retries(
             signal_bits,
             burn_zat,
             target_height,
+            sova_ref,
             state,
         ) {
             Ok(outcome) => return Ok(outcome),

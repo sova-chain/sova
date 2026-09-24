@@ -14,6 +14,7 @@
 //! - [`report`](Command::Report): spend/earnings summary from the local
 //!   state sidecar, optionally cross-checked against the chain.
 
+mod anchor;
 mod chain;
 mod epoch;
 mod evm_address;
@@ -54,6 +55,16 @@ struct Cli {
     /// a new cookie. Omit it for a zebrad with cookie auth off.
     #[arg(long, global = true, env = "SOVA_MINER_RPC_COOKIE_FILE")]
     rpc_cookie_file: Option<PathBuf>,
+
+    /// TESTING ONLY, regtest only: treat SIP-8 (anchored burns) as active
+    /// from this Zcash height, like a Sova node told the same. No network
+    /// has an activation height yet; on testnet and mainnet it will come
+    /// with the release and this flag is refused there. It must match the
+    /// Sova nodes' setting exactly: a version-2 burn mined below the real
+    /// activation height is not a burn (its ZEC is destroyed, nothing is
+    /// minted). Used by `mine --sova-rpc` and by `report --verify-rpc`.
+    #[arg(long, global = true, value_name = "ZCASH_HEIGHT")]
+    sip8_from: Option<u64>,
 
     #[command(subcommand)]
     command: Command,
@@ -128,6 +139,23 @@ enum Command {
         /// omitted.
         #[arg(long)]
         max_epochs: Option<u64>,
+        /// SIP-8 anchored burns: the JSON-RPC endpoint of YOUR OWN Sova
+        /// node, e.g. `http://127.0.0.1:8545`. Each burn then also votes
+        /// for that node's head block, once SIP-8 is active on this network
+        /// (it is not active anywhere yet, so until then every burn stays a
+        /// SIP-1 v1 burn and this says why at startup). A vote is only as
+        /// good as the node it came from: pointing this at someone else's
+        /// node hands them your vote. Omitted: v1 burns, and burning never
+        /// waits on Sova.
+        #[arg(long, value_name = "URL")]
+        sova_rpc: Option<String>,
+        /// With `--sova-rpc`: how long to wait, after a new Zcash block,
+        /// for the Sova block that anchors it before referencing whatever
+        /// the head is (SIP-8 §6: 10 s lets most burns vote for the newest
+        /// block; about 12% then land one Zcash block later). 0 references
+        /// the head at once.
+        #[arg(long, value_name = "SECS", default_value_t = 10)]
+        vote_wait: u64,
     },
     /// Print a spend/earnings summary from the local state sidecar.
     Report {
@@ -368,6 +396,7 @@ fn cmd_report(
     verify_rpc: Option<String>,
     verify_from_height: Option<u64>,
     rpc_cookie_file: Option<&Path>,
+    sip8_from: Option<u64>,
 ) -> Result<(), CliError> {
     let st_path = state_path(data_dir);
     let state = MinerState::load(&st_path)?;
@@ -444,6 +473,9 @@ fn cmd_report(
 
     if let Some(url) = verify_rpc {
         let rpc = rpc_client(&url, rpc_cookie_file)?;
+        let sip8 = anchor::Sip8Gate::new(
+            anchor::resolve_activation(network, sip8_from).map_err(CliError::Message)?,
+        );
 
         println!();
         println!(
@@ -477,7 +509,7 @@ fn cmd_report(
             .or_else(|| state.epochs.iter().map(|e| e.height).min())
             .unwrap_or(tip.saturating_add(1));
         let burns = if from <= tip {
-            verify::scan_chain_burns(&rpc, from, tip)?
+            verify::scan_chain_burns(&rpc, from, tip, sip8)?
         } else {
             Vec::new()
         };
@@ -498,8 +530,11 @@ fn cmd_report(
         }
         println!("chain burns found (our address): {chain_count} (total {chain_total} zat)");
         for b in &ours {
+            let vote = b.reference.map_or_else(String::new, |r| {
+                format!("  v2 ref {}:0x{}", r.height, hex::encode(r.hash))
+            });
             println!(
-                "  height {:>7}  txid {}  {} zat",
+                "  height {:>7}  txid {}  {} zat{vote}",
                 b.height, b.txid, b.burn.value_zat
             );
         }
@@ -562,6 +597,8 @@ fn main() {
             rpc,
             poll_interval_ms,
             max_epochs,
+            sova_rpc,
+            vote_wait,
         } => mine::run(mine::MineArgs {
             data_dir: cli.data_dir.clone(),
             network: cli.network,
@@ -572,6 +609,9 @@ fn main() {
             rpc_cookie_file: cli.rpc_cookie_file.clone(),
             poll_interval_ms,
             max_epochs,
+            sova_rpc,
+            vote_wait: std::time::Duration::from_secs(vote_wait),
+            sip8_from: cli.sip8_from,
         }),
         Command::Report {
             verify_rpc,
@@ -582,6 +622,7 @@ fn main() {
             verify_rpc,
             verify_from_height,
             cli.rpc_cookie_file.as_deref(),
+            cli.sip8_from,
         ),
     };
 
@@ -763,5 +804,65 @@ mod tests {
             .unwrap();
         assert!(err.to_string().contains("--rpc-cookie-file"), "{err}");
         assert!(rpc_client("http://127.0.0.1:1", None).is_ok());
+    }
+
+    /// SIP-8 flags: off unless given; `--vote-wait` defaults to 10 s;
+    /// `--sip8-from` is global (it also scopes `report --verify-rpc`).
+    #[test]
+    fn sip8_flags_default_to_off() {
+        let base = [
+            "sova-miner",
+            "mine",
+            "--rpc",
+            "http://127.0.0.1:18232",
+            "--budget-zat",
+            "1",
+            "--per-epoch-zat",
+            "1",
+        ];
+        let cli = Cli::try_parse_from(base).unwrap();
+        assert_eq!(cli.sip8_from, None);
+        let Command::Mine {
+            sova_rpc,
+            vote_wait,
+            ..
+        } = cli.command
+        else {
+            panic!("expected mine");
+        };
+        assert_eq!(sova_rpc, None);
+        assert_eq!(vote_wait, 10);
+
+        let cli = Cli::try_parse_from(base.iter().chain(&[
+            "--sova-rpc",
+            "http://127.0.0.1:8545",
+            "--vote-wait",
+            "0",
+            "--sip8-from",
+            "150",
+        ]))
+        .unwrap();
+        assert_eq!(cli.sip8_from, Some(150));
+        let Command::Mine {
+            sova_rpc,
+            vote_wait,
+            ..
+        } = cli.command
+        else {
+            panic!("expected mine");
+        };
+        assert_eq!(sova_rpc.as_deref(), Some("http://127.0.0.1:8545"));
+        assert_eq!(vote_wait, 0);
+
+        let report = Cli::try_parse_from([
+            "sova-miner",
+            "--sip8-from",
+            "150",
+            "report",
+            "--verify-rpc",
+            "http://127.0.0.1:18232",
+        ])
+        .unwrap();
+        assert_eq!(report.sip8_from, Some(150));
     }
 }

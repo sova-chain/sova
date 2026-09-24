@@ -161,6 +161,70 @@ call once. A running miner therefore survives a zebrad restart. Without
 the option nothing changes: no auth is sent, which suits a zebrad with
 cookie auth off, such as the regtest box.
 
+## Anchored burns (SIP-8)
+
+**Dormant: SIP-8 is not active on any network yet.** Until a release
+gives a network its activation height, every burn is the SIP-1 v1 burn
+described above, whatever flags you pass.
+
+SIP-8 (`sips/sip-8-draft-anchored-burns.md`) lets a burn also name a Sova
+block, `(height, hash)`, in a version-2 payload. That reference is a
+**vote**, weighted by the ZEC the burn destroys, and Sova nodes prefer
+the history the most burned ZEC has voted for. `mine` casts one when you
+point it at a Sova node:
+
+```bash
+sova-miner mine --rpc http://127.0.0.1:18232 --budget-zat 1000000 --per-epoch-zat 10000 \
+  --sova-rpc http://127.0.0.1:8545      # YOUR OWN Sova node
+```
+
+- **`--sova-rpc <url>`**: before each burn, `mine` reads the node's head
+  (`eth_getBlockByNumber("latest", false)`) and references it. Without
+  `--sova-rpc`, burns are v1 exactly as before and burning never waits on
+  Sova.
+- **`--vote-wait <secs>`** (default 10): after a new Zcash block, wait up
+  to this long for the Sova block that anchors it, then reference whatever
+  the head is. Waiting lets most burns vote for the newest block; the cost
+  is that about 12% of burns (at 10 s) miss the next Zcash block and land
+  one later (SIP-8 §6). `0` references the head at once.
+- **Freshness.** The head is voted for only if the Zcash block it anchors
+  (its `parentBeaconBlockRoot`, which every Sova block commits to) is on
+  this miner's own zebrad's best chain, at most 2 blocks below the tip.
+  That block's height is the head's anchor epoch, `number + B − 1`, read
+  from the chain, so there is no epoch base `B` to configure. A node that
+  is behind, stuck, unreachable, or anchored on another Zcash branch gets
+  no vote: the burn goes out as v1 with a `warning:` line saying why.
+- **Activation guard.** A v2 burn mined below the network's activation
+  height is **not a burn**: the ZEC is destroyed and nothing is minted.
+  `mine` sends v2 only when it knows the activation height and the burn
+  cannot be mined below it. With no activation height (today, everywhere)
+  `--sova-rpc` is accepted, never queried, and `mine` says once at startup
+  why its burns stay v1.
+- **Fees.** The v2 payload output is 74 bytes (v1: 38), one more ZIP-317
+  logical action: 25,000 zat instead of 20,000 for the usual 1-in/3-out
+  burn, 20,000 instead of 15,000 without change. The budget counts it.
+- `report --verify-rpc` recognizes v2 burns at heights where SIP-8 is
+  active, as a Sova node does, and prints each one's reference.
+
+**Trust: a vote is only as good as the node it came from.** The head
+`mine` votes for is whatever that node's fork choice says. Point
+`--sova-rpc` at a node you run, next to your zebrad. Pointing it at
+someone else's node hands them your vote: they choose what your burned
+ZEC stands behind. The MCP server (`mcp/`) passes the flag through and
+defaults it only to the agent's own node (`SOVA_NODE_RPC_URL`), never a
+public one.
+
+**Testing on regtest.** A regtest Sova node recognizes v2 burns only when
+told to, so the miner must be told the same height:
+`--sip8-from <zcash-height>` (a global option, for `mine` and `report`).
+It is refused on testnet and mainnet, where the activation height comes
+with the release. It must match the Sova nodes' setting exactly, for the
+reason in the activation guard above.
+
+A reorg of Zcash across the activation height could still put a v2 burn
+built just above it into a block below it. Mine well clear of the
+boundary when testing it.
+
 ## Chain resets
 
 `state.json` tracks UTXOs and burns on one particular Zcash chain. `mine`

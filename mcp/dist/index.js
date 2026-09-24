@@ -8,8 +8,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { DEFAULT_MINER_DATA_DIR, DEFAULT_RPC_URL, MINER_BIN, REGTEST_HARNESS_DIR, } from "./paths.js";
+import { DEFAULT_MINER_DATA_DIR, DEFAULT_RPC_URL, DEFAULT_SOVA_RPC_URL, MINER_BIN, REGTEST_HARNESS_DIR, } from "./paths.js";
 import { runMinerOnce } from "./minerCli.js";
+import { resolveSovaRpcUrl } from "./mineArgs.js";
 import { readMinerState } from "./minerState.js";
 import { generateToAddress, getBlockCount } from "./rpc.js";
 import { findActiveRun, listRuns, readRunLog, startMineRun, stopRun, } from "./runManager.js";
@@ -158,7 +159,12 @@ server.registerTool("sova_mine", {
         "remains, it submits one SIP-1 burn per new Zcash block it observes " +
         "over RPC. Returns immediately with a run id -- use sova_status to " +
         "watch progress, sova_stop to end it early. Only one run may be " +
-        "active at a time.",
+        "active at a time. SIP-8 anchored burns: with a Sova node (sovaRpcUrl, " +
+        "defaulting to the agent's own node from SOVA_NODE_RPC_URL when set) " +
+        "each burn also votes for that node's head once SIP-8 is active on the " +
+        "network; it is not active on any network yet, so until then burns stay " +
+        "SIP-1 v1 and the log says why. Only use the user's own node: a vote is " +
+        "only as good as the node it came from.",
     inputSchema: {
         budgetZat: z
             .number()
@@ -191,10 +197,21 @@ server.registerTool("sova_mine", {
             .positive()
             .optional()
             .describe("Stop after this many epochs in this run (default: unbounded)."),
+        sovaRpcUrl: z
+            .string()
+            .optional()
+            .describe(`SIP-8: JSON-RPC URL of the user's OWN Sova node, passed as --sova-rpc (default: ${DEFAULT_SOVA_RPC_URL ?? "none -- SOVA_NODE_RPC_URL is not set"}). Pass "" to mine without votes. Never point it at someone else's node: that hands them the vote.`),
+        voteWaitSecs: z
+            .number()
+            .int()
+            .min(0)
+            .optional()
+            .describe("SIP-8: --vote-wait, seconds to wait for the Sova block anchoring a new Zcash block before voting for the head as it is (CLI default 10). Ignored without a Sova node."),
     },
-}, async ({ budgetZat, perEpochZat, dataDir, network, rpcUrl, pollIntervalMs, maxEpochs, }) => {
+}, async ({ budgetZat, perEpochZat, dataDir, network, rpcUrl, pollIntervalMs, maxEpochs, sovaRpcUrl, voteWaitSecs, }) => {
     try {
         const resolvedDataDir = dataDir ?? DEFAULT_MINER_DATA_DIR;
+        const sova = resolveSovaRpcUrl(sovaRpcUrl, DEFAULT_SOVA_RPC_URL);
         const run = await startMineRun({
             dataDir: resolvedDataDir,
             network,
@@ -203,11 +220,14 @@ server.registerTool("sova_mine", {
             rpcUrl,
             pollIntervalMs,
             maxEpochs,
+            sovaRpcUrl: sova,
+            voteWaitSecs,
         });
         return ok({
             runId: run.runId,
             pid: run.pid,
             command: run.command,
+            sovaRpcUrl: sova ?? null,
             logPath: run.logPath,
             startedAt: run.startedAt,
             note: "call sova_status with this runId to watch progress.",

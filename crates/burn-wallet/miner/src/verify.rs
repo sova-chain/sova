@@ -3,12 +3,17 @@
 //! by feeding real, node-confirmed transaction outputs through
 //! `consensus::sip1::extract_burn` -- generalized here to a full block
 //! range so `report --verify-rpc` can independently corroborate this
-//! miner's own bookkeeping against the chain itself.
+//! miner's own bookkeeping against the chain itself. At heights where
+//! SIP-8 is active ([`crate::anchor::Sip8Gate`]) it recognizes version-2
+//! (anchored) burns too, through `consensus::sip1::extract_burn_at`, exactly
+//! as a Sova node does; below them, SIP-1 alone.
 
-use consensus::sip1::{Burn, TxOutRef, extract_burn};
+use consensus::sip1::{Burn, SovaRef, TxOutRef, extract_burn_at};
 use serde_json::Value;
 
 use burn_wallet::rpc::{RpcClient, RpcError};
+
+use crate::anchor::Sip8Gate;
 
 /// One burn found on chain.
 #[derive(Debug, Clone)]
@@ -19,6 +24,8 @@ pub(crate) struct ChainBurn {
     pub txid: String,
     /// The recognized burn (evm address, signal bits, total value).
     pub burn: Burn,
+    /// A version-2 burn's Sova reference (SIP-8); `None` for a v1 burn.
+    pub reference: Option<SovaRef>,
 }
 
 /// Errors scanning the chain.
@@ -37,8 +44,9 @@ pub(crate) enum VerifyError {
     },
 }
 
-/// Scans every block in `from_height..=to_height` (inclusive) for SIP-1
-/// burns, across *all* transactions. Costs one `getblock` per height, so
+/// Scans every block in `from_height..=to_height` (inclusive) for burns,
+/// across *all* transactions: SIP-1 burns everywhere, and SIP-8 version-2
+/// burns at heights where `sip8` is active. Costs one `getblock` per height, so
 /// callers bound the range (`report --verify-rpc` starts at the miner's
 /// first recorded epoch, never at genesis).
 ///
@@ -50,6 +58,7 @@ pub(crate) fn scan_chain_burns(
     rpc: &RpcClient,
     from_height: u64,
     to_height: u64,
+    sip8: Sip8Gate,
 ) -> Result<Vec<ChainBurn>, VerifyError> {
     let mut found = Vec::new();
     for height in from_height..=to_height {
@@ -112,11 +121,12 @@ pub(crate) fn scan_chain_burns(
                 })
                 .collect();
 
-            if let Some(burn) = extract_burn(refs) {
+            if let Some((burn, reference)) = extract_burn_at(refs, sip8.active_at(height)) {
                 found.push(ChainBurn {
                     height,
                     txid: txid.to_string(),
                     burn,
+                    reference,
                 });
             }
         }

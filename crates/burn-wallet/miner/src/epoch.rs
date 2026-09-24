@@ -29,7 +29,9 @@ use burn_wallet::utxo::{decode_rpc_hash, encode_rpc_hash};
 use burn_wallet::{Keypair, Network, RpcError, Utxo};
 use zcash_transparent::bundle::OutPoint;
 
-use crate::fee::{DUST_THRESHOLD_ZAT, zip317_fee_zat};
+use consensus::sip1::SovaRef;
+
+use crate::fee::{BurnPayloadVersion, DUST_THRESHOLD_ZAT, zip317_fee_zat};
 use crate::funding::{self, Funding};
 use crate::node::{Node, TxStatus};
 use crate::state::{EpochRecord, MinerState, OutPointRef, PendingBurn, TrackedUtxo};
@@ -183,11 +185,15 @@ struct Selection {
 }
 
 /// Greedily selects UTXOs (largest-first, to minimize input count and
-/// therefore fee) from `pool` to cover `burn_zat` plus its ZIP-317 fee,
-/// recomputing the fee as inputs are added since fee depends on input
-/// count. Returns `None` if no prefix of `pool` (sorted descending) covers
+/// therefore fee) from `pool` to cover `burn_zat` plus its ZIP-317 fee for
+/// a burn carrying `payload`, recomputing the fee as inputs are added since
+/// fee depends on input count. Returns `None` if no prefix of `pool` (sorted descending) covers
 /// it -- i.e. the wallet doesn't have enough total spendable value.
-fn select_utxos(pool: &[TrackedUtxo], burn_zat: u64) -> Option<Selection> {
+fn select_utxos(
+    pool: &[TrackedUtxo],
+    burn_zat: u64,
+    payload: BurnPayloadVersion,
+) -> Option<Selection> {
     let mut order: Vec<usize> = (0..pool.len()).collect();
     order.sort_unstable_by(|&a, &b| pool[b].value_zat.cmp(&pool[a].value_zat));
 
@@ -200,7 +206,7 @@ fn select_utxos(pool: &[TrackedUtxo], burn_zat: u64) -> Option<Selection> {
 
         // First, try the shape with a change output (payload + eater +
         // change).
-        let fee_with_change = zip317_fee_zat(n_in, true);
+        let fee_with_change = zip317_fee_zat(n_in, payload, true);
         let Some(needed_with_change) = burn_zat.checked_add(fee_with_change) else {
             continue;
         };
@@ -218,7 +224,7 @@ fn select_utxos(pool: &[TrackedUtxo], burn_zat: u64) -> Option<Selection> {
             // left into the fee. fee_no_change <= fee_with_change, and we
             // already know sum >= burn_zat + fee_with_change, so sum
             // covers burn_zat + fee_no_change too.
-            let fee_no_change = zip317_fee_zat(n_in, false);
+            let fee_no_change = zip317_fee_zat(n_in, payload, false);
             if let Some(needed_no_change) = burn_zat.checked_add(fee_no_change)
                 && sum >= needed_no_change
             {
@@ -256,6 +262,7 @@ fn fund_burn(
     funding: &mut Funding,
     address: &str,
     burn_zat: u64,
+    payload: BurnPayloadVersion,
     state: &mut MinerState,
 ) -> Result<Selection, EpochError> {
     let snapshot = node.address_utxos(address)?;
@@ -277,7 +284,7 @@ fn fund_burn(
             coinbase.len()
         );
     }
-    if let Some(selection) = select_utxos(&state.utxos, burn_zat) {
+    if let Some(selection) = select_utxos(&state.utxos, burn_zat, payload) {
         return Ok(selection);
     }
     // The tracked pool is short: take in whatever else the address holds
@@ -299,7 +306,7 @@ fn fund_burn(
             snapshot.tip_height, found.reserved_zat
         );
     }
-    select_utxos(&state.utxos, burn_zat).ok_or(if found.coinbase_zat > 0 {
+    select_utxos(&state.utxos, burn_zat, payload).ok_or(if found.coinbase_zat > 0 {
         EpochError::CoinbaseMustBeShielded {
             burn_zat,
             spendable_zat,
@@ -326,6 +333,11 @@ fn fund_burn(
 /// height is the block the burn actually confirms in (see
 /// [`resolve_pending`]).
 ///
+/// `sova_ref` makes the burn a SIP-8 version-2 (anchored) burn referencing
+/// that Sova block; `None` builds the SIP-1 v1 burn, exactly as before
+/// SIP-8. Only [`crate::anchor::Sip8Gate::admit`] may produce a `Some`:
+/// it is what checks that SIP-8 is active at `target_height`.
+///
 /// Budget is checked against two independent caps (D5, see
 /// [`BudgetKind`]): `--budget-zat`, measured against spend since this
 /// `mine` invocation started, and the optional `--lifetime-budget-zat`,
@@ -347,11 +359,17 @@ pub(crate) fn attempt_epoch(
     signal_bits: u32,
     burn_zat: u64,
     target_height: u32,
+    sova_ref: Option<SovaRef>,
     state: &mut MinerState,
 ) -> Result<EpochOutcome, EpochError> {
     debug_assert!(state.pending.is_none(), "one burn in flight at a time");
     let address = keypair.encode_address(network);
-    let selection = fund_burn(node, funding, &address, burn_zat, state)?;
+    let payload = if sova_ref.is_some() {
+        BurnPayloadVersion::V2
+    } else {
+        BurnPayloadVersion::V1
+    };
+    let selection = fund_burn(node, funding, &address, burn_zat, payload, state)?;
 
     let total_cost_zat = burn_zat.saturating_add(selection.fee_zat);
 
@@ -403,6 +421,7 @@ pub(crate) fn attempt_epoch(
         signal_bits,
         burn_value_zat: burn_zat,
         fee_zat: selection.fee_zat,
+        sova_ref,
     };
     let built = build_burn_transaction(&request)?;
     let pending = PendingBurn {
@@ -687,7 +706,7 @@ mod tests {
     #[test]
     fn selects_single_large_utxo_with_change() {
         let pool = vec![utxo(1_000_000)];
-        let sel = select_utxos(&pool, 100_000).expect("should select");
+        let sel = select_utxos(&pool, 100_000, BurnPayloadVersion::V1).expect("should select");
         assert_eq!(sel.indices, vec![0]);
         // 1 input, payload (38B) + eater (34B) + change (34B) = 106B out ->
         // ceil(106/34) = 4 logical actions -> 20,000 zat (see fee.rs).
@@ -700,7 +719,7 @@ mod tests {
     fn folds_sub_dust_change_into_fee() {
         // Exactly burn + fee_with_change: change would be 0.
         let pool = vec![utxo(100_000 + 20_000)];
-        let sel = select_utxos(&pool, 100_000).expect("should select");
+        let sel = select_utxos(&pool, 100_000, BurnPayloadVersion::V1).expect("should select");
         assert!(!sel.has_change);
         assert_eq!(sel.change_zat, 0);
         // Dropping the change output lowers the fee formula's own value
@@ -713,33 +732,33 @@ mod tests {
     #[test]
     fn prefers_largest_utxos_first() {
         let pool = vec![utxo(500), utxo(2_000_000), utxo(1_000)];
-        let sel = select_utxos(&pool, 100_000).expect("should select");
+        let sel = select_utxos(&pool, 100_000, BurnPayloadVersion::V1).expect("should select");
         assert_eq!(sel.indices, vec![1]);
     }
 
     #[test]
     fn combines_multiple_utxos_when_needed() {
         let pool = vec![utxo(70_000), utxo(70_000)];
-        let sel = select_utxos(&pool, 100_000).expect("should select");
+        let sel = select_utxos(&pool, 100_000, BurnPayloadVersion::V1).expect("should select");
         assert_eq!(sel.indices.len(), 2);
         assert!(sel.has_change);
         // 2 inputs still leaves the output side (4 actions) dominant over
         // the input side (2 actions): same 20,000 zat as the single-input
         // case above.
-        assert_eq!(sel.fee_zat, zip317_fee_zat(2, true));
+        assert_eq!(sel.fee_zat, zip317_fee_zat(2, BurnPayloadVersion::V1, true));
         assert_eq!(sel.change_zat, 140_000 - 100_000 - 20_000);
     }
 
     #[test]
     fn returns_none_when_wallet_is_empty() {
         let pool: Vec<TrackedUtxo> = vec![];
-        assert!(select_utxos(&pool, 100_000).is_none());
+        assert!(select_utxos(&pool, 100_000, BurnPayloadVersion::V1).is_none());
     }
 
     #[test]
     fn returns_none_when_funds_are_insufficient() {
         let pool = vec![utxo(1_000)];
-        assert!(select_utxos(&pool, 100_000).is_none());
+        assert!(select_utxos(&pool, 100_000, BurnPayloadVersion::V1).is_none());
     }
 
     /// A regtest-shaped node at tip 200 whose address holds one confirmed
@@ -780,6 +799,7 @@ mod tests {
             0,
             burn_zat,
             target_height,
+            None,
             state,
         )
     }
@@ -1277,5 +1297,118 @@ mod tests {
             node.txs.borrow().get(&pending.txid),
             Some(&TxStatus::Mempool)
         );
+    }
+
+    // --- SIP-8: anchored burns ---
+
+    /// An epoch with a fixed key (RFC 6979 signing: fixed bytes) and an
+    /// optional reference, on [`funded_node`]; returns the node and the
+    /// signed burn it was sent.
+    fn fixed_epoch(sova_ref: Option<SovaRef>) -> (FakeNode, PendingBurn, String) {
+        let node = funded_node();
+        let mut state = fresh_state();
+        state.begin_invocation(1_000_000, 100_000, None);
+        let keypair = Keypair::from_secret_bytes([0x11; 32]).unwrap();
+        let outcome = attempt_epoch(
+            &node,
+            &mut Funding::new(Network::Regtest),
+            Network::Regtest,
+            &keypair,
+            [0x42; 20],
+            0,
+            100_000,
+            201,
+            sova_ref,
+            &mut state,
+        )
+        .unwrap();
+        let EpochOutcome::Submitted(pending) = outcome else {
+            panic!("expected Submitted, got {outcome:?}");
+        };
+        let sent = node.sent.borrow()[0].clone();
+        (node, pending, sent)
+    }
+
+    /// Captured from `attempt_epoch` on `release` before SIP-8 (deba358)
+    /// with [`fixed_epoch`]'s inputs. The no-`--sova-rpc` path must send
+    /// exactly this: SIP-8 changes nothing for a miner that doesn't ask.
+    const PRE_SIP8_EPOCH_BURN: &str = "050000800a27a726b4d0d6c200000000f1000000010707070707070707070707070707070707070707070707070707070707070707000000006a4730440220486816b39d70037867fc625942330564f8dbc06520fcf687f167706427d47f29022067d63f830b8c80dcf59147dc32d6c0643bb192ca25f868d5593e30abcc50a3c60121034f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aaffffffff0300000000000000001d6a1b535601424242424242424242424242424242424242424200000000a0860100000000001976a914000000000000000000000000000000000000000088acc0c19600000000001976a914fc7250a211deddc70ee5a2738de5f07817351cef88ac000000";
+
+    #[test]
+    fn epoch_without_a_reference_is_byte_identical_to_pre_sip8() {
+        let (_, pending, sent) = fixed_epoch(None);
+        assert_eq!(sent, PRE_SIP8_EPOCH_BURN);
+        assert_eq!(pending.fee_zat, 20_000);
+    }
+
+    fn sent_outputs(raw_hex: &str) -> Vec<(u64, Vec<u8>)> {
+        let raw = hex::decode(raw_hex).unwrap();
+        let tx = zcash_primitives::transaction::Transaction::read(
+            raw.as_slice(),
+            zcash_protocol::consensus::BranchId::Nu5,
+        )
+        .unwrap();
+        tx.transparent_bundle()
+            .unwrap()
+            .vout
+            .iter()
+            .map(|o| (o.value().into_u64(), o.script_pubkey().0.0.clone()))
+            .collect()
+    }
+
+    fn out_refs(outs: &[(u64, Vec<u8>)]) -> Vec<consensus::sip1::TxOutRef<'_>> {
+        outs.iter()
+            .map(|(v, s)| consensus::sip1::TxOutRef {
+                value_zat: *v,
+                script: s.as_slice(),
+            })
+            .collect()
+    }
+
+    /// A v2 epoch pays the SIP-8 fee (25,000 zat for 1-in/3-out), keeps
+    /// the change at output 2, and round-trips through the node's
+    /// recognizer with its reference; without SIP-8 it is not a burn.
+    #[test]
+    fn epoch_with_a_reference_sends_a_v2_burn() {
+        use consensus::sip1::{Burn, extract_burn, extract_burn_at};
+        let reference = SovaRef {
+            height: 42,
+            hash: [0x5e; 32],
+        };
+        let (_, pending, sent) = fixed_epoch(Some(reference));
+        assert_eq!(pending.fee_zat, 25_000);
+        assert_eq!(pending.change_zat, 10_000_000 - 125_000);
+        let outs = sent_outputs(&sent);
+        assert_eq!(outs.len(), 3);
+        assert_eq!(outs[2].0, pending.change_zat, "change stays at vout 2");
+        let burn = Burn {
+            evm_address: [0x42; 20],
+            signal_bits: 0,
+            value_zat: 100_000,
+        };
+        assert_eq!(
+            extract_burn_at(out_refs(&outs), true),
+            Some((burn, Some(reference)))
+        );
+        assert_eq!(extract_burn_at(out_refs(&outs), false), None);
+        assert_eq!(extract_burn(out_refs(&outs)), None);
+    }
+
+    #[test]
+    fn v2_selection_pays_one_more_action() {
+        let pool = vec![utxo(1_000_000)];
+        let sel = select_utxos(&pool, 100_000, BurnPayloadVersion::V2).expect("should select");
+        assert!(sel.has_change);
+        assert_eq!(sel.fee_zat, 25_000);
+        assert_eq!(sel.change_zat, 1_000_000 - 125_000);
+        // Exactly burn + v2 fee: no change output, 20,000 formula fee, the
+        // 5,000 left over folded in.
+        let sel =
+            select_utxos(&[utxo(125_000)], 100_000, BurnPayloadVersion::V2).expect("should select");
+        assert!(!sel.has_change);
+        assert_eq!(sel.fee_zat, 25_000);
+        // A pool that covers a v1 burn and its fee exactly can't cover the v2 one.
+        assert!(select_utxos(&[utxo(120_000)], 100_000, BurnPayloadVersion::V1).is_some());
+        assert!(select_utxos(&[utxo(120_000)], 100_000, BurnPayloadVersion::V2).is_none());
     }
 }

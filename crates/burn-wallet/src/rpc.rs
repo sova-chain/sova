@@ -266,6 +266,15 @@ impl RpcClient {
         })
     }
 
+    /// Calls any JSON-RPC 2.0 `method` on this endpoint and returns its raw
+    /// `result`. For endpoints that speak the same envelope but aren't
+    /// zebrad: `sova-miner` reads a Sova node's head with it
+    /// (`eth_getBlockByNumber`), through a client built with
+    /// [`Self::with_timeout`] so a slow node can't hold up a burn.
+    pub fn call_method(&self, method: &str, params: Value) -> Result<Value, RpcError> {
+        self.call(method, params)
+    }
+
     /// `getblockchaininfo`, raw. zebrad reports `chain` as `"main"` for
     /// Mainnet and `"test"` for both Testnet and Regtest (BIP70 names).
     pub fn get_blockchain_info(&self) -> Result<Value, RpcError> {
@@ -309,6 +318,12 @@ impl RpcClient {
     /// `vout[].scriptPubKey.addresses`).
     pub fn get_block_verbose(&self, hash: &str) -> Result<Value, RpcError> {
         self.call_typed("getblock", json!([hash, 2]))
+    }
+
+    /// `getblock <hash> 1`: the block's header fields (`height`,
+    /// `confirmations`, ...) and its txids, without decoded transactions.
+    pub fn get_block_summary(&self, hash: &str) -> Result<Value, RpcError> {
+        self.call_typed("getblock", json!([hash, 1]))
     }
 
     /// `generate <n>`: mines `n` blocks immediately (regtest-only; Zebra

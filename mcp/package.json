@@ -16,7 +16,8 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "dev": "tsc -p tsconfig.json && node dist/index.js",
-    "driver": "tsc -p tsconfig.json && node dist/driver.js"
+    "driver": "tsc -p tsconfig.json && node dist/driver.js",
+    "test": "tsc -p tsconfig.json && node --test dist/mineArgs.test.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",

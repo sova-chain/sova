@@ -28,6 +28,13 @@ export const DATA_ROOT = process.env.SOVA_MCP_DATA_DIR ?? path.join(MCP_DIR, ".d
 export const DEFAULT_MINER_DATA_DIR = path.join(DATA_ROOT, "miner");
 /** Where per-run mine-loop logs are written. */
 export const RUNS_DIR = path.join(DATA_ROOT, "runs");
+/**
+ * The agent's OWN Sova node (JSON-RPC, e.g. http://127.0.0.1:8545), if one
+ * is configured: `sova_mine` passes it as `--sova-rpc` by default so SIP-8
+ * anchored burns vote for that node's head. Unset: no default (a vote is
+ * only as good as the node it came from; never someone else's by default).
+ */
+export const DEFAULT_SOVA_RPC_URL = process.env.SOVA_NODE_RPC_URL || undefined;
 /** Default regtest RPC endpoint (box/regtest/docker-compose.yml). */
 export const DEFAULT_RPC_URL = process.env.SOVA_REGTEST_RPC_URL ?? "http://127.0.0.1:18232";
 //# sourceMappingURL=paths.js.map

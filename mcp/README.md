@@ -21,6 +21,7 @@ boundary. Approved as part of the D3 task brief.
 | `src/index.ts` | The MCP server: registers the 6 tools, stdio transport. |
 | `src/runManager.ts` | Tracks the (at most one) active `mine` child process: pid, log path, status. |
 | `src/minerCli.ts` | Runs `sova-miner init`/`report` as one-shot child processes. |
+| `src/mineArgs.ts` | Builds the `sova-miner mine` argument list, including the SIP-8 `--sova-rpc` default (unit-tested in `src/mineArgs.test.ts`). |
 | `src/minerState.ts` | Reads `<data-dir>/state.json` (written by the CLI) for structured status. |
 | `src/rpc.ts` | Minimal JSON-RPC client, used only by `sova_fund_regtest`. |
 | `src/logParse.ts` | Parses the mine loop's stdout into a structured summary. |
@@ -34,7 +35,7 @@ boundary. Approved as part of the D3 task brief.
 | --- | --- | --- |
 | `sova_init` | Runs `sova-miner init`; creates/loads the keystore, returns the funding address. | `dataDir?`, `network?` (default `regtest`), `evmAddress?` |
 | `sova_fund_regtest` | Regtest-only: `generatetoaddress` N blocks straight to the miner's address (default 101 -- one mature coinbase). | `dataDir?`, `rpcUrl?`, `blocks?` (default 101), `address?` |
-| `sova_mine` | Starts `sova-miner mine` as a background process; returns a `runId` immediately. Only one run at a time. | `budgetZat`, `perEpochZat`, `dataDir?`, `network?`, `rpcUrl?`, `pollIntervalMs?`, `maxEpochs?` |
+| `sova_mine` | Starts `sova-miner mine` as a background process; returns a `runId` immediately. Only one run at a time. | `budgetZat`, `perEpochZat`, `dataDir?`, `network?`, `rpcUrl?`, `pollIntervalMs?`, `maxEpochs?`, `sovaRpcUrl?`, `voteWaitSecs?` |
 | `sova_status` | Tails a run's log; returns epochs completed, last epoch's burn/fee/txid, and why it stopped (if it has). | `runId?` (defaults to most recent), `tailLines?` |
 | `sova_stop` | SIGTERM (then SIGKILL after a grace period) a running mine loop. No-op if already ended. | `runId?`, `graceMs?` |
 | `sova_report` | Runs `sova-miner report`, optionally `--verify-rpc` for a full on-chain cross-check. | `dataDir?`, `network?`, `verifyRpcUrl?` |
@@ -59,6 +60,7 @@ and it will show the same descriptions.
 ```bash
 npm install
 npm run build   # tsc -> dist/
+npm test         # builds, then runs the unit tests (node:test)
 npm start        # runs dist/index.js over stdio
 ```
 
@@ -154,6 +156,22 @@ content and out of scope for this task.
 | `SOVA_REPO_ROOT` | parent of `mcp/` | Override repo-root resolution. |
 | `SOVA_MCP_DATA_DIR` | `mcp/.data` | Where keystores/state/run logs are written. |
 | `SOVA_REGTEST_RPC_URL` | `http://127.0.0.1:18232` | Default RPC endpoint for tools/driver that take one. |
+| `SOVA_NODE_RPC_URL` | unset | The agent's **own** Sova node (e.g. `http://127.0.0.1:8545`). When set, `sova_mine` passes it as `--sova-rpc` unless the call gives `sovaRpcUrl` (`""` opts out). See "Anchored burns" below. |
+
+## Anchored burns (SIP-8)
+
+`sova_mine` passes `sovaRpcUrl` / `voteWaitSecs` through as `sova-miner
+mine --sova-rpc` / `--vote-wait`. With a Sova node, each burn also
+references that node's head block, a vote in Sova's fork choice, once
+SIP-8 is active on the network. **It is not active on any network yet**:
+until it is, every burn stays a SIP-1 v1 burn and the run's log says why,
+once. See the miner's README, "Anchored burns (SIP-8)".
+
+A vote is only as good as the node it came from. The default is therefore
+the agent's own node (`SOVA_NODE_RPC_URL`) and never a public one: pointing
+`--sova-rpc` at someone else's node hands them the vote. With neither
+`sovaRpcUrl` nor `SOVA_NODE_RPC_URL`, no `--sova-rpc` is passed and the
+miner behaves exactly as before.
 
 ## Notes / known limitations
 
@@ -169,6 +187,6 @@ content and out of scope for this task.
 - No CLI-flag mismatches were found against `sova-miner --help`: every flag
   this server passes (`--data-dir`, `--network`, `--budget-zat`,
   `--per-epoch-zat`, `--rpc`, `--poll-interval-ms`, `--max-epochs`,
-  `--evm-address`, `--verify-rpc`) matches the D2 CLI's own `--help` output
+  `--sova-rpc`, `--vote-wait`, `--evm-address`, `--verify-rpc`) matches the D2 CLI's own `--help` output
   exactly, including that `--data-dir`/`--network` are global flags valid
   both before and after the subcommand.

@@ -163,12 +163,16 @@ pub enum SealerOutcome {
 /// - Burn-less epochs at the front trigger a rewardless cadence block
 ///   immediately (validates as `ValidEmpty` on import).
 /// - Burn-bearing epochs at the front run the ladder: rank `r` seals
-///   once `r * rank_step` has elapsed since the epoch reached the front
-///   (its first sealable moment), unless a better-or-equal candidate
+///   once `r * rank_step` has elapsed since this sealer first saw the
+///   epoch's Zcash block (SIP-2: time since the epoch, not since its turn
+///   in our queue, so the waits of backlogged epochs overlap instead of
+///   adding up), unless a better-or-equal candidate
 ///   has already been seen for the height (`best_seen`, fed from
 ///   [`crate::candidates`]). A node not in the epoch's ranking seals it
-///   only if the epoch is *abandoned*: every rank's rung has passed plus
-///   [`ABANDON_GRACE_RUNGS`] more, and no candidate has been seen. It then
+///   only if the epoch is *abandoned* and no candidate has been seen:
+///   every rank's rung has passed plus [`ABANDON_GRACE_RUNGS`] more, or
+///   (SIP-6 §null blocks) epoch `E+1`'s Zcash block has been seen for one
+///   `rank_step`, which bounds the wait however many burners rank. It then
 ///   seals rank 0's exact derivation, which is valid under C5 from any
 ///   node and pays every burner (rank 0's tip included) exactly what they
 ///   are owed. Without this, one burn crediting an address nobody seals
@@ -183,6 +187,11 @@ pub enum SealerOutcome {
 ///   the arbiter bounds micro-reorgs to the tip epoch.
 /// - A trigger whose build didn't land (head never reached its height)
 ///   re-fires after [`RETRIGGER`]; epochs are never dropped on trigger.
+/// - The queue holds every epoch from the head's upward, however far the
+///   head is behind: an epoch at or above the head is never dropped (a
+///   dropped front epoch is a gap production waits on forever, and the
+///   follower never re-emits it). Entries carry burns only, so even a
+///   month-long backlog is a few MB.
 #[derive(Debug)]
 pub struct SealerCore {
     follower: Follower,
@@ -196,8 +205,8 @@ pub struct SealerCore {
 struct QueueEntry {
     epoch: EpochData,
     ranked: Vec<MinerWeight>,
-    /// Ladder clock: set when the epoch reaches the queue front.
-    front_since: Option<std::time::Instant>,
+    /// Ladder clock: when this sealer first saw the epoch.
+    seen_at: std::time::Instant,
     /// When we last asked the miner to build this epoch's height.
     triggered_at: Option<std::time::Instant>,
 }
@@ -206,9 +215,6 @@ struct QueueEntry {
 /// abandoned burn epoch with rank 0's derivation (liveness fallback; see
 /// [`SealerCore`]). SIP-6 replaces this with a keyless null block.
 pub const ABANDON_GRACE_RUNGS: u32 = 2;
-
-/// Queued epochs retained at most (Zcash reorg window scale).
-const QUEUE_RETAIN: usize = 256;
 
 /// How long a trigger may go unanswered (its height still unbuilt, or our
 /// late-win sibling still not observed) before it is re-fired.
@@ -262,6 +268,12 @@ impl SealerCore {
                     out.push(SealerOutcome::Rollback { to_height });
                 }
                 FollowerEvent::Epoch(mut epoch) => {
+                    // Below the tip: settled history for the sealer (see
+                    // the retain below). Skipped here too, so a rescan from
+                    // the base after a restart never queues it.
+                    if self.expected_sova_height(epoch.height) < sova_head {
+                        continue;
+                    }
                     // The sealer needs burns, not the full tx list.
                     epoch.txs = Vec::new();
                     let ranked = rank_miners(&epoch.burns);
@@ -270,13 +282,10 @@ impl SealerCore {
                         QueueEntry {
                             epoch,
                             ranked,
-                            front_since: None,
+                            seen_at: now,
                             triggered_at: None,
                         },
                     );
-                    while self.queue.len() > QUEUE_RETAIN {
-                        self.queue.pop_first();
-                    }
                 }
             }
         }
@@ -294,6 +303,11 @@ impl SealerCore {
         for zcash_height in keys {
             let expected = zcash_height.saturating_sub(base).saturating_add(1);
             let reward_gwei = self.config.schedule.reward_gwei(expected.saturating_sub(1));
+            // SIP-6: when epoch E+1's Zcash block was first seen.
+            let next_seen = self
+                .queue
+                .get(&zcash_height.saturating_add(1))
+                .map(|e| e.seen_at);
             let Some(entry) = self.queue.get_mut(&zcash_height) else {
                 continue;
             };
@@ -318,10 +332,9 @@ impl SealerCore {
                 if !beatable {
                     continue;
                 }
-                let front_since = *entry.front_since.get_or_insert(now);
                 match consensus::sealer::produce_decision(
                     our_rank,
-                    now.duration_since(front_since),
+                    now.saturating_duration_since(entry.seen_at),
                     best_seen(expected).as_ref(),
                     self.config.rank_step,
                 ) {
@@ -393,13 +406,14 @@ impl SealerCore {
                 // Not ours to seal at any rank; the block arrives by
                 // relay from a ranked miner — unless the epoch is
                 // abandoned (see the SealerCore doc). Hold the queue.
-                let front_since = *entry.front_since.get_or_insert(now);
                 let rungs = u32::try_from(entry.ranked.len())
                     .unwrap_or(u32::MAX)
                     .saturating_add(ABANDON_GRACE_RUNGS);
-                let abandoned = best_seen(expected).is_none()
-                    && now.duration_since(front_since)
-                        >= self.config.rank_step.saturating_mul(rungs);
+                let ladder_done = now.saturating_duration_since(entry.seen_at)
+                    >= self.config.rank_step.saturating_mul(rungs);
+                let next_epoch_waited = next_seen
+                    .is_some_and(|at| now.saturating_duration_since(at) >= self.config.rank_step);
+                let abandoned = best_seen(expected).is_none() && (ladder_done || next_epoch_waited);
                 if abandoned && self.config.sip6 {
                     // SIP-6: nobody ranked sealed, and only they can sign;
                     // the null block (lowest preference, mints nothing)
@@ -451,11 +465,10 @@ impl SealerCore {
                 }
                 break;
             }
-            // Ladder clock starts when the epoch becomes sealable.
-            let front_since = *entry.front_since.get_or_insert(now);
+            // Ladder clock: time since we first saw the epoch.
             match consensus::sealer::produce_decision(
                 our_rank,
-                now.duration_since(front_since),
+                now.saturating_duration_since(entry.seen_at),
                 best_seen(expected).as_ref(),
                 self.config.rank_step,
             ) {

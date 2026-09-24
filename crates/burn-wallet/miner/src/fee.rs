@@ -43,8 +43,11 @@
 //! floor, not below it -- consistent with that test's own comment, and
 //! with its earlier finding that a flat 1,000 zat fee was rejected outright.
 
-// The ZIP-317 constants and formula live in `burn_wallet::fee` (shared with
-// `sova-faucet`); this module keeps the burn-specific transaction shape.
+// The ZIP-317 constants, formula and burn payload sizes live in
+// `burn_wallet::fee` (shared with `sova-faucet`); this module keeps the
+// miner's dust rule and the tests that pin the burn shapes it builds.
+
+pub(crate) use burn_wallet::fee::BurnPayloadVersion;
 
 /// ZIP-317 marginal fee, in zatoshis (only the tests below name it now).
 #[cfg(test)]
@@ -55,31 +58,6 @@ pub(crate) const MARGINAL_FEE_ZAT: u64 = burn_wallet::fee::MARGINAL_FEE_ZAT;
 #[cfg(test)]
 pub(crate) const GRACE_ACTIONS: u64 = burn_wallet::fee::GRACE_ACTIONS;
 
-/// ZIP-317's reference ("standard") size of one P2PKH transparent input, in
-/// bytes. Used as *every* P2PKH input's assumed size for fee purposes,
-/// regardless of the exact DER-encoded ECDSA signature length that will
-/// land in the final signed transaction (signatures vary by a byte or two)
-/// -- pinning to this reference size is what lets the fee be decided
-/// before signing at all, per ZIP-317's own rationale for defining it.
-pub(crate) const P2PKH_STANDARD_INPUT_SIZE: u64 = burn_wallet::fee::P2PKH_STANDARD_INPUT_SIZE;
-
-/// ZIP-317's reference size of one P2PKH transparent output, in bytes: 8
-/// (value) + 1 (CompactSize script length) + 25 (P2PKH script) = 34.
-/// Unlike inputs, an output's size is fully determined by its script (no
-/// variable-length signature involved), so this is also this miner's
-/// *actual* eater/change output size exactly -- no approximation.
-pub(crate) const P2PKH_STANDARD_OUTPUT_SIZE: u64 = burn_wallet::fee::P2PKH_STANDARD_OUTPUT_SIZE;
-
-/// The actual serialized size, in bytes, of one SIP-1 payload (`OP_RETURN`)
-/// output: 8 (value, always zero) + 1 (CompactSize script length; the
-/// 29-byte script fits in one byte) + [`consensus::sip1::PAYLOAD_SCRIPT_LEN`]
-/// (29) = 38. ZIP-317 defines no reference size for null-data outputs
-/// (only payable P2PKH/P2SH scripts get one), so the real size is used --
-/// see the module docs for why this one output alone is the whole reason
-/// this fee cannot be computed from output *counts* alone.
-#[allow(clippy::cast_possible_truncation)] // PAYLOAD_SCRIPT_LEN is a small compile-time constant (29).
-pub(crate) const PAYLOAD_OUTPUT_SIZE: u64 = 8 + 1 + consensus::sip1::PAYLOAD_SCRIPT_LEN as u64;
-
 /// Zatoshi value below which a would-be change output is folded into the
 /// fee instead of being created as its own output. This isn't a Zcash
 /// consensus or mempool-policy dust rule (Zebra enforces none for
@@ -89,28 +67,26 @@ pub(crate) const PAYLOAD_OUTPUT_SIZE: u64 = 8 + 1 + consensus::sip1::PAYLOAD_SCR
 /// codebase already treats as "not negligible".
 pub(crate) const DUST_THRESHOLD_ZAT: u64 = consensus::sip1::MIN_BURN_ZAT;
 
-/// Computes the ZIP-317 conventional fee, in zatoshis, for a SIP-1 burn
-/// transaction with `transparent_inputs` P2PKH inputs, the mandatory SIP-1
-/// payload output, the mandatory eater output, and a change output iff
+/// Computes the ZIP-317 conventional fee, in zatoshis, for a burn
+/// transaction with `transparent_inputs` P2PKH inputs, the mandatory
+/// payload output (`payload`: SIP-1's 38-byte v1 output, or SIP-8's 74-byte
+/// v2 output), the mandatory eater output, and a change output iff
 /// `has_change` (see the module docs for why this needs the transaction's
-/// *shape*, not just an output count, to compute correctly).
+/// *shape*, not just an output count, to compute correctly). The sizes and
+/// formula are `burn_wallet::fee::burn_fee_zat`'s.
 #[must_use]
-pub(crate) fn zip317_fee_zat(transparent_inputs: u64, has_change: bool) -> u64 {
-    let tx_in_total_size = transparent_inputs.saturating_mul(P2PKH_STANDARD_INPUT_SIZE);
-    let tx_out_total_size = PAYLOAD_OUTPUT_SIZE
-        + P2PKH_STANDARD_OUTPUT_SIZE
-        + if has_change {
-            P2PKH_STANDARD_OUTPUT_SIZE
-        } else {
-            0
-        };
-
-    burn_wallet::fee::conventional_fee_zat(tx_in_total_size, tx_out_total_size)
+pub(crate) fn zip317_fee_zat(
+    transparent_inputs: u64,
+    payload: BurnPayloadVersion,
+    has_change: bool,
+) -> u64 {
+    burn_wallet::fee::burn_fee_zat(transparent_inputs, payload, has_change)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use BurnPayloadVersion::{V1, V2};
 
     #[test]
     fn matches_the_empirically_confirmed_shape() {
@@ -122,15 +98,15 @@ mod tests {
         // exactly 20,000 zat was empirically accepted by Zebra's mempool
         // where this module's earlier (naive, count-based) 15,000 zat
         // computation was rejected.
-        assert_eq!(zip317_fee_zat(1, true), 20_000);
-        assert!(zip317_fee_zat(1, true) < 25_000);
+        assert_eq!(zip317_fee_zat(1, V1, true), 20_000);
+        assert!(zip317_fee_zat(1, V1, true) < 25_000);
     }
 
     #[test]
     fn no_change_output_shape() {
         // 1 input, payload + eater (2 outputs, no change): tx_out_total_size
         // = 38 + 34 = 72, ceil(72/34) = 3.
-        assert_eq!(zip317_fee_zat(1, false), 15_000);
+        assert_eq!(zip317_fee_zat(1, V1, false), 15_000);
     }
 
     #[test]
@@ -141,8 +117,8 @@ mod tests {
         // alone (72 bytes) already need ceil(72/34) = 3 actions, above the
         // 2-action grace floor. The floor is exercised directly instead,
         // independent of this transaction shape.
-        assert_eq!(zip317_fee_zat(0, false), 15_000);
-        assert!(MARGINAL_FEE_ZAT * GRACE_ACTIONS < zip317_fee_zat(0, false));
+        assert_eq!(zip317_fee_zat(0, V1, false), 15_000);
+        assert!(MARGINAL_FEE_ZAT * GRACE_ACTIONS < zip317_fee_zat(0, V1, false));
     }
 
     #[test]
@@ -156,8 +132,8 @@ mod tests {
         // Enough inputs that the input side dominates the output side.
         // 5 inputs * 150 = 750 bytes, ceil(750/150) = 5 > the output side's
         // 3 or 4 -- input count now drives the fee.
-        assert_eq!(zip317_fee_zat(5, false), 25_000);
-        assert_eq!(zip317_fee_zat(5, true), 25_000);
+        assert_eq!(zip317_fee_zat(5, V1, false), 25_000);
+        assert_eq!(zip317_fee_zat(5, V1, true), 25_000);
     }
 
     #[test]
@@ -168,7 +144,27 @@ mod tests {
         // actions (20,000 zat) instead, because the SIP-1 payload output
         // (38 bytes) doesn't fit the 34-byte P2PKH reference size.
         let naive_count_based_actions = 3u64; // max(1 input, 3 outputs)
-        let real_fee = zip317_fee_zat(1, true);
+        let real_fee = zip317_fee_zat(1, V1, true);
         assert!(real_fee > MARGINAL_FEE_ZAT * naive_count_based_actions);
+    }
+
+    /// SIP-8 §6 "Fees": the 74-byte v2 payload output costs exactly one
+    /// more logical action (5,000 zat) in both shapes the miner builds.
+    #[test]
+    fn sip8_v2_payload_adds_one_action_in_both_shapes() {
+        // 1 in, payload + eater + change: 74 + 34 + 34 = 142 -> 5 actions.
+        assert_eq!(zip317_fee_zat(1, V2, true), 25_000);
+        // 1 in, payload + eater: 74 + 34 = 108 -> 4 actions.
+        assert_eq!(zip317_fee_zat(1, V2, false), 20_000);
+        assert_eq!(
+            zip317_fee_zat(1, V2, true) - zip317_fee_zat(1, V1, true),
+            5_000
+        );
+        assert_eq!(
+            zip317_fee_zat(1, V2, false) - zip317_fee_zat(1, V1, false),
+            5_000
+        );
+        assert_eq!(BurnPayloadVersion::V1.output_size(), 38);
+        assert_eq!(BurnPayloadVersion::V2.output_size(), 74);
     }
 }

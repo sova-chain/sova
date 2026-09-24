@@ -98,6 +98,7 @@ fn e2e_regtest_burn() {
         signal_bits: SIGNAL_BITS,
         burn_value_zat: BURN_VALUE_ZAT,
         fee_zat: FEE_ZAT,
+        sova_ref: None,
     };
     let built = build_burn_transaction(&request).expect("build_burn_transaction failed");
     let raw_hex = hex::encode(&built.raw);
