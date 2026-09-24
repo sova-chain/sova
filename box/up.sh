@@ -77,7 +77,7 @@
 #   SOVA_BOX_P2P_PORT           Sova p2p port (default 30303)
 #   SOVA_BOX_ZEBRAD_CONTAINER   zebrad container name
 #                               (default sova-zebrad-regtest)
-#   SOVA_BOX_COMPOSE_PROJECT    compose project name (default "regtest"
+#   SOVA_BOX_COMPOSE_PROJECT    compose project name (default "sova-box"
 #                               when the container name is the default,
 #                               otherwise the container name, so a second
 #                               box never touches the first one's project)
@@ -150,7 +150,7 @@ SIP7="${SOVA_BOX_SIP7:-0}"
 P2P_PORT="${SOVA_BOX_P2P_PORT:-30303}"
 ZEBRAD_CONTAINER="${SOVA_BOX_ZEBRAD_CONTAINER:-${DEFAULT_ZEBRAD_CONTAINER}}"
 if [[ "${ZEBRAD_CONTAINER}" == "${DEFAULT_ZEBRAD_CONTAINER}" ]]; then
-  COMPOSE_PROJECT="${SOVA_BOX_COMPOSE_PROJECT:-regtest}"
+  COMPOSE_PROJECT="${SOVA_BOX_COMPOSE_PROJECT:-sova-box}"
 else
   COMPOSE_PROJECT="${SOVA_BOX_COMPOSE_PROJECT:-${ZEBRAD_CONTAINER}}"
 fi

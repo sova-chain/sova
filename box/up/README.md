@@ -302,7 +302,7 @@ All optional env vars, read by `box/up.sh`:
 | `SOVA_BOX_SIP7` | `0` | `1` runs `bin/sova` with `SOVA_SIP7=1`: SIP-7 pool reads on `0x…5A00` and the `sova_getZcashBlocks` feed. |
 | `SOVA_BOX_P2P_PORT` | `30303` | Sova p2p port. |
 | `SOVA_BOX_ZEBRAD_CONTAINER` | `sova-zebrad-regtest` | zebrad container name. |
-| `SOVA_BOX_COMPOSE_PROJECT` | `regtest`, or the container name if you changed it | Compose project name for the zebrad stack. |
+| `SOVA_BOX_COMPOSE_PROJECT` | `sova-box`, or the container name if you changed it | Compose project name for the zebrad stack. Box-specific, so `./box/up.sh down` (which removes the project's volumes) never touches another `regtest` stack such as `box/regtest`'s own. |
 | `SOVA_BOX_PREBUILT` | `auto` | Where missing binaries come from: `auto`, `1` (prebuilt only) or `0` (build only). See [Prebuilt binaries](#prebuilt-binaries), which also covers `SOVA_BOX_RELEASE`, `SOVA_BOX_REPO`, `SOVA_BOX_RELEASE_BASE_URL`, `SOVA_BOX_PREBUILT_DIR` and `SOVA_BOX_PREBUILT_REPO`. |
 | `CARGO_TARGET_DIR` | unset | Honored. The script finds each workspace's binaries (the root one for `bin/sova`, `crates/burn-wallet` for `sova-miner`) with `cargo metadata`, so an overridden or symlinked target dir works. |
 
@@ -364,8 +364,10 @@ for a fresh identity.
 - **`this box is already up`**: run `./box/up.sh down` first.
 - **Miner stops early**: it's budget-capped by design
   (`SOVA_BOX_BUDGET_ZAT`); `box/up/.run/logs/miner.log`'s last line says
-  why it stopped. Raise the budget and rerun `./box/up.sh` (idempotent --
-  reuses the existing miner identity and any Zcash chain state).
+  why it stopped. The node keeps running, so a plain `./box/up.sh` refuses
+  (`this box is already up`). Restart with a bigger budget:
+  `./box/up.sh down && SOVA_BOX_BUDGET_ZAT=20000000 ./box/up.sh`. This keeps
+  the miner identity, but the Zcash and Sova chains start over (next item).
 - **`down` then `up` keeps the miner identity, not the Zcash chain**: the
   regtest chain is recreated on every `up` after a `down`, while
   `box/up/.run/miner` survives. The miner notices (its `state.json`
