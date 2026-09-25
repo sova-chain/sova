@@ -128,6 +128,10 @@ pub struct ExpectedSettlements {
     unwound: AtomicU64,
 }
 
+/// How far [`ExpectedSettlements::effective_head`] walks down a stale tip
+/// when no rollback is pending: past Zebra's 99-block reorg limit.
+pub const STALE_SCAN_MAX: u64 = 100;
+
 impl ExpectedSettlements {
     /// Record the requirement for a height and advance the scanned
     /// watermark to it. The follower emits epochs in order, so the
@@ -188,10 +192,21 @@ impl ExpectedSettlements {
     /// replacement below the (stale) tip. reth then reorgs the stale
     /// blocks out when the replacement becomes head.
     /// `anchor_at(h)` reads the canonical block's `parent_beacon_block_root`.
+    ///
+    /// Without a pending rollback (a restart, or an unwind this process
+    /// never saw) the stale tail is found directly: walk down from `head`
+    /// while the canonical block is anchored to a Zcash block our follower
+    /// no longer has. Usually one check. Capped at [`STALE_SCAN_MAX`] blocks,
+    /// beyond Zebra's 99-block reorg limit. (Testnet stall 2026-09-24: a
+    /// restarted keeper treated a stale tip as its head and never re-sealed.)
     pub fn effective_head(&self, head: u64, anchor_at: impl Fn(u64) -> Option<[u8; 32]>) -> u64 {
         let pending = self.unwound.load(Ordering::SeqCst);
         if pending == 0 {
-            return head;
+            let mut h = head;
+            while h > 0 && head - h < STALE_SCAN_MAX && self.is_stale(h, anchor_at(h)) {
+                h -= 1;
+            }
+            return h;
         }
         let floor = pending - 1;
         let first = floor.saturating_add(1);
@@ -773,6 +788,33 @@ mod tests {
         };
         assert_eq!(e.effective_head(5, new), 5);
         assert_eq!(e.effective_head(15, old), 15, "cleared once resolved");
+    }
+
+    /// The testnet stall (2026-09-24): after a restart no rollback is
+    /// pending, but the stored tip is anchored to an orphaned Zcash block.
+    /// The effective head must still drop below it so the sealer re-seals.
+    #[test]
+    fn a_stale_tip_is_found_without_a_rollback_event() {
+        let e = ExpectedSettlements::default();
+        // Follower's (current) branch: heights 1..=10.
+        for h in 1..=10 {
+            e.insert(h, rb_rec(h as u8));
+        }
+        // Stored chain: 1..=7 match, 8 and 9 were built on an orphaned branch.
+        let stored = |h: u64| Some(if h >= 8 { [0xee; 32] } else { [h as u8; 32] });
+        assert_eq!(e.effective_head(9, stored), 7);
+        assert_eq!(e.effective_head(7, stored), 7);
+        // A head above what the follower has scanned is not stale.
+        assert_eq!(e.effective_head(12, |h| Some([h as u8; 32])), 12);
+        // Nothing matches: the walk stops after STALE_SCAN_MAX blocks.
+        let big = ExpectedSettlements::default();
+        for h in 1..=300 {
+            big.insert(h, rb_rec(1));
+        }
+        assert_eq!(
+            big.effective_head(300, |_| Some([0xee; 32])),
+            300 - STALE_SCAN_MAX
+        );
     }
 
     #[test]
