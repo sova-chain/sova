@@ -406,8 +406,18 @@ async fn run() -> eyre::Result<()> {
         // empty; it ranks our own canonical blocks from what we store (the
         // seal's signer, else the withdrawals), with the same rule consensus
         // enforces, so a competitor must beat our real block.
+        // Like the reader, it stops at the SIP-4 §7 effective head: a stored
+        // block anchored to a Zcash block that reorged away is stale, and
+        // ranking it let it win a hash tie against its own re-seal, which
+        // then never became head (testnet stall, 2026-09-24).
         let ranker_provider = node.provider.clone();
         engine::candidates::set_canonical_ranker(Box::new(move |h| {
+            let head = ranker_provider.best_block_number().unwrap_or(0);
+            let effective = engine::expectations::global()
+                .effective_head(head, |x| canonical_anchor(&ranker_provider, x));
+            if h > effective {
+                return None;
+            }
             canonical_record(&ranker_provider, h)
         }));
     }

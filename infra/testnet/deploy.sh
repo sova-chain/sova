@@ -176,21 +176,24 @@ cmd_deploy() {
   [[ -n "${SOVA_EPOCH_BASE}" ]] || warn "SOVA_EPOCH_BASE is not pinned: sova nodes are installed but will not start (runbook: Pin B)"
   local s name role
   log "Pass 1: node keys and enodes"
-  while read -r s; do
+  # The server list comes in on fd 3, not stdin: rsync/scp/ssh inside
+  # remote_setup read stdin and would swallow the rest of the list (only
+  # the first server was ever set up, 2026-09-24).
+  while read -r s <&3; do
     name="$(srv_name "${s}")"
     role="$(srv_role "${s}")"
     is_node_role "${role}" || continue
     [[ -z "${ONLY}" || "${ONLY}" == "${name}" || "${role}" == seed ]] || continue
     remote_setup "${s}" "" --enode-only
     [[ "${DRY_RUN}" == 1 ]] || log "${name}: $(cat "${OUT_DIR}/servers/${name}.enode")"
-  done < <(ordered_servers)
+  done 3< <(ordered_servers)
 
   log "Pass 2: full setup"
-  while read -r s; do
+  while read -r s <&3; do
     name="$(srv_name "${s}")"
     [[ -z "${ONLY}" || "${ONLY}" == "${name}" ]] || continue
     remote_setup "${s}" "$(bootnodes_for "${name}")"
-  done < <(ordered_servers)
+  done 3< <(ordered_servers)
   log "Deployed. Next: ./cloudflare.sh all, then ./bootnodes.sh (runbook O3-O4)"
 }
 

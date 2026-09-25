@@ -7,7 +7,7 @@
 // − and no-break space; keep every rendered character inside it). CSS-only
 // motion (stroke-dashoffset); reduced motion shows the finished drawing.
 //
-// Facts: positioning.md (Act II headline "the EVM that can see Zcash"),
+// Facts: positioning.md (Act II headline "the EVM that reads Zcash"),
 // sips/sip-4-draft-zcash-state-precompile.md (§1, §12: every node runs a
 // Zcash node, contracts read Zcash through it), sips/sip-3.md (SOVA minted
 // only by burns), sips/sip-2.md (one Sova block per Zcash block; each block
@@ -27,8 +27,8 @@ const X0 = 66, STEP = 58, W = 34;
 const pairs = Array.from({ length: N }, (_, i) => ({ x: X0 + i * STEP, i }));
 ---
 <Direction
-  title="Sova: the EVM that can see Zcash"
-  description="The EVM that can see Zcash. An EVM sidechain whose every node runs a Zcash node; its gas, SOVA, is issued only by burning ZEC. Permissionless, oracle-less, self-custody."
+  title="Sova: the EVM that reads Zcash"
+  description="The EVM that reads Zcash. An EVM sidechain whose every node runs a Zcash node; its gas, SOVA, is issued only by burning ZEC. Permissionless, oracle-less, self-custody."
   theme="#d9d5cc"
 >
   <link slot="head" rel="preload" href="/fonts/paper-serif-roman.woff2" as="font" type="font/woff2" crossorigin />
@@ -42,7 +42,7 @@ const pairs = Array.from({ length: N }, (_, i) => ({ x: X0 + i * STEP, i }));
       </p>
 
       <header class="titleblock">
-        <h1>The EVM that can see Zcash.</h1>
+        <h1>The EVM that reads Zcash.</h1>
         <p class="author">Sova</p>
         <p class="meta">sova.io · pre-release</p>
       </header>

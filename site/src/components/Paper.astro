@@ -29,7 +29,7 @@ interface Props {
   home?: boolean;
 }
 const { home = false } = Astro.props;
-const TITLE = 'Sova: An EVM Chain That Can See Zcash';
+const TITLE = 'Sova: An EVM Chain That Reads Zcash';
 // Links out of the paper: home first, then every page but this one.
 const sitePages = [{ href: '/', label: 'Home' }, ...allPages.filter((p) => p.href !== '/paper')];
 // Reference URL of a SIP's text on GitHub (data/sova.ts `sips[].file`).
@@ -69,7 +69,7 @@ const refs: { a: string; t: string; href: string; extra?: string }[] = [
 ---
 <Direction
   title={TITLE}
-  description="Sova is an EVM chain that can see Zcash: contracts check real ZEC payments on Zcash itself. SOVA, its gas, is mined by burning ZEC. Pre-release draft."
+  description="Sova is an EVM chain that reads Zcash: contracts check real ZEC payments on Zcash itself. SOVA, its gas, is mined by burning ZEC. Pre-release draft."
   theme="#d9d5cc"
   indexable={home}
 >
@@ -112,7 +112,7 @@ const refs: { a: string; t: string; href: string; extra?: string }[] = [
       <section class="abstract" id="abstract" aria-label="Abstract">
         <p><b>Abstract.</b> Contracts that accept ZEC today accept a wrapped
         token instead: a claim on coins that a custodian holds on Zcash, on a
-        chain whose contracts cannot see Zcash at all. We propose an EVM chain
+        chain whose contracts cannot read Zcash at all. We propose an EVM chain
         whose every node runs a Zcash node, so that a contract can verify a ZEC
         payment against Zcash itself and the ZEC can stay where it was paid. The
         chain’s gas, SOVA, is issued only by destroying ZEC in a transparent

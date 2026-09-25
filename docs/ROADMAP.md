@@ -94,7 +94,7 @@ and no project machine ever holds user funds or a key with consensus power.
   (SIP-1). Tally them per window and activate parameter changes at a set
   height, BIP9-style. Needs its own SIP and one change carried end to end on
   testnet.
-- **Contracts that see Zcash (SIP-4).** A precompile lets a contract check a
+- **Contracts that read Zcash (SIP-4).** A precompile lets a contract check a
   Zcash payment (txid, outputs, confirmations) against the node's own Zcash
   node, with no bridge or oracle. Approved and in development; it ships at
   the testnet reset. First demos: buy with ZEC from any Zcash wallet, and

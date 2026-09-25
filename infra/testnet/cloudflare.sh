@@ -244,7 +244,10 @@ step_ratelimit() {
 }
 
 step_r2() {
-  if [[ "${DRY_RUN}" == 1 ]] || ! cf GET "/accounts/${ACCT}/r2/buckets/${R2_BUCKET}" >/dev/null 2>&1; then
+  # In a subshell: cf dies on the 404 of a missing bucket, and die would
+  # end the whole script (silently, with stderr discarded) instead of this
+  # check.
+  if [[ "${DRY_RUN}" == 1 ]] || ! (cf GET "/accounts/${ACCT}/r2/buckets/${R2_BUCKET}") >/dev/null 2>&1; then
     cf POST "/accounts/${ACCT}/r2/buckets" "$(jfile r2 "$(jq -nc --arg n "${R2_BUCKET}" '{name:$n}')")" >/dev/null
     log "R2 bucket ${R2_BUCKET} created"
   else
@@ -284,7 +287,7 @@ step_teardown() {
   for id in $(cf GET "/zones/${ZONE}/workers/routes" | jq -r --arg p "${RPC_HOST}/*" '.result // [] | .[] | select(.pattern == $p) | .id'); do
     cf DELETE "/zones/${ZONE}/workers/routes/${id}" >/dev/null && log "route deleted"
   done
-  if cf DELETE "/accounts/${ACCT}/workers/scripts/${WORKER_NAME}" >/dev/null; then log "worker deleted"; fi
+  if (cf DELETE "/accounts/${ACCT}/workers/scripts/${WORKER_NAME}") >/dev/null; then log "worker deleted"; fi
   local body
   body="$(jfile rl-empty '{"rules":[]}')"
   cf PUT "/zones/${ZONE}/rulesets/phases/http_ratelimit/entrypoint" "${body}" >/dev/null && log "rate-limit rule removed"

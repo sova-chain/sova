@@ -46,7 +46,7 @@ AVATAR = 500
 # three properties the site leads with.
 # The break keeps "pool." from sitting alone on the second line.
 TAGLINE = "The programmable edge<br>of the shielded pool."
-SUBLINE = "An EVM chain that can see Zcash."
+SUBLINE = "An EVM chain that reads Zcash."
 PROPS = ["permissionless", "oracle-less", "self-custody"]
 FOOT_LEFT = "github.com/sova-chain/sova"
 FOOT_RIGHT = "sova.io"

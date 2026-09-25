@@ -9,7 +9,7 @@
 <h3 align="center">The programmable edge of the shielded pool.</h3>
 
 <p align="center">
-  An EVM chain that can see Zcash. Mined by burning ZEC.
+  An EVM chain that reads Zcash. Mined by burning ZEC.
 </p>
 
 <p align="center">
@@ -27,7 +27,7 @@
 
 ---
 
-Sova is an EVM chain that can see Zcash: contracts verify real ZEC payments
+Sova is an EVM chain that reads Zcash: contracts verify real ZEC payments
 on Zcash itself. SOVA, the gas token, is mined by burning ZEC, one Sova block
 per Zcash block. Every node verifies every mint against its own Zcash node.
 Permissionless, oracle-less, self-custody.
@@ -73,7 +73,7 @@ minute.
 - **Every node checks every mint.** Each node runs its own `zebrad`,
   re-derives every mint from it, and rejects blocks that disagree, on every
   import path, including the history a new node syncs.
-- **Contracts that see Zcash.** The SIP-4 precompile answers questions about
+- **Contracts that read Zcash.** The SIP-4 precompile answers questions about
   transparent Zcash state (is this transaction mined, how deep, what does
   this output pay) as of the Zcash block each Sova block commits to, so every
   node computes the same answer. Shielded data stays shielded. *Code in

@@ -44,7 +44,7 @@ kit() {
 
 # The example's keeper is a Hetzner server (the default); swap that one
 # line for a byo entry (the option under test).
-HZ_KEEPER="sova-keeper-1:cx33:fsn1:40:keeper"
+HZ_KEEPER="sova-keeper-1:cx23:fsn1:40:keeper"
 with_keeper() { # entry -> the example with the keeper line replaced, on stdout
   sed "s|\"${HZ_KEEPER}\"|\"$1\"|" "${KIT}/config.env.example"
 }
@@ -174,8 +174,8 @@ CFG="${KIT}/config.env.example"
 out="$(cd "${KIT}" && kit ./launch.sh --dry-run 2>&1)"
 check "example config: launch.sh --dry-run runs end to end" grep -q 'launch sequence complete' <<<"${out}"
 s2="$(stage 2)"
-check "example config: stage 2 creates the keeper on Hetzner (cx33, fsn1)" \
-  has "hcloud server create --name sova-keeper-1 --type cx33 --image [^ ]+ --location fsn1 " "${s2}"
+check "example config: stage 2 creates the keeper on Hetzner (cx23, fsn1)" \
+  has "hcloud server create --name sova-keeper-1 --type cx23 --image [^ ]+ --location fsn1 " "${s2}"
 check "example config: stage 2 creates the keeper's 40 GB volume" \
   has "hcloud volume create --name sova-keeper-1-data --size 40 " "${s2}"
 check "example config: stage 2 adopts no byo host" lacks "byo" "${s2}"
@@ -204,7 +204,7 @@ bad_entry() { # description entry
   fi
 }
 bad_entry "a byo IPv6 literal" "sova-keeper-1:byo:2001:db8::1:40:keeper:ubuntu"
-bad_entry "a 6-field Hetzner entry" "sova-keeper-1:cx33:fsn1:40:keeper:ubuntu"
+bad_entry "a 6-field Hetzner entry" "sova-keeper-1:cx23:fsn1:40:keeper:ubuntu"
 bad_entry "a byo address with a bad character" "sova-keeper-1:byo:bad_host!:40:keeper"
 
 # ---- the bootstrap reads the kit's cloud-init (needs PyYAML locally) ----------

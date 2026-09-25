@@ -1,10 +1,10 @@
-# Sova: An EVM Chain That Can See Zcash
+# Sova: An EVM Chain That Reads Zcash
 
 Sova
 sova.io
 September 2026 (pre-release draft)
 
-**Abstract.** Contracts that accept ZEC today accept a wrapped token instead: a claim on coins that a custodian holds on Zcash, on a chain whose contracts cannot see Zcash at all. We propose an EVM chain whose every node runs a Zcash node, so that a contract can verify a ZEC payment against Zcash itself and the ZEC can stay where it was paid. The chain’s gas, SOVA, is issued only by destroying ZEC in a transparent Zcash transaction that names an EVM address. Burns are grouped by Zcash block, one Sova block per Zcash block, so Zcash’s proof-of-work orders Sova’s epochs and fixes what each one mints. Each epoch’s fixed reward is shared among that epoch’s burners in proportion to the ZEC each destroyed, and the largest burner assembles the block. Every node re-derives every mint from its own Zcash node and rejects a block that disagrees, and every Sova block commits to the Zcash block it settles, so a precompile can answer a contract’s questions about the transparent Zcash chain with the same answer on every node. Privacy is at the funding edge, where a shielded balance funds a burn or a payment; execution is public.
+**Abstract.** Contracts that accept ZEC today accept a wrapped token instead: a claim on coins that a custodian holds on Zcash, on a chain whose contracts cannot read Zcash at all. We propose an EVM chain whose every node runs a Zcash node, so that a contract can verify a ZEC payment against Zcash itself and the ZEC can stay where it was paid. The chain’s gas, SOVA, is issued only by destroying ZEC in a transparent Zcash transaction that names an EVM address. Burns are grouped by Zcash block, one Sova block per Zcash block, so Zcash’s proof-of-work orders Sova’s epochs and fixes what each one mints. Each epoch’s fixed reward is shared among that epoch’s burners in proportion to the ZEC each destroyed, and the largest burner assembles the block. Every node re-derives every mint from its own Zcash node and rejects a block that disagrees, and every Sova block commits to the Zcash block it settles, so a precompile can answer a contract’s questions about the transparent Zcash chain with the same answer on every node. Privacy is at the funding edge, where a shielded balance funds a burn or a payment; execution is public.
 
 ## 1. Introduction
 

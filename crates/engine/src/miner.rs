@@ -198,13 +198,16 @@ where
                 target == best,
                 "late-win height {target} is no longer the tip ({best})"
             );
-        } else if target <= best {
+        }
+        // The stale canonical block a re-seal replaces (SIP-4 §7), if any.
+        let mut replacing: Option<[u8; 32]> = None;
+        if !request.sibling && target <= best {
             // Built already — unless the canonical block there is anchored to
             // a Zcash block that reorged away (SIP-4 §7): then re-seal it on
             // its canonical parent; adopting ours reorgs the stale tail out.
-            let anchor = self
-                .provider
-                .sealed_header(target)?
+            let stale_header = self.provider.sealed_header(target)?;
+            let anchor = stale_header
+                .as_ref()
                 .and_then(|h| h.parent_beacon_block_root())
                 .map(|r| r.0);
             if !crate::expectations::global().is_stale(target, anchor) {
@@ -215,12 +218,13 @@ where
                 );
                 return Ok(());
             }
+            replacing = stale_header.map(|h| h.hash().0);
             tracing::warn!(
                 target,
                 best,
                 "sova miner: canonical block anchored to an orphaned zcash block; re-sealing"
             );
-        } else {
+        } else if !request.sibling {
             eyre::ensure!(
                 target == best.saturating_add(1),
                 "parent {} not canonical yet (head {best})",
@@ -285,7 +289,11 @@ where
         let ours = header.hash();
         let height = header.number();
         match crate::candidates::global().best(height) {
-            Some(preferred) if preferred.block_hash != ours.0 => {
+            // A stale block never outranks its own re-seal: it is anchored to
+            // a Zcash block that no longer exists, so it can't be the chain.
+            Some(preferred)
+                if preferred.block_hash != ours.0 && Some(preferred.block_hash) != replacing =>
+            {
                 tracing::debug!(
                     height,
                     "built block loses preference to an already-known candidate; not promoting"

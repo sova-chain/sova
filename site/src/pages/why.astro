@@ -1,7 +1,7 @@
 ---
 // Why Sova: who it is for, how it compares with wrapped ZEC, what makes it
 // open, and what is new (each new thing linked to where the paper shows it).
-// Site v4: contracts that see Zcash lead, burn-mining second; positive
+// Site v4: contracts that read Zcash lead, burn-mining second; positive
 // framing (Rob, 2026-09-23). Sources: docs/marketing/{positioning,angles,
 // agent-keeper}.md, docs/ROADMAP.md, sips/sip-{1,2,3,4}*.md, the paper's own
 // sources. Every claim is in site/README.md. The "what it isn't" list lives
@@ -27,7 +27,7 @@ const wrapped = [
   'It lives on someone else’s chain: their gas token, their sequencer, their upgrade keys.',
 ];
 const sova = [
-  'Contracts see Zcash itself: every node runs its own Zcash node.',
+  'Contracts read Zcash itself: every node runs its own Zcash node.',
   'Self-custody. ZEC stays on Zcash, and SOVA is created by destroying ZEC.',
   'Blocks follow Zcash’s proof-of-work, one for one.',
   'Every node recomputes every mint from its own Zcash node.',
@@ -53,7 +53,7 @@ const grassroots = [
 ];
 
 const fresh = [
-  { h: 'Contracts that see Zcash.', t: 'A contract verifies that a ZEC payment landed, and how deep, then acts: a sale, a swap, a mint.', proof: 'paper §8', href: '/paper#reading-zcash', k: 'testnet' },
+  { h: 'Contracts that read Zcash.', t: 'A contract verifies that a ZEC payment landed, and how deep, then acts: a sale, a swap, a mint.', proof: 'paper §8', href: '/paper#reading-zcash', k: 'testnet' },
   { h: 'Burn-mining.', t: 'Issuance comes only from destroyed ZEC, split among that epoch’s burners.', proof: 'paper §4', href: '/paper#issuance' },
   { h: 'Anchored to Zcash.', t: 'One Sova block per Zcash block, ordered by Zcash’s proof-of-work.', proof: 'paper §3', href: '/paper#epochs' },
   { h: 'Every node checks every mint.', t: 'Against its own Zcash node, synced history included.', proof: 'paper §7', href: '/paper#verification' },
@@ -64,7 +64,7 @@ const fresh = [
 ---
 <Site
   title="Why Sova"
-  description="Sova is an EVM chain that can see Zcash: contracts verify ZEC payments on Zcash itself. Mined by burning ZEC, ordered by Zcash’s proof-of-work, run by anyone with a laptop."
+  description="Sova is an EVM chain that reads Zcash: contracts verify ZEC payments on Zcash itself. Mined by burning ZEC, ordered by Zcash’s proof-of-work, run by anyone with a laptop."
   current="/why"
   cmd="sova --why"
   status="pre-release · no public network yet"
@@ -91,7 +91,7 @@ const fresh = [
     <p class="dh new">Sova</p>
     <ul>{sova.map((t) => <li class="new"><span class="mk">+</span><p>{t}</p></li>)}</ul>
   </div>
-  <p>Contracts that see Zcash: <Tag k="testnet" /> built, in review. Contracts that watch Zcash’s value pools: <Tag k="planned" /> <a href="/sips#sip-7">SIP-7</a>.</p>
+  <p>Contracts that read Zcash: <Tag k="testnet" /> built, in review. Contracts that watch Zcash’s value pools: <Tag k="planned" /> <a href="/sips#sip-7">SIP-7</a>.</p>
 
   <h2>open by construction</h2>
   <ul class="rows">
