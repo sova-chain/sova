@@ -1154,3 +1154,34 @@ What happens on the current code:
   `check_settlements`: a late joiner would hold the stale blocks on
   `AnchorMismatch`, which is transient, so it would stall rather than
   fork. This scenario doesn't cover that case.
+
+## Transaction gossip: `tx-gossip-scenario.sh` (nightly CI)
+
+Proves a transaction submitted to the public RPC node reaches the sealer
+(public testnet incident 2026-09-25: the deployer's first tx sat in
+`sova-rpc-1`'s pool for over an hour and never reached the seed or the
+keeper). Topology like the testnet: **A** keeper (mine mode), **B** seed
+(follow-only, static peer A), **C** rpc (follow-only,
+`SOVA_RPC_PROFILE=public`, static peer B only). B and C keep persistent
+datadirs. Every tx is signed offline with `cast mktx` (dev-genesis keys)
+and sent to C with `eth_sendRawTransaction`, so it must go C -> B -> A
+over devp2p `eth` transaction gossip.
+
+- **(1) live**: all nodes long past startup. The tx reaches B's pool and A
+  mines it.
+- **(2) receiver**: the chain is paused (auto-mine stopped) and B restarts.
+  A tx sent to C must reach B before any new block, and A mines it once
+  the chain moves again.
+- **(3) sender**: C restarts with no peers (known peers forgotten, another
+  RLPx port), takes a tx, stops, and restarts with its peer B. It restores
+  the tx from the datadir backup, and the tx must reach B and be mined.
+
+Before the fix in `bin/sova/src/tx_gossip.rs`, (1) passed and (2) and (3)
+failed. The tx stayed in C's pool alone, and every node answered
+`eth_syncing=false`, for 70+ blocks. There were two reasons. reth marks
+the network "initially syncing" at every start and clears it only at the
+first canonical-chain commit. In that state it drops peers' tx
+announcements and skips announcing its pool to newly connected peers.
+reth also never announces a tx twice. With the fix the network is `Idle`
+from engine start (`startup_sync_state_idle`), and every node re-announces
+its pending pool to every peer every 15 s. All three phases pass.

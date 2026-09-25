@@ -92,15 +92,30 @@ cmd_edge() {
     ok "rpc: rate limit is the WAF rule (RPC_RATELIMIT_AT=waf; its 429 has no CORS), burst not checked"
   else
     burst=$((RPC_RATELIMIT_REQUESTS * 2))
-    limited="$(seq 1 "${burst}" | xargs -P 16 -I{} curl -sS -o /dev/null --max-time 15 \
+    # One command, run here and (on a miss) on a seed over SSH.
+    local burst_cmd
+    burst_cmd="seq 1 ${burst} | xargs -P 16 -I{} curl -sS -o /dev/null --max-time 15 \
       -H 'Content-Type: application/json' -H 'Origin: https://sova.io' \
       -w '%{http_code} %header{access-control-allow-origin} %header{retry-after}\n' \
-      --data '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' "https://${RPC_HOST}/" 2>/dev/null |
-      grep -c '^429 \* [0-9]' || true)"
+      --data '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_chainId\",\"params\":[]}' 'https://${RPC_HOST}/' 2>/dev/null |
+      grep -c '^429 \* [0-9]' || true"
+    limited="$(bash -c "${burst_cmd}")"
+    # The binding's counters are per Cloudflare location and best effort. In
+    # a large location (seen 2026-09-24: SIN) a one-IP burst spreads over
+    # enough machines that no counter trips, while the same burst from a
+    # Hetzner box (PRG) gets 429s. So a miss from here is retried from the
+    # first seed before it counts as a failure.
+    local seed where="from here"
+    seed="$(servers_with_role seed | head -1)"
+    if [[ "${limited}" -eq 0 && -n "${seed}" ]]; then
+      limited="$(kit_ssh "${seed}" "${burst_cmd}" 2>/dev/null || true)"
+      limited="${limited:-0}"
+      where="from ${seed} (none from here: this Cloudflare location's counters didn't trip)"
+    fi
     if [[ "${limited}" -gt 0 ]]; then
-      ok "rpc: burst of ${burst}: ${limited} x 429 with CORS + Retry-After"
+      ok "rpc: burst of ${burst} ${where}: ${limited} x 429 with CORS + Retry-After"
     else
-      bad "rpc: burst of ${burst} gave no 429 with CORS + Retry-After (RPC_RATELIMIT binding missing? the Worker logs a warning)"
+      bad "rpc: burst of ${burst} gave no 429 with CORS + Retry-After, from here or a seed (RPC_RATELIMIT binding missing? the Worker logs a warning)"
     fi
     sleep $((RPC_RATELIMIT_PERIOD + 1)) # let this IP's window pass
   fi

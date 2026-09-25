@@ -1,0 +1,121 @@
+{
+  "chainId": 82330,
+  "genesisHash": "0xb7391a4a83644e1dce95c95348a005febedeaa12fa46eb30ac0dfb5f36f00b71",
+  "deployer": "0x0a138EBfBe42408B9605f957e3838A0B2aBFBB44",
+  "wsova": "0xB5297FA5072e54BA1a0fb774bCdc103452B5FE61",
+  "deployments": {
+    "wsova": {
+      "address": "0xB5297FA5072e54BA1a0fb774bCdc103452B5FE61",
+      "artifact": "WSOVA.sol:WSOVA",
+      "txHash": "0x20d0419c1b64b99015995e7cb2f8bed1b1ebf95104cc4f892946176e208b4444",
+      "block": 1542,
+      "constructorArgs": [],
+      "sourceCommit": "968a467bf2c4",
+      "deployedAt": "2026-09-25T03:04:28Z"
+    },
+    "factory": {
+      "address": "0x91D8c7d277104e32F00B78Ef1904802edb8E575b",
+      "artifact": "UniswapV2Factory.sol:UniswapV2Factory",
+      "txHash": "0x6a516b062a8a3feb1532a300246e85d2c88fffa667fba79729f8fcb1b989cfb7",
+      "block": 1554,
+      "constructorArgs": [
+        {
+          "name": "_feeToSetter",
+          "type": "address",
+          "value": "0x0000000000000000000000000000000000000000"
+        }
+      ],
+      "sourceCommit": "968a467bf2c4",
+      "deployedAt": "2026-09-25T03:04:40Z"
+    },
+    "router": {
+      "address": "0x4c2596aA87Cd644A4981cD72FD1f9D66EC166131",
+      "artifact": "UniswapV2Router02.sol:UniswapV2Router02",
+      "txHash": "0xde8c13401d9d4a78d35a137d1437ad41c795cf29fde7c6fcc56f81861f1f1fe7",
+      "block": 1570,
+      "constructorArgs": [
+        {
+          "name": "_factory",
+          "type": "address",
+          "value": "0x91D8c7d277104e32F00B78Ef1904802edb8E575b"
+        },
+        {
+          "name": "_WETH",
+          "type": "address",
+          "value": "0xB5297FA5072e54BA1a0fb774bCdc103452B5FE61"
+        }
+      ],
+      "sourceCommit": "968a467bf2c4",
+      "deployedAt": "2026-09-25T03:04:56Z"
+    },
+    "multicall3": {
+      "address": "0xa7c966ccffA9681a9662ceA416Ca3c360dC42ac0",
+      "artifact": "Multicall3.sol:Multicall3",
+      "txHash": "0x0dd019d6a997ad7ba4345027e383ed04c66da9ec65c1c4e815f68e0887f8ed9f",
+      "block": 1598,
+      "constructorArgs": [],
+      "sourceCommit": "968a467bf2c4",
+      "deployedAt": "2026-09-25T03:05:10Z"
+    },
+    "ashwings": {
+      "address": "0x1695C7F5DeF320874076120607feb6c2d5C00708",
+      "artifact": "Ashwings.sol:Ashwings",
+      "txHash": "0x39ad42a7df414356b9efe0a6f9a63e011bacd58fbdb45575ad058fa36003bac6",
+      "block": 1615,
+      "constructorArgs": [
+        {
+          "name": "treasury",
+          "type": "address",
+          "value": "0x8d0123637062f8c15FD6AFDe6F834C85f4AfeEDE"
+        },
+        {
+          "name": "zecPayee_",
+          "type": "string",
+          "value": "tmQKm7CN5LaVg83YNRzXPLNy1qBMs8qcqNz"
+        },
+        {
+          "name": "priceWei",
+          "type": "uint256",
+          "value": "625000000000000000000"
+        },
+        {
+          "name": "priceZat",
+          "type": "uint256",
+          "value": "5000000"
+        }
+      ],
+      "sourceCommit": "968a467bf2c4",
+      "deployedAt": "2026-09-25T03:05:23Z"
+    },
+    "market": {
+      "address": "0x11EC6ae13C09E6d2A66fCcCB02ABE97B63c979ee",
+      "artifact": "AshwingsMarket.sol:AshwingsMarket",
+      "txHash": "0x4b8f406072425565ab1da34623763b1bd7919777b47aa46d0e7b8be0a225896e",
+      "block": 1670,
+      "constructorArgs": [
+        {
+          "name": "ashwings",
+          "type": "address",
+          "value": "0x1695C7F5DeF320874076120607feb6c2d5C00708"
+        },
+        {
+          "name": "treasury",
+          "type": "address",
+          "value": "0x8d0123637062f8c15FD6AFDe6F834C85f4AfeEDE"
+        },
+        {
+          "name": "feeBps",
+          "type": "uint16",
+          "value": "100"
+        }
+      ],
+      "sourceCommit": "968a467bf2c4",
+      "deployedAt": "2026-09-25T03:05:46Z"
+    }
+  },
+  "factory": "0x91D8c7d277104e32F00B78Ef1904802edb8E575b",
+  "router": "0x4c2596aA87Cd644A4981cD72FD1f9D66EC166131",
+  "multicall3": "0xa7c966ccffA9681a9662ceA416Ca3c360dC42ac0",
+  "ashwings": "0x1695C7F5DeF320874076120607feb6c2d5C00708",
+  "market": "0x11EC6ae13C09E6d2A66fCcCB02ABE97B63c979ee"
+}

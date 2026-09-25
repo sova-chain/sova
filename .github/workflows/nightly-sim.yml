@@ -248,6 +248,17 @@ jobs:
           mkdir -p "${RUNNER_TEMP}/nightly-sim-logs"
           box/sim/anchor-precompile-scenario.sh 2>&1 | tee "${RUNNER_TEMP}/nightly-sim-logs/anchor-precompile-scenario.log"
 
+      - name: Run tx gossip scenario (box/sim/tx-gossip-scenario.sh)
+        # A tx sent to the public RPC node C must reach the sealer A through
+        # seed B (C -> B -> A over devp2p `eth`) and be mined: live, after B
+        # restarts while no block arrives, and after C restarts holding a
+        # restored local tx (testnet incident 2026-09-25). Uses `cast mktx`.
+        id: tx-gossip-scenario
+        continue-on-error: true
+        run: |
+          mkdir -p "${RUNNER_TEMP}/nightly-sim-logs"
+          box/sim/tx-gossip-scenario.sh 2>&1 | tee "${RUNNER_TEMP}/nightly-sim-logs/tx-gossip-scenario.log"
+
       - name: Run SIP-4 §7 Zcash reorg scenario (box/sim/zcash-reorg-scenario.sh)
         # A recorder contract stores txInfo(T) per block; a regtest
         # invalidateblock orphans the burn T. Both nodes must roll Sova back
@@ -260,7 +271,7 @@ jobs:
           box/sim/zcash-reorg-scenario.sh 2>&1 | tee "${RUNNER_TEMP}/nightly-sim-logs/zcash-reorg-scenario.log"
 
       - name: Upload sim logs
-        if: steps.run-scenarios.outcome == 'failure' || steps.two-node-scenario.outcome == 'failure' || steps.ladder-scenario.outcome == 'failure' || steps.two-node-p2p-scenario.outcome == 'failure' || steps.ladder-p2p-scenario.outcome == 'failure' || steps.three-node-discovery-scenario.outcome == 'failure' || steps.join-scenario.outcome == 'failure' || steps.checkpoint-scenario.outcome == 'failure' || steps.anchor-precompile-scenario.outcome == 'failure' || steps.zcash-reorg-scenario.outcome == 'failure'
+        if: steps.run-scenarios.outcome == 'failure' || steps.two-node-scenario.outcome == 'failure' || steps.ladder-scenario.outcome == 'failure' || steps.two-node-p2p-scenario.outcome == 'failure' || steps.ladder-p2p-scenario.outcome == 'failure' || steps.three-node-discovery-scenario.outcome == 'failure' || steps.join-scenario.outcome == 'failure' || steps.checkpoint-scenario.outcome == 'failure' || steps.anchor-precompile-scenario.outcome == 'failure' || steps.zcash-reorg-scenario.outcome == 'failure' || steps.tx-gossip-scenario.outcome == 'failure'
         uses: actions/upload-artifact@v4
         with:
           name: nightly-sim-logs
@@ -276,7 +287,7 @@ jobs:
         # `on:` block: no push/pull_request trigger at all).
         if: always()
         run: |
-          if [[ "${{ steps.run-scenarios.outcome }}" == "failure" || "${{ steps.two-node-scenario.outcome }}" == "failure" || "${{ steps.ladder-scenario.outcome }}" == "failure" || "${{ steps.two-node-p2p-scenario.outcome }}" == "failure" || "${{ steps.ladder-p2p-scenario.outcome }}" == "failure" || "${{ steps.three-node-discovery-scenario.outcome }}" == "failure" || "${{ steps.join-scenario.outcome }}" == "failure" || "${{ steps.checkpoint-scenario.outcome }}" == "failure" || "${{ steps.anchor-precompile-scenario.outcome }}" == "failure" || "${{ steps.zcash-reorg-scenario.outcome }}" == "failure" ]]; then
+          if [[ "${{ steps.run-scenarios.outcome }}" == "failure" || "${{ steps.two-node-scenario.outcome }}" == "failure" || "${{ steps.ladder-scenario.outcome }}" == "failure" || "${{ steps.two-node-p2p-scenario.outcome }}" == "failure" || "${{ steps.ladder-p2p-scenario.outcome }}" == "failure" || "${{ steps.three-node-discovery-scenario.outcome }}" == "failure" || "${{ steps.join-scenario.outcome }}" == "failure" || "${{ steps.checkpoint-scenario.outcome }}" == "failure" || "${{ steps.anchor-precompile-scenario.outcome }}" == "failure" || "${{ steps.zcash-reorg-scenario.outcome }}" == "failure" || "${{ steps.tx-gossip-scenario.outcome }}" == "failure" ]]; then
             echo "::error::One or more nightly sim scenarios failed -- see the nightly-sim-logs artifact."
             exit 1
           fi

@@ -86,6 +86,12 @@ for h in sova-seed-1 sova-rpc-1 sova-keeper-1; do
   check "render: ${h}'s node has SIP-7 on" grep -q '^SOVA_SIP7=1$' "${TMP}/out/render/${h}/etc/sova/sova-node.env"
 done
 check "render: keeper budgets rendered" grep -q '^KEEPER_LIFETIME_BUDGET_ZAT=' "${R}/etc/sova/keeper.env"
+# Private hosts can't be reached by discovery (their firewall admits SSH
+# only), so they dial the seeds as static peers; the seed dials no one.
+for h in sova-rpc-1 sova-keeper-1; do
+  check "render: ${h} static-peers the seed" grep -q '^SOVA_P2P_PEERS=enode://' "${TMP}/out/render/${h}/etc/sova/sova-node.env"
+done
+check "render: the seed has no static peers" grep -q '^SOVA_P2P_PEERS=$' "${TMP}/out/render/sova-seed-1/etc/sova/sova-node.env"
 check "render: no cloudflared on the keeper (not public)" test ! -e "${R}/etc/systemd/system/cloudflared.service"
 if [[ ${#VERIFY[@]} -gt 0 ]]; then
   check "systemd-analyze verify: keeper ok" grep -q 'ok   sova-keeper-1: systemd-analyze verify' <<<"${out}"

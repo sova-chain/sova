@@ -98,6 +98,12 @@
 //! comma-separated origin list) sets reth's `--http.corsdomain` so browser
 //! pages can call the node directly; the box sets `*`.
 //!
+//! Transaction gossip (see [`tx_gossip`]): reth's devp2p `eth` gossip,
+//! with the network `Idle` from engine start (there is no CL to wait for)
+//! and the pending pool re-announced to every peer every 15 s, so a
+//! transaction submitted to any node reaches a sealer even if a peer missed
+//! its one announcement.
+//!
 //! Block tag `pending` (see [`pending_rpc`]): in both profiles, over HTTP
 //! and WS, `eth_call`, `eth_estimateGas` and `eth_createAccessList` at
 //! `pending` are answered as at `latest`. reth's pending env is head+1,
@@ -110,6 +116,7 @@ mod discovery;
 mod gossip;
 mod pending_rpc;
 mod rpc;
+mod tx_gossip;
 mod zcash_feed;
 
 use std::{path::PathBuf, time::Duration};
@@ -276,6 +283,10 @@ async fn run() -> eyre::Result<()> {
     rpc_profile.apply(&mut node_config.rpc);
     rpc_cors.apply(&mut node_config.rpc);
     let jwt = apply_shared_jwt(&mut node_config)?;
+    // Transaction gossip without a CL: the network leaves reth's "initially
+    // syncing" state when the engine starts, not at the first new block
+    // (see `tx_gossip`).
+    tx_gossip::apply(&mut node_config);
     let (http_port, auth_port) = (node_config.rpc.http_port, node_config.rpc.auth_port);
 
     let sova_node = SovaNode::default();
@@ -489,6 +500,14 @@ async fn run() -> eyre::Result<()> {
             node.config.rpc.auth_addr
         );
     }
+
+    // Every mode: re-announce the pending pool to every peer, so a
+    // transaction a peer missed (restart, no peers at submission) still
+    // reaches a sealer (see `tx_gossip`).
+    sova_tasks.spawn(tx_gossip::run_rebroadcast(
+        node.pool.clone(),
+        node.network.clone(),
+    ));
 
     if let Some(url) = &zebrad_rpc {
         sova_tasks.spawn(engine::expectations::run_expectations(
