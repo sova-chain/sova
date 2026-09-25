@@ -270,8 +270,20 @@ jobs:
           mkdir -p "${RUNNER_TEMP}/nightly-sim-logs"
           box/sim/zcash-reorg-scenario.sh 2>&1 | tee "${RUNNER_TEMP}/nightly-sim-logs/zcash-reorg-scenario.log"
 
+      - name: Run null-block Zcash reorg scenario (box/sim/null-reorg-scenario.sh)
+        # Testnet stall 2026-09-24: SIP-6 + SIP-7 on, a Zcash reorg under a
+        # NULL Sova tip. The stale null block must be re-sealed on its parent
+        # and the chain must go on (no SIP-7 DeltaMismatch) on both nodes,
+        # live (phase 1) and after the mine-mode node restarts on the stale
+        # tip (phase 2).
+        id: null-reorg-scenario
+        continue-on-error: true
+        run: |
+          mkdir -p "${RUNNER_TEMP}/nightly-sim-logs"
+          box/sim/null-reorg-scenario.sh 2>&1 | tee "${RUNNER_TEMP}/nightly-sim-logs/null-reorg-scenario.log"
+
       - name: Upload sim logs
-        if: steps.run-scenarios.outcome == 'failure' || steps.two-node-scenario.outcome == 'failure' || steps.ladder-scenario.outcome == 'failure' || steps.two-node-p2p-scenario.outcome == 'failure' || steps.ladder-p2p-scenario.outcome == 'failure' || steps.three-node-discovery-scenario.outcome == 'failure' || steps.join-scenario.outcome == 'failure' || steps.checkpoint-scenario.outcome == 'failure' || steps.anchor-precompile-scenario.outcome == 'failure' || steps.zcash-reorg-scenario.outcome == 'failure' || steps.tx-gossip-scenario.outcome == 'failure'
+        if: steps.run-scenarios.outcome == 'failure' || steps.two-node-scenario.outcome == 'failure' || steps.ladder-scenario.outcome == 'failure' || steps.two-node-p2p-scenario.outcome == 'failure' || steps.ladder-p2p-scenario.outcome == 'failure' || steps.three-node-discovery-scenario.outcome == 'failure' || steps.join-scenario.outcome == 'failure' || steps.checkpoint-scenario.outcome == 'failure' || steps.anchor-precompile-scenario.outcome == 'failure' || steps.zcash-reorg-scenario.outcome == 'failure' || steps.tx-gossip-scenario.outcome == 'failure' || steps.null-reorg-scenario.outcome == 'failure'
         uses: actions/upload-artifact@v4
         with:
           name: nightly-sim-logs
@@ -287,7 +299,7 @@ jobs:
         # `on:` block: no push/pull_request trigger at all).
         if: always()
         run: |
-          if [[ "${{ steps.run-scenarios.outcome }}" == "failure" || "${{ steps.two-node-scenario.outcome }}" == "failure" || "${{ steps.ladder-scenario.outcome }}" == "failure" || "${{ steps.two-node-p2p-scenario.outcome }}" == "failure" || "${{ steps.ladder-p2p-scenario.outcome }}" == "failure" || "${{ steps.three-node-discovery-scenario.outcome }}" == "failure" || "${{ steps.join-scenario.outcome }}" == "failure" || "${{ steps.checkpoint-scenario.outcome }}" == "failure" || "${{ steps.anchor-precompile-scenario.outcome }}" == "failure" || "${{ steps.zcash-reorg-scenario.outcome }}" == "failure" || "${{ steps.tx-gossip-scenario.outcome }}" == "failure" ]]; then
+          if [[ "${{ steps.run-scenarios.outcome }}" == "failure" || "${{ steps.two-node-scenario.outcome }}" == "failure" || "${{ steps.ladder-scenario.outcome }}" == "failure" || "${{ steps.two-node-p2p-scenario.outcome }}" == "failure" || "${{ steps.ladder-p2p-scenario.outcome }}" == "failure" || "${{ steps.three-node-discovery-scenario.outcome }}" == "failure" || "${{ steps.join-scenario.outcome }}" == "failure" || "${{ steps.checkpoint-scenario.outcome }}" == "failure" || "${{ steps.anchor-precompile-scenario.outcome }}" == "failure" || "${{ steps.zcash-reorg-scenario.outcome }}" == "failure" || "${{ steps.tx-gossip-scenario.outcome }}" == "failure" || "${{ steps.null-reorg-scenario.outcome }}" == "failure" ]]; then
             echo "::error::One or more nightly sim scenarios failed -- see the nightly-sim-logs artifact."
             exit 1
           fi

@@ -3,6 +3,7 @@
 // anchored Zcash block, summaries(from, to) for the new ones. Polls.
 // Config: data-config on #pulse, overridden by ?rpc=&at=&n=
 import { rpc, words, num, u256, calldata } from '../checkout/chain';
+import { ZB_SEL as SEL, zbCall, latestAnchored } from '../zcash-blocks';
 
 type Cfg = { rpc: string; at: string; n: number; pollMs: number };
 type Blk = {
@@ -10,8 +11,6 @@ type Blk = {
   actions: number; pools: number[]; deltas: number[];
 };
 
-// Selectors (`cast sig`), ZcashBlocks.sol.
-const SEL = { latest: '52bfe789', summaries: '296f5550' };
 const WORDS = 27; // one Block
 const NAMES = ['transparent', 'sprout', 'sapling', 'orchard', 'lockbox', 'ironwood'];
 const SHIELDED = [1, 2, 3, 5];
@@ -34,15 +33,13 @@ const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 // ---- chain ------------------------------------------------------------------
 
-const call = (data: string) => rpc<string>(cfg.rpc, 'eth_call', [{ to: cfg.at, data }, 'latest']);
+const call = (data: string) => zbCall(cfg.rpc, data, cfg.at);
 const i64 = (w: string) => {
   const v = num(w);
   return Number(v >= 1n << 255n ? v - (1n << 256n) : v); // |zat| < 2^53: exact
 };
 
-async function latest(): Promise<number> {
-  return Number(num(words(await call('0x' + SEL.latest))[0]));
-}
+const latest = () => latestAnchored(cfg.rpc, cfg.at);
 
 async function summaries(from: number, to: number): Promise<Blk[]> {
   const w = words(await call(calldata(SEL.summaries, u256(from), u256(to))));

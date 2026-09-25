@@ -4,7 +4,7 @@
 // mcp/docs/walkthrough.md), budgets, and funding privacy with its limits.
 // Regtest values are from mcp/docs/walkthrough.md. Sources: site/README.md.
 import Site from '../layouts/Site.astro';
-import { MIN_BURN_ZAT, REWARD_SOVA } from '../data/sova';
+import { MIN_BURN_ZAT, REWARD_SOVA, TESTNET, repo } from '../data/sova';
 
 const tools = [
   ['sova_init', 'create or load the keystore; returns the t-addr to fund and the EVM address burns credit'],
@@ -17,10 +17,10 @@ const tools = [
 ---
 <Site
   title="Mine SOVA"
-  description="How to mine SOVA: burn ZEC with sova-miner, by hand or through an agent via MCP, under a budget you set. Regtest today; testnet at launch."
+  description="How to mine SOVA: burn ZEC with sova-miner, by hand or through an agent via MCP, under a budget you set. On regtest, or on the public testnet."
   current="/mine"
   cmd="sova-miner --help"
-  status="pre-release · no public network yet"
+  status="pre-release · public testnet live"
 >
   <h1>Mine SOVA</h1>
   <p class="why1">Mining issues SOVA, the gas that runs every contract on Sova, including the ones that verify ZEC payments.</p>
@@ -80,8 +80,19 @@ const tools = [
   </ul>
   <p>Use a fresh miner per session (<code>sova-miner init --data-dir &lt;new-dir&gt;</code>) and avoid round deshield amounts.</p>
 
-  <h2>testnet</h2>
-  <p>Point the miner at your own zebrad on Zcash testnet with <code>--network test</code>. Keep zebrad’s RPC on localhost: your Sova node reads the same zebrad. <span class="ph" data-placeholder="testnet">The testnet guide goes live at launch.</span></p>
+  <h2 id="testnet">testnet</h2>
+  <p>Point the miner at your own zebrad on Zcash testnet with <code>--network test</code>. Keep zebrad’s RPC on localhost: your Sova node reads the same zebrad. <a href={repo.blob(TESTNET.guide)}>The testnet guide</a> goes from nothing to a sealing miner.</p>
+  <pre class="sh"><code><span class="p">$ </span>sova-miner --network test --data-dir ~/.sova-testnet/miner init
+
+<span class="c"># get TAZ (testnet ZEC) for the t-addr it printed</span>
+<span class="p">$ </span>curl -s -X POST -d {`'{"address":"tm…"}'`} {TESTNET.faucet}/drip
+
+<span class="p">$ </span>sova-miner --network test --data-dir ~/.sova-testnet/miner mine \
+    --rpc http://127.0.0.1:18232 --per-epoch-zat 10000 --budget-zat 5000000</code></pre>
+  <dl class="kv urls">
+    <dt>faucet</dt><dd><a href={`${TESTNET.faucet}/status`}><code>{TESTNET.faucet}</code></a>: 0.1 TAZ per drip, one per address a day</dd>
+    <dt>chain</dt><dd>ID <code>{TESTNET.chainId}</code>, currency SOVA, RPC <code>{TESTNET.rpc}</code></dd>
+  </dl>
 
   <p class="next"><a href="/node">Run a node</a><a href="/paper#burns">How burns work (paper §2)</a></p>
 </Site>
@@ -93,6 +104,7 @@ const tools = [
   .ask { margin: 0 0 16px; padding: 8px 14px; border-left: 2px solid var(--g3); color: var(--cream); max-width: 72ch; }
   .tools dt code { background: none; padding: 0; }
   .why1 { color: var(--g2); margin-bottom: 8px !important; }
+  .urls code { overflow-wrap: anywhere; }
   @media (max-width: 600px) {
     .flow li { grid-template-columns: 1fr; gap: 0; margin-bottom: 12px; }
   }

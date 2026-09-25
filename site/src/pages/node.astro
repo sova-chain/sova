@@ -3,14 +3,15 @@
 // box/up/README.md (prerequisites, quickstart, "What you're seeing", evidence,
 // troubleshooting). Sources: site/README.md.
 import Site from '../layouts/Site.astro';
-import { CLONE } from '../data/sova';
+import { CLONE, TESTNET, repo } from '../data/sova';
+import testnetDeployments from '../../../infra/testnet/deployments/sova-testnet.json';
 ---
 <Site
   title="Run a Sova node"
-  description="Run Sova yourself: one command starts a Zcash regtest node, a Sova node and a miner on your machine. Local devnet today; testnet node guide at launch."
+  description="Run Sova yourself: one command starts a Zcash regtest node, a Sova node and a miner on your machine. Or join the public testnet."
   current="/node"
   cmd="./box/up.sh"
-  status="pre-release · no public network yet"
+  status="pre-release · public testnet live"
 >
   <h1>Run it yourself</h1>
   <p class="lead">One command starts a Zcash regtest node, a Sova node and a miner on your machine. Then you watch burns turn into SOVA.</p>
@@ -61,12 +62,23 @@ INFO sova epoch trigger height=111 settled=true</span></code></pre>
     <dt>zebrad unhealthy</dt><dd>Check that Docker is running and has memory and disk to spare.</dd>
   </dl>
 
-  <h2>testnet</h2>
-  <p>The public testnet will run this same node, with its own genesis and pinned bootnodes. <span class="ph" data-placeholder="testnet">The testnet node guide goes live at launch.</span></p>
+  <h2 id="testnet">testnet</h2>
+  <p>The public testnet runs this same node, beside a zebrad on Zcash testnet, with its own genesis and pinned bootnodes. <a href={repo.blob(TESTNET.guide)}>The testnet node guide</a> goes from nothing to a synced node.</p>
+  <pre class="sh"><code><span class="p">$ </span>curl -fsSLO {TESTNET.downloads}/testnet.env
+<span class="p">$ </span>. ./testnet.env &amp;&amp; sova genesis-hash
+<span class="o">{testnetDeployments.genesisHash}</span>
+<span class="p">$ </span>sova</code></pre>
+  <dl class="kv urls">
+    <dt>chain ID</dt><dd><code>{TESTNET.chainId}</code>, currency SOVA</dd>
+    <dt>public RPC</dt><dd><code>{TESTNET.rpc}</code>: read and broadcast only, rate-limited</dd>
+    <dt>join files</dt><dd><code>{TESTNET.downloads}</code>: <code>testnet.env</code>, <code>seeds.json</code></dd>
+    <dt>faucet</dt><dd><code>{TESTNET.faucet}</code>: TAZ for burning</dd>
+  </dl>
 
   <p class="next"><a href="/mine">Mine</a><a href="/build">Build</a><a href="/paper#network">The paper, §6</a></p>
 </Site>
 
 <style>
   b { color: var(--cream); font-weight: 400; }
+  .urls code { overflow-wrap: anywhere; }
 </style>

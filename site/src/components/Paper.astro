@@ -81,7 +81,7 @@ const refs: { a: string; t: string; href: string; extra?: string }[] = [
         {WORDMARK_PATHS.map((d) => <path fill="currentColor" d={d} />)}
       </svg>
     </a>
-    <span>Pre-release draft. No public network yet.</span>
+    <span>Pre-release draft. Public testnet live.</span>
   </header>
 
   <div class="layout">
@@ -144,8 +144,8 @@ const refs: { a: string; t: string; href: string; extra?: string }[] = [
       runs programs: a custodian, a multisignature group or a bridge takes the
       ZEC and issues a token in its place. The token is a claim on the
       custodian, and the contracts that use it see the token, never the coin.
-      They cannot tell whether a payment happened on Zcash, and the holder has
-      given up what made the cash worth programming: possession of it. The
+      They cannot tell whether a payment happened on Zcash, and the holder no
+      longer holds the coin. The
       arrangement works as long as the custodian is honest and solvent, and
       everything built on it inherits that condition.</p>
       <p>What is needed is a chain whose contracts can verify a Zcash payment
@@ -162,8 +162,7 @@ const refs: { a: string; t: string; href: string; extra?: string }[] = [
       <p>In this paper, we propose an EVM chain that runs beside Zcash and reads
       it. Every Sova node runs its own Zcash node. The chain’s asset, SOVA, is
       issued only when ZEC is destroyed in a Zcash transaction that names the
-      address to credit: the burn is the mining act, and afterward the ZEC
-      exists for no one. Burns are grouped by Zcash block, one Sova block per
+      address to credit: the burn is the mining act. Burns are grouped by Zcash block, one Sova block per
       Zcash block, so Sova’s order is Zcash’s, and every Sova block commits to
       the Zcash block it settles. Because every node derives every mint from
       Zcash, a node can also answer a contract’s question about Zcash
@@ -732,7 +731,7 @@ const refs: { a: string; t: string; href: string; extra?: string }[] = [
       <span id="s8"></span><span id="s9"></span><span id="s10"></span>
       <h2 id="conclusion">11. Conclusion</h2>
       <p>We have proposed a chain for programs that can verify Zcash payments,
-      with an asset that is issued without an issuer. We started with burns: a
+      with an asset that is issued only by destroying ZEC. We started with burns: a
       Zcash transaction that destroys ZEC and names an address, recognized by a
       rule anyone can apply. Grouping burns by Zcash block gives the chain its
       order and its clock from Zcash’s proof-of-work, and lets each Sova block
@@ -743,21 +742,19 @@ const refs: { a: string; t: string; href: string; extra?: string }[] = [
       choice the same near the tip. Because every node derives every mint from its own Zcash
       node, a node trusts no other node for anything, and the same derivation
       gives contracts a view of Zcash that is identical everywhere. The ZEC a
-      contract verifies stays with its payee on Zcash, and the chain holds
-      nothing.</p>
-      <p>Today the design runs as a local network, a Zcash regtest node, a Sova
-      node and a miner started by one command, and the source and these
-      specifications are public [2, 3, 4, 5]. The anchor and the precompile of
-      Sections 3, 7 and 8 are specified and built, and ship with the public
-      testnet, which will be the first public network. The sealer signature of
-      Section 5 is built and switches on with the public testnet. Mints are final at Zcash depth; transaction history
+      contract verifies stays with its payee on Zcash.</p>
+      <p>Today the design runs as a public testnet anchored to Zcash testnet,
+      and as a local network, a Zcash regtest node, a Sova node and a miner
+      started by one command; the source and these specifications are public
+      [2, 3, 4, 5]. The anchor and the precompile of Sections 3, 7 and 8 and
+      the sealer signature of Section 5 are built and live on the public
+      testnet. Mints are final at Zcash depth; transaction history
       is not yet: an online node replaces no block once three are built on it,
       a joining node takes
       the first valid history it is offered, and the rules of Section 10 that
       would rank histories objectively are future work. A wrapped ZEC held by
-      a third party’s signers is
-      possible later work; it would be custody, it would be called custody, and
-      it is no part of this design.</p>
+      a third party’s signers would be custody, and it is no part of this
+      design.</p>
 
       <span class="folio" aria-hidden="true">10</span>
     </article>

@@ -3,10 +3,38 @@
 // file each block comes from. The three direction pages render these, so a
 // fact changes in one place.
 
-// The Sova RPC the live pages (/pulse, /ashwings/*) read by default. The
-// local box until the public testnet launches; then the public endpoint
-// (docs/ops/testnet-launch.md, B5 f). Each page still takes ?rpc= per visit.
-export const SOVA_RPC = 'http://127.0.0.1:8545';
+import testnetDeployments from '../../../infra/testnet/deployments/sova-testnet.json';
+
+// The Sova RPC the live pages (/pulse, /ashwings/*) read by default: the
+// public testnet's RPC (docs/ops/testnet-launch.md, B5 f; read-only, rate
+// limited per IP). Each page still takes ?rpc= per visit, e.g.
+// ?rpc=http://127.0.0.1:8545 for the local box.
+export const SOVA_RPC = 'https://rpc.testnet.sova.io';
+
+// The public testnet (docs/ops/testnet-launch.md; seeds.json `courtesy`;
+// docs/guides/testnet.md). Project-run conveniences, never load-bearing.
+// No block explorer yet.
+export const TESTNET = {
+  chainId: testnetDeployments.chainId, // 82330
+  rpc: SOVA_RPC,
+  faucet: 'https://faucet.testnet.sova.io',
+  downloads: 'https://dl.testnet.sova.io',
+  guide: 'docs/guides/testnet.md',
+} as const;
+
+// Day-one contracts on the public testnet, straight from the deploy record
+// (infra/testnet/deployments/sova-testnet.json, written by
+// infra/testnet/deploy-contracts.sh). The Ashwings ZEC checkout isn't listed
+// there: the Ashwings constructor creates it, so /ashwings/buy reads
+// Ashwings.zecCheckout() at load.
+export const CONTRACTS = {
+  wsova: testnetDeployments.wsova,
+  factory: testnetDeployments.factory,
+  router: testnetDeployments.router,
+  multicall3: testnetDeployments.multicall3,
+  ashwings: testnetDeployments.ashwings,
+  market: testnetDeployments.market,
+} as const;
 
 // The owner-picked positioning line (docs/marketing/positioning.md).
 export const EDGE_LINE = 'The programmable edge of the shielded pool.';
@@ -89,7 +117,7 @@ export const sips = [
   {
     n: 4, id: 'sip-4', file: 'sip-4-draft-zcash-state-precompile.md', title: 'Zcash state precompile', st: 'draft',
     sum: 'Contracts read transparent Zcash state, as of the Zcash block each Sova block commits to.',
-    note: 'Built; ships with the public testnet.',
+    note: 'Built; live on the public testnet.',
   },
   {
     n: 5, id: 'sip-5', file: 'sip-5-withdrawn.md', title: 'Wrapped ZEC', st: 'withdrawn',
@@ -99,12 +127,12 @@ export const sips = [
   {
     n: 6, id: 'sip-6', file: 'sip-6-draft-sealer-signatures.md', title: 'Sealer signatures', st: 'accepted',
     sum: 'The sealer signs its block with the key its burn credits, so every block names its sealer and light clients get a signature to verify.',
-    note: 'Accepted and built; switches on at the testnet reset, with SIP-4.',
+    note: 'Accepted and built; live on the public testnet.',
   },
   {
     n: 7, id: 'sip-7', file: 'sip-7-draft-zcash-events.md', title: 'Zcash pool state and events', st: 'accepted',
     sum: 'Contracts read the value in each shielded pool and every change to it; each Sova block records a summary of its Zcash block in state.',
-    note: 'Accepted and built; switches on at the testnet reset.',
+    note: 'Accepted and built; live on the public testnet.',
   },
   {
     n: 8, id: 'sip-8', file: 'sip-8-draft-anchored-burns.md', title: 'Anchored burns', st: 'accepted',
@@ -148,12 +176,16 @@ export const coverToc = [
   where: t.href.startsWith('https://') ? (t.href.split('/blob/main/')[1] ?? t.href.replace('https://', '')) : t.href,
 }));
 
-// Live testnet stats (components/TestnetStats.astro): placeholders until the
-// public testnet runs; `key` is the data-stat hook a later script fills.
+// Live testnet stats (components/TestnetStats.astro, filled in the browser by
+// scripts/testnet-stats.ts from SOVA_RPC); `key` is the data-stat hook. Only
+// what the chain states in one call each: the Sova height and its block's
+// time (eth_getBlockByNumber) and the anchored Zcash height (ZcashBlocks
+// latest(), SIP-7). No burns or SOVA-minted totals: no RPC exposes them, and
+// summing every block's withdrawals is too many calls for a page view.
 export const testnetStats = [
-  { key: 'height', label: 'height' },
-  { key: 'burns', label: 'burns' },
-  { key: 'minted', label: 'SOVA minted' },
+  { key: 'sova', label: 'sova height' },
+  { key: 'zcash', label: 'zcash height' },
+  { key: 'age', label: 'last block' },
 ] as const;
 
 // Every indexable page besides the landing page at `/`, in the homepage's
@@ -207,7 +239,7 @@ export const footerLinks: readonly { key: string; label: string; href?: string }
   { key: 'source-repo', label: 'Source', href: repo.root },
   { key: 'sips', label: 'Specs', href: repo.sips },
   { key: 'docs', label: 'Docs', href: repo.docs },
-  { key: 'testnet', label: 'Testnet (at launch)' },
+  { key: 'testnet', label: 'Testnet', href: repo.blob(TESTNET.guide) },
   { key: 'telegram', label: 'Telegram', href: SOCIAL.telegram },
   { key: 'x', label: 'X', href: SOCIAL.x },
 ];

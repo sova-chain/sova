@@ -256,16 +256,15 @@ they need a glibc at least as new as that runner's; on an older distro the
   clock instead of waiting on nothing.
 - **the miner (`sova-miner mine`)** -- for every new Zcash block it
   observes over RPC, it submits one SIP-1 burn transaction (a small,
-  provably-unspendable OP_RETURN + eater output) up to its budget. This is
-  the "burn digital cash" half of the pitch -- a real, standard-compliant
-  Zcash transaction, nothing simulated.
+  provably-unspendable OP_RETURN + eater output) up to its budget. It is a
+  real, standard Zcash transaction, nothing simulated.
 - **the Sova node (`bin/sova`, mine mode)** -- follows `zebrad` block by
   block. Every Zcash block fires one trigger: one Sova block per Zcash
   block. When the miner's burn lands in an epoch and it's the epoch's
   rank-0 sealer (the only sealer, in this single-miner devnet), that
   epoch's settlement is staged and the next built Sova block mints the
-  epoch's SOVA reward to the miner's EVM address through the withdrawals
-  channel -- no admin key, no separate mint transaction.
+  epoch's SOVA reward to the miner's EVM address through the block's
+  withdrawals.
 - **"epoch triggers" / "settled epochs"** -- log lines in
   `box/up/.run/logs/sova-node.log` marking, respectively, a new epoch
   being triggered by a Zcash block and an epoch's reward being settled

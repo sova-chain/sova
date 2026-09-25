@@ -30,13 +30,13 @@ const patterns = [
   description="Build on Sova: contracts that verify ZEC payments on Zcash itself, through the SIP-4 precompile. The IZcash interface, the rules, a local demo, and how to contribute."
   current="/build"
   cmd="cat contracts/src/zcash/IZcash.sol"
-  status="pre-release · SIP-4 ships with the public testnet"
+  status="pre-release · public testnet live"
 >
   <h1>Build on Sova</h1>
-  <p class="lead">A Sova contract can ask Zcash questions. Every node answers from its own Zcash node, identically.</p>
-  <p class="tags">SIP-4 · <Tag k="draft" /> build approved · code in review · <Tag k="testnet" /></p>
+  <p class="lead">A Sova contract can read Zcash. Every node answers from its own Zcash node, and every node gives the same answer.</p>
+  <p class="tags">SIP-4 · <Tag k="draft" /> build approved · built · <Tag k="testnet" /></p>
 
-  <h2>what a contract can ask</h2>
+  <h2>what a contract can read</h2>
   <dl class="kv methods">
     {methods.map(([m, d]) => <><dt><code>{m}</code></dt><dd>{d}</dd></>)}
   </dl>

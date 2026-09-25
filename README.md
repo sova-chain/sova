@@ -30,11 +30,11 @@
 Sova is an EVM chain that reads Zcash: contracts verify real ZEC payments
 on Zcash itself. SOVA, the gas token, is mined by burning ZEC, one Sova block
 per Zcash block. Every node verifies every mint against its own Zcash node.
-Permissionless, oracle-less, self-custody.
+Permissionless, verifiable, self-custody.
 
-> **Status: pre-release and unaudited.** Sova runs today as a local devnet
-> (`./box/up.sh`); a public testnet, mined with testnet ZEC, is next
-> ([roadmap](docs/ROADMAP.md)). Read [`SECURITY.md`](SECURITY.md) before
+> **Status: pre-release and unaudited.** A public testnet is live, mined
+> with testnet ZEC ([join it](docs/guides/testnet.md)); the same stack runs
+> locally with `./box/up.sh` ([roadmap](docs/ROADMAP.md)). Read [`SECURITY.md`](SECURITY.md) before
 > relying on it, and to report a vulnerability.
 
 ## Quickstart
@@ -76,8 +76,8 @@ minute.
 - **Contracts that read Zcash.** The SIP-4 precompile answers questions about
   transparent Zcash state (is this transaction mined, how deep, what does
   this output pay) as of the Zcash block each Sova block commits to, so every
-  node computes the same answer. Shielded data stays shielded. *Code in
-  review; ships with the public testnet.*
+  node computes the same answer. Shielded data stays shielded. *Live on the
+  public testnet.*
 
 ```mermaid
 flowchart TD
@@ -86,7 +86,7 @@ flowchart TD
   follower --> expect["Expected mints (SIP-2)"]
   expect --> consensus["Consensus check on every import"]
   consensus --> evm["Sova EVM (reth)"]
-  follower -. "SIP-4, in review" .-> index["Zcash index"]
+  follower -. "SIP-4" .-> index["Zcash index"]
   index -.-> precompile["Zcash precompile"]
   precompile -.-> evm
 ```
@@ -100,10 +100,10 @@ Protocol changes go through SIPs, in [`sips/`](sips/).
 | [SIP-1](sips/sip-1.md) | The Burn Transaction Format | Frozen |
 | [SIP-2](sips/sip-2.md) | Epochs, Rewards, and Settlement | Draft: implemented, proven on regtest |
 | [SIP-3](sips/sip-3.md) | Emission Schedule | Accepted |
-| [SIP-4](sips/sip-4-draft-zcash-state-precompile.md) | Zcash State Precompile | Draft: build approved, code in review |
+| [SIP-4](sips/sip-4-draft-zcash-state-precompile.md) | Zcash State Precompile | Draft: build approved, live on the testnet |
 | [SIP-5](sips/sip-5-withdrawn.md) | Wrapped ZEC | Withdrawn: a Sova Labs product (wz.cash), not a protocol rule |
-| [SIP-6](sips/sip-6-draft-sealer-signatures.md) | Sealer Signatures | Accepted: implementation pending |
-| [SIP-7](sips/sip-7-draft-zcash-events.md) | Zcash Pool State and Events | Accepted: implementation pending |
+| [SIP-6](sips/sip-6-draft-sealer-signatures.md) | Sealer Signatures | Accepted: live on the testnet |
+| [SIP-7](sips/sip-7-draft-zcash-events.md) | Zcash Pool State and Events | Accepted: live on the testnet |
 
 ## Repository layout
 

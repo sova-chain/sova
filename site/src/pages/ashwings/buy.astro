@@ -3,23 +3,28 @@
 // noindex, not in sitePages (nav, footer, sitemap). Runbook:
 // docs/design/ashwing-zec-checkout.md. Logic: src/scripts/checkout/.
 import Site from '../../layouts/Site.astro';
-import { SOVA_RPC } from '../../data/sova';
+import { SOVA_RPC, TESTNET, CONTRACTS } from '../../data/sova';
 
-// Defaults target the local box after box/deploy-dapps.sh: the checkout is
-// the one the Ashwings constructor creates (Ashwings.zecCheckout(), listing
-// #1, terms fixed at deploy). /ashwings/mint links here with ?rpc=&co= set.
-// Override per visit: ?rpc=&co=&listing=&relayer=<url|none>&net=test|main
+// Defaults target the public testnet: the checkout is the one the Ashwings
+// constructor creates (listing #1, terms fixed at deploy), read at load from
+// Ashwings.zecCheckout() on the Ashwings in
+// infra/testnet/deployments/sova-testnet.json. /ashwings/mint links here with
+// ?rpc=&co= set. No public relayer yet, so a wallet sends; the local box
+// relayer is ?relayer=http://127.0.0.1:8787 (tools/checkout-relayer).
+// Override per visit: ?rpc=&co=&ashw=&listing=&relayer=<url|none>&net=test|main
 const config = {
   rpc: SOVA_RPC,
-  checkout: '0x856e4424f806D16E8CBC702B3c0F2ede5468eae5',
+  chainId: TESTNET.chainId,
+  ashw: CONTRACTS.ashwings,
+  checkout: '',
   listing: 1,
-  relayer: 'http://127.0.0.1:8787',
+  relayer: '',
   net: 'test',
 };
 ---
 <Site
   title="Buy an Ashwing with ZEC"
-  description="Pay ZEC from any Zcash wallet, get an on-chain owl on Sova. No bridge: Sova reads the payment itself."
+  description="Pay ZEC from any Zcash wallet, get an on-chain owl on Sova. Sova verifies the payment on Zcash itself."
   current="/ashwings"
   cmd="./buy-owl --pay zec"
   status="demo · unlisted"
@@ -27,7 +32,7 @@ const config = {
 >
   <div id="buy" data-config={JSON.stringify(config)}>
     <h1>Pay ZEC. Get an owl.</h1>
-    <p class="lead">Any Zcash wallet. No bridge. Sova sees the payment.</p>
+    <p class="lead">Any Zcash wallet. Sova verifies the payment on Zcash itself.</p>
 
     <ol class="track" aria-label="Progress">
       <li data-s="cur">reserve</li>

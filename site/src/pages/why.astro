@@ -19,12 +19,12 @@ const who = [
   { h: 'ZEC holders.', t: 'Spend ZEC on contracts from the wallet you already use, shielded balance included. Or burn some and mine SOVA.' },
   { h: 'Builders.', t: 'Contracts that verify ZEC payments, with Solidity and standard EVM tooling.' },
   { h: 'Miners.', t: 'Any amount of ZEC mines. A laptop is enough.' },
-  { h: 'Agents.', t: 'Give an agent a budget: it mines its own gas and pays its own way.' },
+  { h: 'Agents.', t: 'Give an agent a budget and it mines its own gas.' },
 ];
 
 const wrapped = [
-  'An IOU. The real ZEC sits with a bridge, a multisig or a custodian, and the IOU is worth exactly what they are.',
-  'It lives on someone else’s chain: their gas token, their sequencer, their upgrade keys.',
+  'An IOU. The ZEC sits with a custodian, and the token is only as good as the custodian.',
+  'It lives on someone else’s chain, under their upgrade keys.',
 ];
 const sova = [
   'Contracts read Zcash itself: every node runs its own Zcash node.',
@@ -35,14 +35,13 @@ const sova = [
 
 const fair = [
   { h: 'No premine.', t: 'The genesis allocates nothing. The testnet’s is empty, and a test checks it. Mainnet’s will be too.' },
-  { h: 'No allocation.', t: 'Not to investors, not to the team, not to anyone.' },
-  { h: 'Nothing in escrow.', t: 'No treasury. Nothing held back for later.' },
+  { h: 'No allocation.', t: 'Investors and the team get none.' },
+  { h: 'Nothing in escrow.', t: 'No treasury.' },
 ];
 
 const plan = [
-  { when: 'first', h: 'Announcement.', t: 'Before the testnet.' },
-  { when: 'Oct 2026', h: 'Public testnet.', t: 'Mined with testnet ZEC.' },
-  { when: 'Q1 2027', h: 'Mainnet, expected.', t: 'When the testnet has earned it.' },
+  { when: 'now', h: 'Public testnet.', t: 'Live, mined with testnet ZEC.' },
+  { when: 'Q1 2027', h: 'Mainnet.', t: 'Expected.' },
 ];
 
 const grassroots = [
@@ -59,18 +58,18 @@ const fresh = [
   { h: 'Every node checks every mint.', t: 'Against its own Zcash node, synced history included.', proof: 'paper §7', href: '/paper#verification' },
   { h: 'The sealer ladder.', t: 'The top burner seals each block. If it is offline, the next in line seals after a short delay.', proof: 'paper §5', href: '/paper#sealing' },
   { h: 'Its own network protocol.', t: 'Peers announce and serve blocks. Only your own node moves its head.', proof: 'paper §6', href: '/paper#network' },
-  { h: 'Agent-native mining.', t: 'An MCP server gives an agent six tools and a hard budget.', proof: 'mine', href: '/mine#agent' },
+  { h: 'Mining by agent.', t: 'An MCP server gives an agent six tools and a hard budget.', proof: 'mine', href: '/mine#agent' },
 ];
 ---
 <Site
   title="Why Sova"
-  description="Sova is an EVM chain that reads Zcash: contracts verify ZEC payments on Zcash itself. Mined by burning ZEC, ordered by Zcash’s proof-of-work, run by anyone with a laptop."
+  description="Sova is an EVM chain that reads Zcash: contracts verify ZEC payments on Zcash itself. It is mined by burning ZEC, ordered by Zcash’s proof-of-work, and runs on a laptop."
   current="/why"
   cmd="sova --why"
-  status="pre-release · no public network yet"
+  status="pre-release · public testnet live"
 >
   <h1>Why Sova</h1>
-  <p class="lead">Zcash is private money that works. Sova lets programs react to it: an EVM chain whose contracts verify ZEC payments on Zcash itself, mined by burning ZEC and ordered by Zcash’s proof-of-work.</p>
+  <p class="lead">Sova is an EVM chain whose contracts read Zcash: they verify ZEC payments on Zcash itself. It is mined by burning ZEC and ordered by Zcash’s proof-of-work.</p>
 
   <h2>who it’s for</h2>
   <ul class="rows">
@@ -81,7 +80,7 @@ const fresh = [
   <ul class="rows fair">
     {fair.map((r) => <li><span class="mk">[0]</span><p><b>{r.h}</b> {r.t}</p></li>)}
   </ul>
-  <p class="edge">The only way SOVA comes into existence is by producing blocks. Burn ZEC, seal a block, earn SOVA. Whoever burns and seals earns it.</p>
+  <p class="edge">SOVA is created only by producing blocks. Whoever produces blocks earns it.</p>
   <p class="note"># The local box prefunds throwaway dev accounts. They never exist on a public network.</p>
 
   <h2>wrapped ZEC, or Sova</h2>
@@ -93,7 +92,7 @@ const fresh = [
   </div>
   <p>Contracts that read Zcash: <Tag k="testnet" /> built, in review. Contracts that watch Zcash’s value pools: <Tag k="planned" /> <a href="/sips#sip-7">SIP-7</a>.</p>
 
-  <h2>open by construction</h2>
+  <h2>open</h2>
   <ul class="rows">
     {grassroots.map((r) => <li><span class="mk">[x]</span><p><b>{r.h}</b> {r.t}</p></li>)}
   </ul>
@@ -111,10 +110,10 @@ const fresh = [
     ))}
   </ol>
 
-  <p class="edge">The EVM is public. Privacy lives at the funding edge: burn from the shielded pool and your SOVA need not link to you. <a class="proof" href="/paper#privacy">→ paper §9</a></p>
+  <p class="edge">The EVM is public. Privacy is at the funding edge: fund your burn from the shielded pool and the ledger does not link the SOVA to you. <a class="proof" href="/paper#privacy">→ paper §9</a></p>
 
   <h2>an experiment</h2>
-  <p class="warn">Sova is an experiment and a work in progress. Pre-release and unaudited. The code and the specs still change. Testnet state gets reset. Don’t put in money you can’t afford to lose.</p>
+  <p class="warn">Sova is an experiment: pre-release and unaudited. The code and the specs still change, and testnet state gets reset.</p>
 
   <h2>the plan</h2>
   <ol class="plan">

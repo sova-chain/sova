@@ -280,6 +280,9 @@ cmd_hosts() {
       echo "c5rejects $(sudo journalctl -u sova-node --since -1h --no-pager -q 2>/dev/null | grep -c "settlement mismatch")"
       echo "sip7feed $(sudo journalctl -u sova-node --no-pager -q 2>/dev/null | grep -c "sip-7 feed: sova_getZcashBlocks")"
       echo "sealer $(sudo journalctl -u sova-node --no-pager -q 2>/dev/null | grep -o "sip-6: sealing as 0x[0-9a-f]*" | tail -1 | awk "{print \$NF}")"
+      if systemctl is-enabled --quiet sova-node 2>/dev/null; then
+        echo "p2p $(sudo grep -c "^SOVA_P2P_PEERS=enode" /etc/sova/sova-node.env 2>/dev/null) $(sudo journalctl -u sova-node --since -5min --no-pager -q 2>/dev/null | grep -o "connected_peers=[0-9]*" | tail -1 | cut -d= -f2)"
+      fi
       sudo /usr/local/lib/sova-infra/health.sh 2>/dev/null | sed "s/^/health /"
     ' 2>&1)" || { bad "${name}: ssh failed"; continue; }
     while read -r kind a b rest; do
@@ -294,6 +297,18 @@ cmd_hosts() {
           fi
           ;;
         sealer) [[ "${role}" == keeper && "${SOVA_SIP6}" == 1 ]] && check_keeper_sealer "${name}" "${a:-}" ;;
+        p2p)
+          # Private hosts can't be dialled (firewall: SSH only), so they
+          # must dial the seeds themselves: without SOVA_P2P_PEERS a seed
+          # restart leaves them isolated for good (2026-09-25: the keeper
+          # sealed alone for ~20 min after a snapshot restarted the seed).
+          if [[ "${role}" != seed ]]; then
+            [[ "${a:-0}" -ge 1 ]] && ok "${name}: static-peers the seeds (SOVA_P2P_PEERS)" ||
+              bad "${name}: no SOVA_P2P_PEERS: it won't re-dial a restarted seed (re-run deploy.sh)"
+          fi
+          [[ "${b:-0}" -gt 0 ]] && ok "${name}: ${b} P2P peer(s) connected" ||
+            bad "${name}: 0 P2P peers in its last status line (isolated: blocks don't flow)"
+          ;;
         health) [[ "${a}" == ALERT ]] && bad "${name}: ${a} ${b} ${rest}" || ok "${name}: ${a} ${b} ${rest}" ;;
       esac
     done <<<"${out}"

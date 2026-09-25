@@ -29,7 +29,7 @@ const embers = [
 ---
 <Direction
   title="Sova: every SOVA began as burned ZEC"
-  description="Every SOVA began as burned ZEC. An EVM sidechain for Zcash, one block per Zcash block. Permissionless, oracle-less, self-custody."
+  description="Every SOVA began as burned ZEC. An EVM sidechain for Zcash, one block per Zcash block. Permissionless, verifiable, self-custody."
   preload={['mono']}
   theme="#110c08"
 >
@@ -46,7 +46,7 @@ const embers = [
     <section class="hero">
       <div class="copy">
         <h1>Every <span class="gold">SOVA</span> began as <span class="ember">burned ZEC.</span></h1>
-        <p class="sub">An EVM sidechain for Zcash.<br /><span>Permissionless.</span> <span>Oracle-less.</span> <span>Self-custody.</span></p>
+        <p class="sub">An EVM sidechain for Zcash.<br /><span>Permissionless.</span> <span>Verifiable.</span> <span>Self-custody.</span></p>
         <p class="eq" aria-label="ZEC is sent to an unspendable script, and SOVA is minted.">
           <span class="ember">ZEC</span> <span class="ar">→</span> <code>76a914 00…00 88ac</code> <span class="ar">→</span> <span class="gold">SOVA</span>
         </p>
@@ -107,7 +107,7 @@ const embers = [
       {steps.map((s) => <li><span class="n">{s.n}</span><b>{s.t}</b><span class="d">{s.d}</span></li>)}
     </ol>
 
-    <TestnetStats label="testnet, live" note="Numbers go live with the public testnet." />
+    <TestnetStats label="testnet, live" />
 
     <nav class="doors" aria-label="Get started">
       {doors.map((d) => <a href={d.href}><b>{d.h} →</b><span>{d.t}</span></a>)}

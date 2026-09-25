@@ -28,7 +28,7 @@ const pairs = Array.from({ length: N }, (_, i) => ({ x: X0 + i * STEP, i }));
 ---
 <Direction
   title="Sova: the EVM that reads Zcash"
-  description="The EVM that reads Zcash. An EVM sidechain whose every node runs a Zcash node; its gas, SOVA, is issued only by burning ZEC. Permissionless, oracle-less, self-custody."
+  description="The EVM that reads Zcash. An EVM sidechain whose every node runs a Zcash node; its gas, SOVA, is issued only by burning ZEC. Permissionless, verifiable, self-custody."
   theme="#d9d5cc"
 >
   <link slot="head" rel="preload" href="/fonts/paper-serif-roman.woff2" as="font" type="font/woff2" crossorigin />
@@ -50,7 +50,7 @@ const pairs = Array.from({ length: N }, (_, i) => ({ x: X0 + i * STEP, i }));
       <p class="abstract"><b>Abstract.</b> Sova is an EVM sidechain whose every node runs a Zcash node, so a contract
         can check a ZEC payment against Zcash itself. Its gas, SOVA, is issued only by burning ZEC, one Sova block
         per Zcash block.</p>
-      <p class="props"><i>Permissionless. Oracle-less. Self-custody.</i></p>
+      <p class="props"><i>Permissionless. Verifiable. Self-custody.</i></p>
 
       <figure class="fig">
         <svg viewBox="0 0 360 150" role="img" aria-labelledby="f1-t">
@@ -74,7 +74,7 @@ const pairs = Array.from({ length: N }, (_, i) => ({ x: X0 + i * STEP, i }));
 
       <div class="tbl">
         <p class="cap"><b>Table 1.</b> The public testnet, live.</p>
-        <TestnetStats label="" note="Filled in when the public testnet starts." />
+        <TestnetStats label="" />
       </div>
 
       <nav class="toc" aria-label="Contents">

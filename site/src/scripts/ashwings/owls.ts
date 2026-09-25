@@ -4,10 +4,11 @@
 // contract's own tokenURI.
 //
 // Config: the page's data-config, overridden by ?rpc=&ashw=&market=&relayer=
-// (defaults: the local box after box/deploy-dapps.sh).
-import { RpcError, rpc, u256, addrWord, calldata, words, num, asAddr, dynBytes, utf8 } from '../checkout/chain';
+// (defaults: the public testnet, contracts from
+// infra/testnet/deployments/sova-testnet.json).
+import { RpcError, rpc, useChain, u256, addrWord, calldata, words, num, asAddr, dynBytes, utf8 } from '../checkout/chain';
 
-export type Cfg = { rpc: string; ashw: string; market: string; relayer: string };
+export type Cfg = { rpc: string; chainId?: number; ashw: string; market: string; relayer: string };
 export type Owl = { id: bigint; name: string; image: string; traits: string; owner: string };
 export type Sale = { id: bigint; seller: string; price: bigint };
 
@@ -63,6 +64,7 @@ export function config(root: HTMLElement): Cfg {
   const base = JSON.parse(root.dataset.config || '{}') as Cfg;
   return {
     rpc: q.get('rpc') || base.rpc,
+    chainId: base.chainId,
     ashw: q.get('ashw') || base.ashw,
     market: q.get('market') || base.market,
     relayer: q.get('relayer') || base.relayer || '',
@@ -161,10 +163,7 @@ export const eth = (window as any).ethereum as Eth | undefined;
 export async function connect(c: Cfg): Promise<string> {
   if (!eth) throw new Error('no wallet in this browser');
   const [a] = await eth.request({ method: 'eth_requestAccounts' });
-  const chain = await rpc<string>(c.rpc, 'eth_chainId');
-  if ((await eth.request({ method: 'eth_chainId' })) !== chain) {
-    await eth.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: chain }] });
-  }
+  await useChain(eth, c.rpc, c.chainId);
   return a;
 }
 

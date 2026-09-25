@@ -19,8 +19,8 @@
 //! would dial mainnet bootnodes the moment discovery is on. The profile
 //! therefore always sets the list explicitly: `SOVA_BOOTNODES`
 //! (comma-separated enode/enr records) if given, else
-//! [`SOVA_TESTNET_BOOTNODES`] (empty until a release compiles in the
-//! launch list that `infra/testnet/bootnodes.sh` prints).
+//! [`SOVA_TESTNET_BOOTNODES`] (the launch list that
+//! `infra/testnet/bootnodes.sh` prints).
 //! Whether discovery runs at all is [`crate::discovery`]'s call (on for
 //! non-dev p2p nodes, which refuse to start with an unpinned list).
 
@@ -59,11 +59,14 @@ pub(crate) const SOVA_TESTNET_GENESIS_EXTRA_DATA: &[u8] = b"sova-testnet-v0";
 /// this changes no EVM rule, only the genesis hash.
 pub(crate) const SOVA_TESTNET_GENESIS_TIMESTAMP: u64 = 1_788_220_800;
 
-/// Default testnet bootnodes (enode/enr strings). Empty until a release
-/// compiles in the launch list `infra/testnet/bootnodes.sh` prints; an
-/// explicit empty list is what keeps reth from falling back to Ethereum
-/// mainnet's bootnodes. `SOVA_BOOTNODES` overrides it.
-pub(crate) const SOVA_TESTNET_BOOTNODES: &[&str] = &[];
+/// Default testnet bootnodes (enode/enr strings): the launch list
+/// `infra/testnet/bootnodes.sh` prints. Always an explicit list, never
+/// reth's default, which would be Ethereum mainnet's bootnodes.
+/// `SOVA_BOOTNODES` overrides it.
+pub(crate) const SOVA_TESTNET_BOOTNODES: &[&str] = &[
+    // sova-seed-1 (seed-1.testnet.sova.io), from `bootnodes.sh`, 2026-09-25.
+    "enode://4788bec82fa9559623dd997cd97a01d0203fc8b419712f3fcfbb186b006496c5896be5daaa9bdabb9d8adaa950b3c6e7a66278d936a30338d1497639be25c17f@2.28.138.164:30303",
+];
 
 /// Built-in testnet checkpoints, `(Sova height, block hash)` (audit F2
 /// measure B, `docs/design/f2-join-and-restart.md` §B). Empty at launch:

@@ -1,32 +1,35 @@
 ---
-// Live testnet stats slot for the homepage directions: block height, burns,
-// SOVA minted. Until the public testnet runs, every value is a placeholder
-// (data-placeholder="testnet-stats"; site/README.md, "Still at launch").
-// Each value carries data-stat={key} so a later script can fill it from
-// Sova RPC. Colours and font come from the page through custom properties:
+// Live testnet stats for the homepage directions: Sova height, anchored Zcash
+// height, age of the last block. scripts/testnet-stats.ts fills each
+// data-stat={key} in the browser from the public RPC (two calls per page
+// view); the `------` placeholders stay with no JS or when the RPC can't be
+// read. Colours and font come from the page through custom properties:
 // --ts-fg, --ts-dim, --ts-accent, --ts-line, --ts-font.
-import { testnetStats } from '../data/sova';
+import { testnetStats, SOVA_RPC } from '../data/sova';
 
 interface Props {
   /** Heading above the numbers, in the page's voice ("" for none). */
   label?: string;
-  /** Note under the numbers while they are placeholders. */
-  note?: string;
 }
-const { label = 'testnet, live', note = 'Numbers appear here when the public testnet starts.' } = Astro.props;
+const { label = 'testnet, live' } = Astro.props;
+const host = new URL(SOVA_RPC).host;
 ---
-<section class="ts" aria-label="Testnet stats" data-placeholder="testnet-stats">
+<section class="ts" aria-label="Testnet stats" data-rpc={SOVA_RPC}>
   {label && <p class="ts-h"><span class="ts-dot" aria-hidden="true"></span>{label}</p>}
   <dl class="ts-grid">
     {testnetStats.map((s) => (
       <div class="ts-cell">
         <dt>{s.label}</dt>
-        <dd data-stat={s.key}><span class="ts-ph" aria-hidden="true">------</span><span class="sr">waiting for the testnet</span></dd>
+        <dd data-stat={s.key}><span class="ts-ph" aria-hidden="true">------</span><span class="sr">not read yet</span></dd>
       </div>
     ))}
   </dl>
-  <p class="ts-note">{note}</p>
+  <p class="ts-note">read live from {host}</p>
 </section>
+
+<script>
+  import '../scripts/testnet-stats';
+</script>
 
 <style>
   .ts {
@@ -46,10 +49,11 @@ const { label = 'testnet, live', note = 'Numbers appear here when the public tes
     display: inline-block; width: 7px; height: 7px; border-radius: 50%;
     border: 1px solid var(--dim); margin-right: 8px; vertical-align: 1px;
   }
+  .ts[data-live='1'] .ts-dot { background: var(--accent); border-color: var(--accent); }
   .ts-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 16px; margin: 0; }
   .ts-cell { min-width: 0; }
   .ts dt { font-size: 12px; color: var(--dim); margin: 0 0 2px; }
-  .ts dd { margin: 0; font-size: clamp(18px, 4.6vw, 26px); line-height: 1.2; font-variant-numeric: tabular-nums; color: var(--accent); }
+  .ts dd { margin: 0; font-size: clamp(15px, 4.6vw, 26px); line-height: 1.2; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--accent); }
   .ts-ph { color: var(--dim); letter-spacing: 0.06em; animation: ts-wait 2.4s ease-in-out infinite; }
   .ts-cell:nth-child(2) .ts-ph { animation-delay: 0.3s; }
   .ts-cell:nth-child(3) .ts-ph { animation-delay: 0.6s; }

@@ -24,23 +24,14 @@ A laptop (Linux x86_64 or Apple Silicon Mac) or a small VPS is enough.
 
 ## Filled at launch
 
-Values marked `<<LIKE_THIS>>` exist only once the testnet is launched.
-Maintainers: replace each one before publishing this guide, then delete
+The testnet is live and the network's values are filled in. The one
+still marked `<<LIKE_THIS>>` comes after launch: the keeper
+disclosure. Maintainers: replace each one when it exists, then delete
 this section.
 
 | Placeholder | What it is | Produced by |
 | --- | --- | --- |
-| `<<RELEASE_TAG>>` | The release tag the network runs (the kit's value is `v0.1.0`) | `SOVA_RELEASE_TAG` in `infra/testnet/config.env`; the release assets come from the `box-binaries` workflow on that tag push (`docs/ops/testnet-launch.md`, B0) |
-| `<<DL_URL>>` | Base URL of the download host (join files and snapshots) | `DL_HOST` in `config.env`, made live by `cloudflare.sh r2`; files uploaded by `publish.sh join` |
-| `<<GENESIS_HASH>>` | The genesis hash every node must boot | `bootnodes.sh` (`genesis_hash` in `seeds.json`, and the header of `testnet.env`), taken from each node host's `sova genesis-hash` |
-| `<<BOOTNODES>>` | The comma-separated enode list | `bootnodes.sh` (`SOVA_BOOTNODES` in `testnet.env`, `bootnodes.txt`, `seeds.json`) |
-| `<<EPOCH_BASE>>` | B, the first Zcash testnet height that is a Sova epoch | `epoch-base.sh pin`, published by `bootnodes.sh` in `testnet.env` and `seeds.json`; its hash recorded by `epoch-base.sh record` (`epoch-base.json`) |
-| `<<RPC_URL>>` | The project's public RPC | `cloudflare.sh tunnels` + `cloudflare.sh worker`; listed by `bootnodes.sh` as `courtesy.rpc` in `seeds.json` |
-| `<<FAUCET_URL>>` | The TAZ faucet | `cloudflare.sh tunnels`; listed by `bootnodes.sh` as `courtesy.faucet` in `seeds.json` |
-| `<<SNAPSHOT_URL>>` | The directory holding the latest zebrad snapshot (`<<DL_URL>>/zebrad-testnet/<height>/`) | `publish.sh snapshot` (also writes `zebrad-testnet/latest.json`) |
-| `<<SNAPSHOT_HEIGHT>>`, `<<SNAPSHOT_HASH>>`, `<<SNAPSHOT_SHA256>>` | That snapshot's block height, block hash and archive SHA-256, posted somewhere other than the download bucket | `publish.sh snapshot` prints `snapshot.json`; posting it outside the bucket is the step in `docs/ops/snapshots.md` |
 | `<<KEEPER_DISCLOSURE>>` | Where the project's keeper-miner disclosure (its addresses and budget) is posted | `deploy.sh` records the addresses (`out/servers/sova-keeper-1.keeper_*`); text template in `docs/ops/keeper-miner.md` |
-| `<<EXPLORER_URL>>` | A block explorer for the testnet | No kit script. Otterscan is still an open M1 item (`docs/ops/testnet-launch.md`, step 9). If none exists at launch, delete the lines that use it |
 
 ---
 
@@ -122,7 +113,7 @@ Get `snapshot.sh` from a checkout of the repo at the release tag:
 
 ```bash
 git clone https://github.com/sova-chain/sova ~/.sova-testnet/src
-git -C ~/.sova-testnet/src checkout <<RELEASE_TAG>>
+git -C ~/.sova-testnet/src checkout v0.1.3
 SNAP=~/.sova-testnet/src/box/testnet/snapshot.sh
 ```
 
@@ -130,21 +121,21 @@ Download the three files into one directory:
 
 ```bash
 mkdir -p ~/.sova-testnet/snapshot && cd ~/.sova-testnet/snapshot
-curl -fLO <<SNAPSHOT_URL>>/zebrad-testnet-<<SNAPSHOT_HEIGHT>>.tar.zst
-curl -fLO <<SNAPSHOT_URL>>/SHA256SUMS
-curl -fLO <<SNAPSHOT_URL>>/snapshot.json
+curl -fLO https://dl.testnet.sova.io/zebrad-testnet/4390524/zebrad-testnet-4390524.tar.zst
+curl -fLO https://dl.testnet.sova.io/zebrad-testnet/4390524/SHA256SUMS
+curl -fLO https://dl.testnet.sova.io/zebrad-testnet/4390524/snapshot.json
 jq -r '.height, .hash, .sha256, .zebra_version' snapshot.json
 ```
 
-The height, hash and SHA-256 must equal `<<SNAPSHOT_HEIGHT>>`,
-`<<SNAPSHOT_HASH>>` and `<<SNAPSHOT_SHA256>>`, the copy posted outside
+The height, hash and SHA-256 must equal `4390524`,
+`000007d5b1a082776d85c9bc5eabc0b093110675c33c78d9eb78c5b0449a57bb` and `e78e551d89b66a07b6623b3eb02ea71c5adf532addd510e59b55717adfd2c4a3`, the copy posted outside
 the download bucket. A checksum that only sits next to the file proves
 the download wasn't corrupted, not who made it.
 
 Restore into the empty state directory:
 
 ```bash
-bash "$SNAP" restore zebrad-testnet-<<SNAPSHOT_HEIGHT>>.tar.zst ~/.sova-testnet/zebrad-state
+bash "$SNAP" restore zebrad-testnet-4390524.tar.zst ~/.sova-testnet/zebrad-state
 ```
 
 It checks `SHA256SUMS`, checks that `snapshot.json` belongs to this
@@ -217,7 +208,7 @@ tarball holds `sova`, `sova-miner`, `SHA256SUMS` and `BUILD-INFO`.
 
 ```bash
 cd ~/.sova-testnet
-TAG=<<RELEASE_TAG>>
+TAG=v0.1.3
 PLATFORM=linux-x86_64          # or darwin-arm64
 BASE=https://github.com/sova-chain/sova/releases/download/$TAG
 curl -fLO "$BASE/SHA256SUMS"
@@ -235,7 +226,7 @@ won't start on an older distribution, build from source.
 
 ```bash
 git clone https://github.com/sova-chain/sova ~/.sova-testnet/src   # skip if you cloned in 1b
-cd ~/.sova-testnet/src && git checkout <<RELEASE_TAG>>
+cd ~/.sova-testnet/src && git checkout v0.1.3
 cargo build --release --locked -p sova
 cargo build --release --locked -p sova-miner --manifest-path crates/burn-wallet/Cargo.toml
 install -m 0755 target/release/sova crates/burn-wallet/target/release/sova-miner ~/.sova-testnet/bin/
@@ -248,8 +239,8 @@ install -m 0755 target/release/sova crates/burn-wallet/target/release/sova-miner
 
 ```bash
 cd ~/.sova-testnet
-curl -fsSLO <<DL_URL>>/testnet.env
-curl -fsSLO <<DL_URL>>/seeds.json
+curl -fsSLO https://dl.testnet.sova.io/testnet.env
+curl -fsSLO https://dl.testnet.sova.io/seeds.json
 ```
 
 `testnet.env` holds the network's settings. Every node must use the same
@@ -258,11 +249,11 @@ values for these:
 ```
 SOVA_CHAIN=sova-testnet
 SOVA_GOSSIP=p2p
-SOVA_EPOCH_BASE=<<EPOCH_BASE>>
+SOVA_EPOCH_BASE=4388500
 SOVA_EMISSION_SCHEDULE=flat
 SOVA_SIP6=1
 SOVA_SIP7=1
-SOVA_BOOTNODES=<<BOOTNODES>>
+SOVA_BOOTNODES=enode://4788bec82fa9559623dd997cd97a01d0203fc8b419712f3fcfbb186b006496c5896be5daaa9bdabb9d8adaa950b3c6e7a66278d936a30338d1497639be25c17f@2.28.138.164:30303
 ```
 
 Below its `---- yours ----` line are two values of your own:
@@ -287,7 +278,7 @@ jq -r .genesis_hash seeds.json
 
 `sova genesis-hash` prints the genesis your node would boot with this
 env, and exits without starting anything. It must print
-`<<GENESIS_HASH>>`, and so must `seeds.json`. If it doesn't, you have a
+`0xb7391a4a83644e1dce95c95348a005febedeaa12fa46eb30ac0dfb5f36f00b71`, and so must `seeds.json`. If it doesn't, you have a
 different release or a different `SOVA_SIP7`, and you'd be on another
 chain: peers filter it out.
 
@@ -320,7 +311,7 @@ datadir: .../.sova-testnet/node (persistent; node key .../.sova-testnet/node/dis
 chain profile: sova-testnet (chain ID 82330, 1 genesis alloc account(s))
 p2p: sova/1 gossip enabled; local enode enode://...
 p2p: discovery on (discv4 + discv5 on udp 0.0.0.0:30303; dns off; enforce ENR fork id true; nat any; N bootnode(s), no mainnet fallback)
-expectations: enforcing settlements against zebrad at http://127.0.0.1:18232 (epoch base <<EPOCH_BASE>>)
+expectations: enforcing settlements against zebrad at http://127.0.0.1:18232 (epoch base 4388500)
 follow-only mode: no local mining; serving RPC on :8545, receiving blocks over sova/1
 ```
 
@@ -333,12 +324,12 @@ The one genesis account is SIP-7's `ZcashBlocks` contract at
 
 ```bash
 rpc http://127.0.0.1:8545 eth_chainId                                   # "0x1419a" = 82330
-rpc http://127.0.0.1:8545 eth_getBlockByNumber '["0x0",false]' | jq -r .result.hash   # <<GENESIS_HASH>>
+rpc http://127.0.0.1:8545 eth_getBlockByNumber '["0x0",false]' | jq -r .result.hash   # 0xb7391a4a83644e1dce95c95348a005febedeaa12fa46eb30ac0dfb5f36f00b71
 rpc http://127.0.0.1:8545 eth_blockNumber | jq -r .result
 ```
 
 Sova block N anchors Zcash height N + B − 1, so a caught-up node's head
-is about your zebrad tip − `<<EPOCH_BASE>>` + 1. A new node catches up
+is about your zebrad tip − `4388500` + 1. A new node catches up
 only as far as its own zebrad has scanned: every block it syncs is
 checked against your Zcash view first.
 
@@ -347,7 +338,7 @@ Compare a block hash with the public RPC at the same height:
 ```bash
 H=$(rpc http://127.0.0.1:8545 eth_blockNumber | jq -r .result)
 rpc http://127.0.0.1:8545 eth_getBlockByNumber "[\"$H\",false]" | jq -r .result.hash
-rpc <<RPC_URL>> eth_getBlockByNumber "[\"$H\",false]" | jq -r .result.hash
+rpc https://rpc.testnet.sova.io eth_getBlockByNumber "[\"$H\",false]" | jq -r .result.hash
 ```
 
 The two hashes match. Your node is now verifying the testnet.
@@ -378,12 +369,12 @@ Keep it that way, and back it up if you care about the address.
 ### 3b. Get TAZ from the faucet
 
 ```bash
-curl -s -X POST -d '{"address":"tm..."}' <<FAUCET_URL>>/drip
+curl -s -X POST -d '{"address":"tm..."}' https://faucet.testnet.sova.io/drip
 ```
 
 It sends 0.1 TAZ (10,000,000 zat) and answers with a `txid`. Limits: one
 drip per address and one per IP per 24 hours, a daily cap for everyone,
-and a transparent address (`tm…`) only. `curl -s <<FAUCET_URL>>/status`
+and a transparent address (`tm…`) only. `curl -s https://faucet.testnet.sova.io/status`
 shows whether it's accepting drips.
 
 The drip can be spent once it's in a block, about one Zcash block after
@@ -426,8 +417,8 @@ about 330.
 
 - On this testnet, every epoch pays a flat **6,250 SOVA**
   (`SOVA_EMISSION_SCHEDULE=flat`).
-- A burn in Zcash block `h` (at or after `<<EPOCH_BASE>>`) belongs to
-  epoch `h`, paid in Sova block `h − <<EPOCH_BASE>> + 1`.
+- A burn in Zcash block `h` (at or after `4388500`) belongs to
+  epoch `h`, paid in Sova block `h − 4388500 + 1`.
 - Burners are ranked by ZEC burned in that epoch, most first; ties go to
   the smallest txid. The top-ranked burner seals the block. If it doesn't
   within 15 seconds, the next rank may, and so on.
@@ -477,7 +468,7 @@ Look for:
 
 ```
 sip-6: sealing as 0x<your evm address>
-mine mode: following zebrad at http://127.0.0.1:18232, epoch base <<EPOCH_BASE>>, one Sova block per Zcash block
+mine mode: following zebrad at http://127.0.0.1:18232, epoch base 4388500, one Sova block per Zcash block
 ```
 
 The address must be the `evm address` that `init` printed. Rules:
@@ -524,10 +515,10 @@ python3 -c 'import sys; print(int(sys.argv[1], 16) / 10**18, "SOVA")' 0x<result>
 The balance is in wei: `0x152d02c7e14af680000` is 6,250 SOVA.
 
 **Which blocks paid you.** Payouts are the block's withdrawals. For a
-burn at Zcash height `h`, look at Sova block `h − <<EPOCH_BASE>> + 1`:
+burn at Zcash height `h`, look at Sova block `h − 4388500 + 1`:
 
 ```bash
-N=$(( h - <<EPOCH_BASE>> + 1 ))
+N=$(( h - 4388500 + 1 ))
 rpc http://127.0.0.1:8545 eth_getBlockByNumber "[\"$(printf '0x%x' $N)\",false]" \
   | jq '.result | {miner, extraData, withdrawals}'
 ```
@@ -543,8 +534,8 @@ sova-miner --data-dir ~/.sova-testnet/miner export-evm-key --i-understand
 
 It prints the key on stdout. Anyone who sees it can take both your SOVA
 and your TAZ. Import it into an EVM wallet and add the network: chain ID
-`82330`, currency `SOVA`, RPC `<<RPC_URL>>` (or your own
-`http://127.0.0.1:8545`), explorer `<<EXPLORER_URL>>`.
+`82330`, currency `SOVA`, RPC `https://rpc.testnet.sova.io` (or your own
+`http://127.0.0.1:8545`).
 
 The public RPC is read-and-broadcast only (no signing, no admin or
 debug methods) and allows 50 requests per 10 seconds per IP. Your own
@@ -581,11 +572,11 @@ node has no such limit.
 | `SOVA_SIP6=1 mine mode requires SOVA_SEALER_KEYSTORE` and the node exits | `SOVA_FOLLOW_ONLY` was unset without a keystore | Keep `SOVA_FOLLOW_ONLY=1` (2d), or set `SOVA_SEALER_KEYSTORE` (4) |
 | `no SOVA_ZEBRAD_RPC: importing without settlement enforcement (C5 off)` | The env didn't reach `sova` | Run `. ./testnet.env` in the same shell that starts `sova` |
 | `usage: sova ...` and the node exits | An argument other than `genesis-hash` | `sova` takes no arguments; everything is `SOVA_*` env |
-| `sova genesis-hash` or block 0 isn't `<<GENESIS_HASH>>` | Wrong release, or `SOVA_SIP7` isn't `1` | Use `<<RELEASE_TAG>>` and the unedited `testnet.env` |
+| `sova genesis-hash` or block 0 isn't `0xb7391a4a83644e1dce95c95348a005febedeaa12fa46eb30ac0dfb5f36f00b71` | Wrong release, or `SOVA_SIP7` isn't `1` | Use `v0.1.3` and the unedited `testnet.env` |
 | `0 bootnode(s)` in the discovery line, or never `sova/1: peer active` | `SOVA_BOOTNODES` empty or not exported, or outbound `30303` blocked | Check `echo $SOVA_BOOTNODES`; allow outbound TCP and UDP `30303` |
 | `bad SOVA_BOOTNODES entry` | A mangled enode | Copy the line from `testnet.env` exactly |
 | Head stays low while peers are connected | Your zebrad isn't synced: the node syncs only as far as its zebrad has scanned | Finish 1d |
-| Head stopped moving | Compare `eth_blockNumber` with `<<RPC_URL>>`. If the public RPC is stuck too, the network is waiting for a sealer, not you | Nothing to fix locally. Running a sealing node (4) helps |
+| Head stopped moving | Compare `eth_blockNumber` with `https://rpc.testnet.sova.io`. If the public RPC is stuck too, the network is waiting for a sealer, not you | Nothing to fix locally. Running a sealing node (4) helps |
 | `settlement mismatch at height ...` | A block contradicts your own zebrad | Check your zebrad is on Zcash testnet and synced. If you restored a snapshot, re-check its hash with an explorer; if in doubt, full-sync |
 | `SOVA_EPOCH_BASE is required for sova-testnet` or `... contradicts the sova-testnet epoch base` | The env didn't carry the network's B, or carries another | Use the unedited `testnet.env` (a release that knows B needs none) |
 | zebrad RPC refuses connections | Container down, or RPC not reachable | `docker ps`; `docker logs zebrad`; keep `listen_addr = "0.0.0.0:18232"` inside the container and `-p 127.0.0.1:18232:18232` |
@@ -596,7 +587,7 @@ node has no such limit.
 | `zcash chain RESET detected` from `sova-miner` | Pointed at an unsynced zebrad or another network | Mine only against a synced testnet zebrad, always with `--network test` |
 | Faucet `429` `address_cooldown`, `ip_cooldown`, `daily_cap_reached` | A limit was hit | Wait for `Retry-After` |
 | Faucet `503` `busy` | Every faucet coin is in an unmined drip | Retry after the next block |
-| Burns confirm but no SOVA arrives | Your epochs had no ranked sealer (null blocks), or they were before `<<EPOCH_BASE>>`, or the credit address is `LEGACY` | Seal yourself (4); check `report` for a `WARNING`; check the block's withdrawals (5) |
+| Burns confirm but no SOVA arrives | Your epochs had no ranked sealer (null blocks), or they were before `4388500`, or the credit address is `LEGACY` | Seal yourself (4); check `report` for a `WARNING`; check the block's withdrawals (5) |
 
 Still stuck: open an issue at `github.com/sova-chain/sova/issues` with
 your `node.log` lines, or ask in `t.me/sovazec`.
@@ -638,11 +629,11 @@ your `node.log` lines, or ask in `t.me/sovazec`.
 | --- | --- | --- |
 | `SOVA_CHAIN` | `sova-testnet` | Chain ID 82330, empty genesis alloc |
 | `SOVA_GOSSIP` | `p2p` | Blocks travel over devp2p (`sova/1`); needed for discovery |
-| `SOVA_EPOCH_BASE` | `<<EPOCH_BASE>>` | Consensus: same on every node |
+| `SOVA_EPOCH_BASE` | `4388500` | Consensus: same on every node |
 | `SOVA_EMISSION_SCHEDULE` | `flat` | Consensus: 6,250 SOVA per epoch |
 | `SOVA_SIP6` | `1` | Consensus: sealed or null blocks only |
 | `SOVA_SIP7` | `1` | Consensus: part of the genesis |
-| `SOVA_BOOTNODES` | `<<BOOTNODES>>` | Comma-separated enodes |
+| `SOVA_BOOTNODES` | `enode://4788bec82fa9559623dd997cd97a01d0203fc8b419712f3fcfbb186b006496c5896be5daaa9bdabb9d8adaa950b3c6e7a66278d936a30338d1497639be25c17f@2.28.138.164:30303` | Comma-separated enodes |
 | `SOVA_ZEBRAD_RPC` | `http://127.0.0.1:18232` | Your zebrad |
 | `SOVA_DATADIR` | `$HOME/.sova-testnet/node` | Chain, node key, seal journal |
 | `SOVA_FOLLOW_ONLY` | `1` (the `testnet.env` default) | Unset to seal |

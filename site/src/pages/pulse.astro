@@ -24,7 +24,7 @@ const rows = [
 ---
 <Site
   title="Zcash pulse"
-  description="Zcash's shielded pools, read live by Sova every block. No oracle."
+  description="Zcash's shielded pool totals, read by Sova every block from its own Zcash node."
   current="/pulse"
   cmd="./zcash --pulse"
   status="demo · unlisted"
@@ -32,7 +32,7 @@ const rows = [
 >
   <div id="pulse" data-config={JSON.stringify(config)}>
     <h1>Zcash pulse</h1>
-    <p class="lead">Every shielded zatoshi, read by Sova. No oracle.</p>
+    <p class="lead">Zcash’s shielded pool totals, read by Sova every block.</p>
 
     <p id="tick" class="tick">
       <span id="dot" class="dot" aria-hidden="true"></span>

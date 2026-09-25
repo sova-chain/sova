@@ -59,7 +59,7 @@ const css = [
 ---
 <Direction
   title="Sova: burn ZEC, mine SOVA"
-  description="Burn ZEC, mine SOVA, on your laptop. An EVM sidechain with one block per Zcash block. Permissionless, oracle-less, self-custody."
+  description="Burn ZEC, mine SOVA, on your laptop. An EVM sidechain with one block per Zcash block. Permissionless, verifiable, self-custody."
   preload={['mono']}
   theme="#0c0a07"
 >
@@ -72,14 +72,14 @@ const css = [
         {WORDMARK_PATHS.map((d) => <path fill="currentColor" d={d} />)}
       </svg>
     </a>
-    <span class="state">pre-release · local today · testnet next</span>
+    <span class="state">pre-release · public testnet live</span>
   </header>
 
   <main id="main">
     <section class="hero">
       <h1><span>Burn ZEC.</span> <span>Mine SOVA.</span> <span class="hl">On your laptop.</span></h1>
       <p class="sub">An EVM sidechain, one block per Zcash block.</p>
-      <p class="props"><span>Permissionless.</span> <span>Oracle-less.</span> <span>Self-custody.</span></p>
+      <p class="props"><span>Permissionless.</span> <span>Verifiable.</span> <span>Self-custody.</span></p>
     </section>
 
     <figure class="tty">
@@ -111,7 +111,7 @@ const css = [
       <figcaption>Every Zcash block gets one Sova block. Blocks with a burn mint SOVA.</figcaption>
     </figure>
 
-    <TestnetStats label="testnet, live" note="Numbers go live with the public testnet." />
+    <TestnetStats label="testnet, live" />
 
     <nav class="doors" aria-label="Get started">
       {doors.map((d) => (

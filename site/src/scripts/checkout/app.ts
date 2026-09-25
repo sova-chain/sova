@@ -1,14 +1,15 @@
 // /ashwings/buy: reserve an Ashwing, pay ZEC, claim once Sova sees it.
 // Config comes from the page's data-config, overridden by query params:
-//   ?rpc=<sova rpc>&co=<checkout>&listing=<id>&relayer=<url|none>&net=test|main
+//   ?rpc=<sova rpc>&co=<checkout>&ashw=<ashwings>&listing=<id>&relayer=<url|none>&net=test|main
+// With no checkout set, it is the Ashwings' own (Ashwings.zecCheckout()).
 // The order id and txid live in the URL (?r=&tx=) so a reload resumes.
 import { qrSvg } from './qr';
 import {
-  ZCASH, ZERO_ADDR, SEL, TOPIC, rpc, reason, u256, addrWord, b32, calldata, words, num, asAddr,
+  ZCASH, ZERO_ADDR, SEL, TOPIC, rpc, useChain, reason, u256, addrWord, b32, calldata, words, num, asAddr,
   dynBytes, utf8, payeeScript, tAddr, zec,
 } from './chain';
 
-type Cfg = { rpc: string; checkout: string; listing: number; relayer: string; net: 'test' | 'main' };
+type Cfg = { rpc: string; chainId?: number; ashw: string; checkout: string; listing: number; relayer: string; net: 'test' | 'main' };
 type Resv = {
   recipient: string; quote: bigint; minConf: number; p2sh: boolean; filled: boolean;
   hash: string; reservedAt: bigint; window: bigint;
@@ -20,6 +21,8 @@ const q = new URLSearchParams(location.search);
 const base = JSON.parse(root.dataset.config || '{}') as Cfg;
 const cfg: Cfg = {
   rpc: q.get('rpc') || base.rpc,
+  chainId: base.chainId,
+  ashw: q.get('ashw') || base.ashw,
   checkout: q.get('co') || base.checkout,
   listing: Number(q.get('listing') || base.listing),
   relayer: q.get('relayer') === 'none' ? '' : (q.get('relayer') || base.relayer).replace(/\/$/, ''),
@@ -86,10 +89,7 @@ async function receipt(hash: string) {
 }
 
 async function walletSend(data: string) {
-  const chain = await rpc<string>(cfg.rpc, 'eth_chainId');
-  if ((await eth!.request({ method: 'eth_chainId' })) !== chain) {
-    await eth!.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: chain }] });
-  }
+  await useChain(eth!, cfg.rpc, cfg.chainId);
   const hash = await eth!.request({ method: 'eth_sendTransaction', params: [{ from: S.wallet, to: cfg.checkout, data }] });
   return receipt(hash);
 }
@@ -164,7 +164,7 @@ async function showOwl(itemId: bigint) {
 // ---- the loop ---------------------------------------------------------------
 
 async function tick() {
-  if (!S.rid || S.busy) return;
+  if (!S.rid || S.busy || !cfg.checkout) return;
   S.busy = true;
   try {
     await step();
@@ -261,6 +261,7 @@ const claimData = () => calldata(SEL.claim, u256(S.rid), b32(S.txid), u256(S.vou
 async function doReserve() {
   const addr = $<HTMLInputElement>('addr').value.trim();
   if (!/^0x[0-9a-fA-F]{40}$/.test(addr) || /^0x0{40}$/.test(addr)) return status('err', 'enter a Sova (EVM) address: 0x + 40 hex');
+  if (!cfg.checkout) return status('err', 'checkout not loaded yet');
   const btn = $<HTMLButtonElement>('reserve');
   btn.disabled = true;
   status('wait', S.wallet ? 'reserving · confirm in your wallet' : 'reserving · relayer pays the gas');
@@ -336,9 +337,20 @@ document.querySelectorAll<HTMLButtonElement>('[data-copy]').forEach((b) =>
     setTimeout(() => (b.textContent = t), 1200);
   }),
 );
-$('cfg').textContent = `rpc ${cfg.rpc} · checkout ${short(cfg.checkout)} · listing ${cfg.listing} · relayer ${cfg.relayer || 'none'} · ${cfg.net}net`;
 if (S.txid) $<HTMLInputElement>('txid').value = S.txid;
 stage('reserve', '0/? conf');
-status('wait', 'enter your address and reserve');
-tick();
-setInterval(tick, 3000);
+
+async function boot() {
+  if (!cfg.checkout) {
+    try {
+      cfg.checkout = asAddr(words(await call(cfg.ashw, '0x' + SEL.zecCheckout))[0]);
+    } catch (e) {
+      return status('err', `no Ashwings checkout at ${cfg.ashw}: ${reason(e)} · rpc ${cfg.rpc}`);
+    }
+  }
+  $('cfg').textContent = `rpc ${cfg.rpc} · checkout ${short(cfg.checkout)} · listing ${cfg.listing} · relayer ${cfg.relayer || 'none'} · ${cfg.net}net`;
+  status('wait', 'enter your address and reserve');
+  tick();
+  setInterval(tick, 3000);
+}
+boot();

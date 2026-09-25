@@ -1185,3 +1185,111 @@ announcements and skips announcing its pool to newly connected peers.
 reth also never announces a tx twice. With the fix the network is `Idle`
 from engine start (`startup_sync_state_idle`), and every node re-announces
 its pending pool to every peer every 15 s. All three phases pass.
+
+## Zcash reorg under a null tip: `null-reorg-scenario.sh` (nightly)
+
+Regression test for the public-testnet stall of 2026-09-24. A Zcash reorg
+replaced the Zcash block that Sova block 323, a **null** block, was
+anchored to. The keeper re-sealed 323 but never promoted the re-seal, and
+for about 5 hours every build of 324 on the stale 323 failed SIP-7's
+`ZcashBlocks.record` with `DeltaMismatch(0)` (selector `0x78bab1c2`).
+There were two bugs:
+
+- **Live.** The canonical ranker re-seeded the stale block into the
+  candidate tracker. Null blocks tie on rank, so the lower hash wins, and
+  the stale block won about half the time. Fixed in `52d02c6`.
+- **Restart.** A restarted keeper had no pending unwind marker, so its
+  effective head stayed on the stale tip and it never re-sealed. Fixed in
+  `072d633`.
+
+`zcash-reorg-scenario.sh` missed both. It reorgs under a *sealed* burn
+block, and a stale sealed block ranks as `Mismatch`, so it is never
+re-seeded. It also runs without SIP-6 or SIP-7 and never restarts a node.
+
+Setup: **A** runs in mine mode with `SOVA_SIP6=1` and `SOVA_SIP7=1`, a
+`sova-miner init` sealing keystore, and a persistent `SOVA_DATADIR`. **B**
+is follow-only, C5-enforcing, with SIP-6 and SIP-7 on and A as its sova/1
+static peer. One real burn mints a sealed (97-byte) block. Every burn-less
+epoch after it is a null block.
+
+Each round works like this:
+
+1. Stop auto-mine. Wait until A and B both sit at `H`, the Zcash tip's Sova
+   height. Check that `H` is a null block anchored to `Z = H + B − 1`.
+2. Run `invalidateblock(Z)` and mine one replacement block at `Z`.
+
+The replacement's coinbase goes to zebrad's default regtest **Sapling**
+address. That matters because an auto-mined block pays a transparent
+coinbase: a replacement mined the same way would carry the same value pools
+as the orphaned block, so a block built on the stale tip would pass SIP-7
+silently. With the subsidy in Sapling instead of transparent, building on
+the stale tip fails exactly as on the testnet, with `DeltaMismatch(0)`.
+
+- **Phase 1 (live).** Both nodes see the reorg as it happens. The testnet
+  failure needs the stale hash to be lower than the re-seal's, which is
+  about a coin flip. So rounds repeat until one has had that ordering: at
+  least `NULL_REORG_MIN_ROUNDS` (1), at most `NULL_REORG_MAX_ROUNDS` (6).
+  The script prints the ordering for each round, and prints a NOTE if no
+  round got it.
+- **Phase 2 (restart).** A is stopped with SIGTERM (a graceful shutdown, so
+  its chain is on disk) *before* the reorg. It is started again on the same
+  datadir after the reorg, so it comes back on a stale tip without ever
+  seeing the reorg event. The script checks and prints that A's block `H`
+  is still the stale one after the restart.
+
+Assertions, per round:
+
+- **(a)** Within 60 s, A and B hold a different block at `H`. It must be a
+  null block with the same parent, anchored to the replacement.
+- **(b)** Both heads reach `H + 5` (`ADVANCE`).
+- **(c)** Neither node logs `DeltaMismatch` or `78bab1c2` after the re-seal.
+  `ZcashBlocks.latest()` at `H` must equal `(Z, replacement hash)` on both
+  nodes.
+- **(d)** A and B have the same head and the same hash at every height, and
+  every canonical anchor equals zebrad's `getblockhash(N + B − 1)`.
+
+`NULL_REORG_PHASES=2` runs the restart round alone.
+
+Isolation: zebrad on `:18412` (project `sova-null-reorg-sim`, container
+`sova-zebrad-null-reorg`), A on 10545/10551/31011, B on 10645/10651/31012.
+A logs with `RUST_LOG=info,engine::miner=debug`, so a re-seal that
+"loses preference" shows up. A run takes about 3–4 minutes.
+
+### Results on 2026-09-25: fails before each fix, passes after
+
+The same script was run against three `bin/sova` builds:
+
+| build | phase 1 (live) | phase 2 (restart) | result |
+|---|---|---|---|
+| `0f6dd82` (`52d02c6^`, before both fixes) | FAIL in the first round with the stale-lower ordering | skipped | 6 failed, rc=1 (2 runs) |
+| `52d02c6` (ranker fix only) | PASS, including a stale-lower round | FAIL | 6 failed, rc=1 |
+| `release` + this scenario (both fixes) | PASS | PASS | all passed, rc=0 (3 runs) |
+
+**Before both fixes.** Run 1 passed rounds 1 and 2, where the re-seal
+already had the lower hash. It then hit the testnet case in round 3. A's
+re-seal of 21 was built 12 times and never promoted, and building 22 on the
+stale 21 reverted:
+
+    WARN engine::miner: sova miner: canonical block anchored to an orphaned zcash block; re-sealing target=21 best=21
+    DEBUG engine::miner: built block loses preference to an already-known candidate; not promoting height=21
+    WARN payload_builder: failed to apply pre-execution changes err=sova zcash-blocks: record for zcash block 123
+         reverted (sova block 22): Revert { ..., output: 0x78bab1c2000…000 }
+    FAIL (a) node A still holds 0xac3be955… at 21 (anchor 0x07750137…, the orphaned Zcash block)
+    FAIL (b) heads did not reach 26 (A=21 B=21; Zcash tip 177, Sova height 76)
+    FAIL (c) DeltaMismatch / 0x78bab1c2 after the reorg (no re-seal): A 24 line(s)
+    FAIL (d) canonical blocks anchored to Zcash blocks zebrad no longer has: 21
+
+Run 2 failed the same way in round 2.
+
+**With the ranker fix only (`52d02c6`).** Phase 1 passed, including the
+testnet ordering in round 2. After the restart, A never re-sealed (0
+`re-sealing` lines). It built 18 on the stale 17 straight away:
+
+    node A back (pid 31563), head 17; block 17 still the stale one: yes
+    WARN payload_builder: ... record for zcash block 119 reverted (sova block 18): ... output: 0x78bab1c2…
+    FAIL (a) phase 2 restart: node A still holds 0x23480300… at 17 60s after the replacement block
+
+**Both fixes.** Every assertion passed in all three runs. Run 1: round 1 had the
+stale-lower ordering, it was re-sealed and the chain went on 7 → 12. In
+phase 2, A restarted on the stale tip, re-sealed 13 and went on to 19.
+Neither node logged a `DeltaMismatch`.
