@@ -1,7 +1,7 @@
 ---
 // /ashwings/mint: mint an Ashwing for SOVA (injected wallet) or ZEC (hands
-// off to /ashwings/buy), and the gallery of minted owls. Unlisted until
-// launch: noindex, not in sitePages (nav, footer, sitemap).
+// off to /ashwings/buy), and the gallery of minted owls. Listed since the
+// testnet mint opened (2026-09-25); linked from /ashwings, not in sitePages.
 // Logic: src/scripts/ashwings/. Contracts: contracts/src/Ashwings.sol.
 import Site from '../../layouts/Site.astro';
 import { SOVA_RPC, TESTNET, CONTRACTS } from '../../data/sova';
@@ -23,8 +23,7 @@ const config = {
   description="10,000 on-chain owls. Pay in SOVA or ZEC."
   current="/ashwings"
   cmd="./mint-owl"
-  status="mint · unlisted"
-  indexable={false}
+  status="testnet mint"
 >
   <div id="mint" class="owls-ui" data-config={JSON.stringify(config)}>
     <h1>Mint an owl.</h1>

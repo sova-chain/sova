@@ -1,6 +1,6 @@
 ---
-// /ashwings/buy: buy an Ashwing with ZEC (SIP-4 demo 1). Unlisted demo:
-// noindex, not in sitePages (nav, footer, sitemap). Runbook:
+// /ashwings/buy: buy an Ashwing with ZEC (SIP-4 demo 1). Listed since the
+// testnet mint opened (2026-09-25); linked from the mint page. Runbook:
 // docs/design/ashwing-zec-checkout.md. Logic: src/scripts/checkout/.
 import Site from '../../layouts/Site.astro';
 import { SOVA_RPC, TESTNET, CONTRACTS } from '../../data/sova';
@@ -27,8 +27,7 @@ const config = {
   description="Pay ZEC from any Zcash wallet, get an on-chain owl on Sova. Sova verifies the payment on Zcash itself."
   current="/ashwings"
   cmd="./buy-owl --pay zec"
-  status="demo · unlisted"
-  indexable={false}
+  status="testnet · pay in ZEC"
 >
   <div id="buy" data-config={JSON.stringify(config)}>
     <h1>Pay ZEC. Get an owl.</h1>

@@ -9,14 +9,15 @@ import { species, owlSamples } from '../data/sova';
 ---
 <Site
   title="Ashwings: on-chain owls"
-  description="Ashwings: 10,000 pixel owls drawn entirely by their contract on Sova. One fixed price, in SOVA or ZEC. Day-one mint at launch."
+  description="Ashwings: 10,000 pixel owls drawn entirely by their contract on Sova. One fixed price, in SOVA or ZEC. The testnet mint is open."
   current="/ashwings"
   cmd="cat ashwings.txt"
   status="pre-release · public testnet live"
 >
   <h1>Ashwings</h1>
   <p class="lead">Pixel owls drawn by their own contract. Sova means owl.</p>
-  <p class="pill">day-one mint at launch</p>
+  <p class="pill"><a href="/ashwings/mint">testnet mint open</a></p>
+  <p class="dim">Owls minted on the testnet stay on the testnet, and go when it resets.</p>
 
   <ul class="gallery" aria-label="Twelve Ashwings rendered by the contract">
     {owlSamples.map(([n, sp]) => (

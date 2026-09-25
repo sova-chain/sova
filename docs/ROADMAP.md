@@ -31,7 +31,7 @@ no public network at M0.
 prebuilt binaries. Building from source instead takes about 11 minutes on
 an idle Apple Silicon laptop and about 25 on a busy one.
 
-## M1: strangers mine a public testnet (target October 2026)
+## M1: strangers mine a public testnet (live since 2026-09-24)
 
 A public Sova testnet anchored to Zcash testnet. Mining burns testnet ZEC
 (TAZ), so it costs nothing real.
@@ -101,7 +101,7 @@ and no project machine ever holds user funds or a key with consensus power.
   custody-free ZEC↔SOVA swaps.
 - **Contracts that see the shielded pool (SIP-7).** Pool totals and every
   change to them, readable by contracts, plus a per-block Zcash summary in
-  Sova's state. Accepted; targets the testnet reset.
+  Sova's state. Accepted; live on the public testnet.
 - **Wrapped ZEC is a Sova Labs product, not the protocol.** wZcash at
   wz.cash: ZEC held by NEAR's MPC network, a Sova Labs relayer, a small fee.
   Custodial and labelled that way; the network makes no guarantees about it.

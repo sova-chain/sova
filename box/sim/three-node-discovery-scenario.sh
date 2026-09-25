@@ -105,7 +105,10 @@ start_socket_sampler "${WORK_DIR}/sockets.txt" "${PIDFILE}"
 # B: the bootnode (follow-only, no bootnodes, no static peers)
 # ---------------------------------------------------------------------
 echo "--- starting node B (bootnode; follow-only; no bootnodes, no static peers) ---"
+# SOVA_BOOTNODES="" (explicitly empty): without it the sova-testnet profile
+# falls back to its compiled-in bootnodes, the live public seed.
 disc_env \
+  SOVA_BOOTNODES="" \
   SOVA_FOLLOW_ONLY=1 \
   SOVA_HTTP_PORT="${B_HTTP_PORT}" \
   SOVA_AUTH_PORT="${B_AUTH_PORT}" \

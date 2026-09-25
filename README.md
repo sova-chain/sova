@@ -52,9 +52,10 @@ git clone https://github.com/sova-chain/sova && cd sova
 
 How long the first run takes depends on where the binaries come from. From a
 checkout of a tagged release, it downloads prebuilt binaries and the box is
-mining in under a minute. No release is tagged yet, so today the first run
-builds from source: about 11 minutes on an idle Apple Silicon laptop, up to
-about 25 on a busy one. Later runs reuse the binaries and take under a
+mining in under a minute (Linux x86_64 and Apple Silicon; the latest is
+[v0.1.3](https://github.com/sova-chain/sova/releases/tag/v0.1.3)). Elsewhere
+the first run builds from source: about 11 minutes on an idle Apple Silicon
+laptop, up to about 25 on a busy one. Later runs reuse the binaries and take under a
 minute.
 
 ## How it works

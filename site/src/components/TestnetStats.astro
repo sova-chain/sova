@@ -1,8 +1,8 @@
 ---
 // Live testnet stats for the homepage directions: Sova height, anchored Zcash
 // height, age of the last block. scripts/testnet-stats.ts fills each
-// data-stat={key} in the browser from the public RPC (two calls per page
-// view); the `------` placeholders stay with no JS or when the RPC can't be
+// data-stat={key} in the browser from the public RPC (two calls on load,
+// then every 10 s while the tab is visible); the `------` placeholders stay with no JS or when the RPC can't be
 // read. Colours and font come from the page through custom properties:
 // --ts-fg, --ts-dim, --ts-accent, --ts-line, --ts-font.
 import { testnetStats, SOVA_RPC } from '../data/sova';
@@ -59,7 +59,11 @@ const host = new URL(SOVA_RPC).host;
   .ts-cell:nth-child(3) .ts-ph { animation-delay: 0.6s; }
   @keyframes ts-wait { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
   .ts-note { margin: 8px 0 0; font-size: 12px; color: var(--dim); }
+  /* A value that just changed (a new block) flashes once. */
+  .ts :global(dd.ts-new) { animation: ts-new 1.2s ease-out; }
+  @keyframes ts-new { 0% { color: var(--fg); text-shadow: 0 0 12px var(--accent); } 100% { text-shadow: none; } }
   @media (prefers-reduced-motion: reduce) {
     .ts-ph { animation: none; opacity: 0.8; }
+    .ts :global(dd.ts-new) { animation: none; }
   }
 </style>

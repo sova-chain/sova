@@ -16,9 +16,9 @@
 import Site from '../layouts/Site.astro';
 
 const story = [
-  'Sova began as a venture-backed project to bring Bitcoin into an EVM: a chain on the OP Stack, with native BTC. Before it went live we decided not to ship it, and set it aside. The company turned to other work, mostly intent-based solving, and much of that was Zcash on NEAR. That is how we came to know Zcash well.',
+  'Sova began as a venture-backed project to bring Bitcoin into an EVM: a chain on the OP Stack, with native BTC. We decided not to go ahead with that plan, and set it aside. The company turned to other work, mostly intent-based solving, and much of that was Zcash on NEAR. That is how we came to know Zcash well.',
   'Most sidechains and layer twos for Bitcoin have been built by companies, and they depend on the company behind them. Zcash has had little of this, which leaves room to try the other way: a chain that belongs to no company, launched fairly and run by the people who use it. Zcash\'s shielded pool also lets value reach such a chain without a trail, and a growing number of people want to build for privacy.',
-  'So Sova came back in that form, as a public-good experiment in support of the Zcash network. The old foundation, a reth node, stays. Beside it every Sova node runs a Zcash node, so a contract can read Zcash and verify a ZEC payment where it happened, and the ZEC stays with whoever was paid. The chain’s gas, SOVA, is issued only by destroying ZEC in a Zcash transaction, one Sova block per Zcash block, and every node checks every mint against its own copy of Zcash.',
+  'So Sova came back in that form, as a public-good experiment in support of the Zcash network. Every Sova node runs a full EVM beside its own Zcash node, so a contract can read Zcash directly: it can verify a ZEC payment where it happened, and the ZEC stays with whoever was paid. The chain’s gas, SOVA, is issued only by destroying ZEC in a Zcash transaction, one Sova block per Zcash block, and every node checks every mint against its own copy of Zcash.',
   'Nothing was set aside in advance: no premine, no allocation to investors or the team, nothing in escrow. Whoever produces blocks earns SOVA.',
   'A public testnet is running now, mined with testnet ZEC. Mainnet is expected in the first quarter of 2027. The code and the rules are still changing, and this is an experiment.',
 ];

@@ -66,6 +66,19 @@ cmd_edge() {
     h2="$(pub_rpc eth_blockNumber | jq -r .result)"
     [[ "${h2}" =~ ^0x ]] && (( h2 > h1 )) && ok "rpc: head advanced to $((h2)) in 90 s" ||
       bad "rpc: head did not advance in 90 s ($((h1)) -> ${h2}); epochs are ~75 s, retry once before worrying"
+    # A null block (empty extraData, SIP-6) carries no transactions; only a
+    # sealed block (a burn's sealer) does. A head that advances on null
+    # blocks alone looks live but accepts nothing (2026-09-25: the keeper's
+    # per-run burn budget ran out and ~70 null blocks in a row followed).
+    if [[ "${SOVA_SIP6}" == 1 && "${h2}" =~ ^0x ]]; then
+      local i x sealed=0
+      for ((i = 0; i < 20; i++)); do
+        x="$(pub_rpc eth_getBlockByNumber "[\"$(printf '0x%x' $((h2 - i)))\",false]" | jq -r '.result.extraData // ""')"
+        ((${#x} == 196)) && sealed=$((sealed + 1))
+      done
+      ((sealed > 0)) && ok "rpc: ${sealed} of the last 20 blocks sealed (can carry transactions)" ||
+        bad "rpc: the last 20 blocks are all null: no one is burning (is sova-keeper running?), so no transaction can be mined"
+    fi
   else
     bad "rpc: eth_blockNumber gave '${h1}'"
   fi
@@ -276,6 +289,9 @@ cmd_hosts() {
       for u in zebrad sova-node sova-faucet cloudflared sova-health.timer; do
         systemctl is-enabled --quiet $u 2>/dev/null && echo "svc $u $(systemctl is-active $u)"
       done
+      # The keeper burner is started by hand (not enabled) and stops itself at
+      # its per-run budget; while it is stopped every block is null.
+      [ -f /etc/systemd/system/sova-keeper.service ] && echo "svc sova-keeper $(systemctl is-active sova-keeper)"
       sudo journalctl -u sova-node --no-pager -q 2>/dev/null | grep -q "expectations: enforcing settlements" && echo "c5 enforcing"
       echo "c5rejects $(sudo journalctl -u sova-node --since -1h --no-pager -q 2>/dev/null | grep -c "settlement mismatch")"
       echo "sip7feed $(sudo journalctl -u sova-node --no-pager -q 2>/dev/null | grep -c "sip-7 feed: sova_getZcashBlocks")"

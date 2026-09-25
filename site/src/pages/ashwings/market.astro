@@ -1,7 +1,7 @@
 ---
 // /ashwings/market: buy, list and cancel Ashwings for SOVA
 // (contracts/src/AshwingsMarket.sol: no owner, 1% to the treasury).
-// Unlisted until launch: noindex, not in sitePages (nav, footer, sitemap).
+// Listed since the testnet mint opened (2026-09-25); linked from /ashwings.
 // Logic: src/scripts/ashwings/.
 import Site from '../../layouts/Site.astro';
 import { SOVA_RPC, TESTNET, CONTRACTS } from '../../data/sova';
@@ -23,8 +23,7 @@ const config = {
   description="Buy and sell on-chain owls for SOVA. 1% to the treasury."
   current="/ashwings"
   cmd="./owls --market"
-  status="market · unlisted"
-  indexable={false}
+  status="testnet market"
 >
   <div id="market" class="owls-ui" data-config={JSON.stringify(config)}>
     <h1>Owl market.</h1>
