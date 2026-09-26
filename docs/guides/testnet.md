@@ -21,12 +21,11 @@ This guide takes you from nothing to:
 A laptop (Linux x86_64 or Apple Silicon Mac) or a small VPS is enough.
 
 <!--
-Maintainers: one placeholder is still open, `<<KEEPER_DISCLOSURE>>` in 3c
-("How SOVA is paid"): where the project's keeper-miner disclosure (its
-addresses and budget) is posted. `deploy.sh` records the addresses
-(`out/servers/sova-keeper-1.keeper_*`); the text template is in
-`docs/ops/keeper-miner.md`. Replace it with the link and drop the
-"pending" wording around it.
+Maintainers: the keeper-miner disclosure is in 3c, "The project's keeper
+miner". Its addresses come from `deploy.sh`
+(`infra/testnet/out/servers/sova-keeper-1.keeper_*`) and its budgets from
+`docs/ops/keeper-miner.md`; update the section if the key, the burn or a
+budget changes.
 -->
 
 ---
@@ -420,8 +419,8 @@ sova-miner --network test --data-dir ~/.sova-testnet/miner mine \
   --budget-zat 5000000
 ```
 
-It sends at most one burn per new Zcash block and waits for each to
-confirm, so on testnet it burns about every other block. Each burn line
+It sends at most one burn per new Zcash block, and from v0.1.8 it burns
+in every block (earlier releases burned about every other block). Each burn line
 looks like:
 
 ```
@@ -458,11 +457,36 @@ about 330.
 
 So a burn-only miner is paid whenever someone else ranked in the same
 epoch seals. The project runs a keeper miner that burns a small fixed
-amount (10,000 zat per epoch by default) about every other block and
-seals its epochs. Its disclosure (addresses and budget) is **pending**,
-not posted yet: `<<KEEPER_DISCLOSURE>>` marks where the link goes. It has
-no special standing, and anyone who burns more outranks it. To be sure
-your epochs get sealed, and to earn the tip, seal them yourself (step 4).
+amount in every Zcash block and seals the epochs it ranks in (addresses
+and budget [below](#the-projects-keeper-miner)). It has no special
+standing, and anyone who burns more outranks it. To be sure your epochs
+get sealed, and to earn the tip, seal them yourself (step 4).
+
+### The project's keeper miner
+
+The Sova project runs one ordinary miner on the public testnet, to keep
+epochs from going empty while outside miners are few.
+
+- Zcash testnet t-address: `tmCARs7pqhUaYwev5vi3Fn3V7oB8PYzKmUS`
+- Sova EVM address (burn credit, rewards, sealing):
+  `0xbd8a560dfb415d4babb99662dc157267d166b7c9`
+- Burn: 10,000 zat in every Zcash block (since v0.1.8), plus the Zcash
+  fee of about 20,000 zat.
+- Budget: 9 TAZ per run, 30 TAZ in total for the testnet.
+- Funding: testnet ZEC the project mined itself, never the faucet.
+
+It holds no privilege. It ranks like any other miner, by ZEC burned in
+the epoch, and anyone who burns more outranks it. Nothing in consensus,
+the chainspec or the client names its addresses.
+
+Its history is public. Its burns and funding are on its t-address in a
+Zcash testnet explorer, for example
+<https://testnet.cipherscan.app/address/tmCARs7pqhUaYwev5vi3Fn3V7oB8PYzKmUS>.
+Its SOVA:
+
+```bash
+cast balance --ether --rpc-url https://rpc.testnet.sova.io 0xbd8a560dfb415d4babb99662dc157267d166b7c9
+```
 
 ### Optional: let an agent mine
 

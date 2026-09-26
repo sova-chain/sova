@@ -647,10 +647,24 @@ EOF
 }
 
 setup_keeper() {
+  local sum
   keeper_env_text >"${ETC}/keeper.env"
   install -m 0644 "${HERE}/systemd/sova-keeper.service" "${UNIT_DIR}/sova-keeper.service"
   systemctl daemon-reload
-  log "sova-keeper installed, NOT started (publish the disclosure and fund the t-addr first; docs/ops/keeper-miner.md)"
+  # Never started here, but a burner that is already running is restarted
+  # when its binary, budgets or unit changed; otherwise it keeps burning
+  # with the old ones (2026-09-26: v0.1.8 was installed under a burner
+  # still running v0.1.7).
+  sum="$(cat /usr/local/bin/sova-miner "${ETC}/keeper.env" "${UNIT_DIR}/sova-keeper.service" | sha256sum | cut -d' ' -f1)"
+  if ! systemctl is-active --quiet sova-keeper; then
+    log "sova-keeper installed, NOT started (publish the disclosure and fund the t-addr first; docs/ops/keeper-miner.md)"
+  elif [[ "$(cat "${ETC}/.sova-keeper.sum" 2>/dev/null)" != "${sum}" ]]; then
+    systemctl restart sova-keeper
+    log "sova-keeper restarted (miner binary, budgets or unit changed)"
+  else
+    log "sova-keeper running, unchanged"
+  fi
+  echo "${sum}" >"${ETC}/.sova-keeper.sum"
 }
 
 # ---- cloudflared --------------------------------------------------------------------------

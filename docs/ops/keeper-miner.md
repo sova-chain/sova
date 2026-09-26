@@ -204,10 +204,11 @@ the file, which zebrad creates with mode `0600`.
 
 A keeper burn costs `per-epoch-zat` plus the ZIP-317 fee, which is 20,000
 zat for the usual one-input shape. There is at most one burn per Zcash
-block. The box shows roughly one burn every other block, because the
-miner waits for each burn to confirm. Testnet makes about 1,150 blocks a
-day, so with `--per-epoch-zat 10000` a full day costs at most about
-1,150 × 30,000 ≈ 0.35 TAZ.
+block, and from v0.1.8 the miner lands one in every block (earlier
+releases sat out the block their burn confirmed in, so burned about every
+other block). Testnet makes about 1,150 blocks a day at its nominal 75 s,
+and more when it runs fast (~2,600 at the ~30 s seen in September 2026),
+so with `--per-epoch-zat 10000` a full day costs about 0.35-0.78 TAZ.
 
 ```bash
 sova-miner --network test --data-dir /var/lib/sova-keeper \
