@@ -14,7 +14,8 @@
 #               its installed `sova genesis-hash` prints
 #               (out/servers/<name>.genesis_hash; bootnodes.sh publishes it).
 #   ./deploy.sh alerts
-#       Push TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID (from YOUR environment)
+#       Push TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID / TELEGRAM_THREAD_ID (optional,
+#       a forum topic) from YOUR environment
 #       to /etc/sova/health.env (root 0600) on every host, over SSH stdin.
 #   ./deploy.sh check
 #       Validate config.env offline (no token, no SSH, no API call).
@@ -260,7 +261,8 @@ cmd_alerts() {
       echo "+ ssh sova-admin@${name} \"sudo sh -c 'umask 077 && cat > /etc/sova/health.env'\" <<< (token from env, on stdin)"
       continue
     fi
-    printf 'TELEGRAM_BOT_TOKEN=%s\nTELEGRAM_CHAT_ID=%s\n' "${TELEGRAM_BOT_TOKEN}" "${TELEGRAM_CHAT_ID}" |
+    printf 'TELEGRAM_BOT_TOKEN=%s\nTELEGRAM_CHAT_ID=%s\nTELEGRAM_THREAD_ID=%s\n' \
+      "${TELEGRAM_BOT_TOKEN}" "${TELEGRAM_CHAT_ID}" "${TELEGRAM_THREAD_ID:-}" |
       kit_ssh "${name}" "sudo sh -c 'umask 077 && cat > /etc/sova/health.env'"
     log "${name}: alerts configured"
   done

@@ -162,7 +162,7 @@ jobs:
           sudo apt-get install -y -qq qemu-user >/dev/null
           datadir="$(mktemp -d)"
           rc=0
-          SOVA_CHAIN=sova-testnet SOVA_GOSSIP=p2p SOVA_EPOCH_BASE=4388500 \
+          NO_COLOR=1 RUST_LOG_STYLE=never SOVA_CHAIN=sova-testnet SOVA_GOSSIP=p2p SOVA_EPOCH_BASE=4388500 \
             SOVA_EMISSION_SCHEDULE=flat SOVA_SIP6=1 SOVA_SIP7=1 SOVA_FOLLOW_ONLY=1 \
             SOVA_DISCOVERY=off SOVA_BOOTNODES='' SOVA_DATADIR="${datadir}" \
             timeout 120 qemu-x86_64 -cpu Nehalem-v1 target/release-linux/sova >node.log 2>&1 || rc=$?
@@ -172,7 +172,8 @@ jobs:
           # complete"); 124 if it had to be killed. A crash (132 = SIGILL on
           # an unsupported instruction, the v0.1.3 failure) fails the step.
           case "${rc}" in 0 | 124) ;; *) echo "sova exited ${rc}"; exit 1 ;; esac
-          grep -q 'Status connected_peers' node.log
+          # Log lines may carry ANSI colour codes between words.
+          grep -qE 'Status.*connected_peers' node.log
           grep -q 'shutdown complete' node.log
       - name: Stage artifact
         shell: bash

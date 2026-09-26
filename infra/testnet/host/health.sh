@@ -2,7 +2,8 @@
 # infra/testnet/host/health.sh -- one health pass on an M1 testnet host
 # (sova-health.timer, every 2 min). Every finding goes to the journal
 # (`journalctl -t sova-health`); ALERT lines also go to Telegram when
-# /etc/sova/health.env sets TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID. The
+# /etc/sova/health.env sets TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID (and
+# optionally TELEGRAM_THREAD_ID, a topic in a forum group). The
 # same alert is re-sent at most once an hour.
 #
 # Checks (infra-m1 §2 "Monitoring and alerting"):
@@ -56,10 +57,14 @@ alert() {
   fi
   echo "${now}" >"${stamp}"
   if [[ -n "${TELEGRAM_BOT_TOKEN:-}" && -n "${TELEGRAM_CHAT_ID:-}" ]]; then
+    # A topic in a forum group, when set.
+    local thread=()
+    [[ -n "${TELEGRAM_THREAD_ID:-}" ]] && thread=(--data-urlencode "message_thread_id=${TELEGRAM_THREAD_ID}")
     # Token in a curl config on stdin, never on the command line.
     printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "${TELEGRAM_BOT_TOKEN}" |
       curl -fsS --max-time 10 -K - \
         --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+        "${thread[@]}" \
         --data-urlencode "text=[sova ${HOST}] ${key}: $*" >/dev/null ||
       say "telegram send failed"
   fi
