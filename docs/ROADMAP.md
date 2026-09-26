@@ -104,7 +104,7 @@ and no project machine ever holds user funds or a key with consensus power.
   Sova's state. Accepted; live on the public testnet.
 - **Wrapped ZEC is a Sova Labs product, not the protocol.** wZcash at
   wz.cash: ZEC held by NEAR's MPC network, a Sova Labs relayer, a small fee.
-  Custodial and labelled that way; the network makes no guarantees about it.
+  It is custodial: holders trust Sova Labs and NEAR's signers, and the network makes no guarantees about it.
   Former text for reference: ZEC held by NEAR's MPC network
   (Chain Signatures) and minted as wZEC on Sova. This is custody, and it is
   disclosed as custody: holding wZEC means trusting NEAR's signer set. Sova

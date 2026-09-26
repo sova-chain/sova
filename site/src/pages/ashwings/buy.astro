@@ -27,14 +27,14 @@ const config = {
 ---
 <Site
   title="Buy an Ashwing with ZEC"
-  description="Pay ZEC from any Zcash wallet that can pay a t-address, and get an on-chain owl on Sova. Sova verifies the payment on Zcash itself; no SOVA needed."
+  description="On the testnet, pay testnet ZEC (TAZ) from a testnet Zcash wallet that can pay a t-address, and get an on-chain owl on Sova. Sova verifies the payment on Zcash itself; no SOVA needed."
   current="/ashwings"
   cmd="./buy-owl --pay zec"
   status="testnet · pay in ZEC"
 >
   <div id="buy" data-config={JSON.stringify(config)}>
     <h1>Pay ZEC. Get an owl.</h1>
-    <p class="lead">Any Zcash wallet that can pay a t-address. Sova verifies the payment on Zcash itself; you need no SOVA.</p>
+    <p class="lead">This is the testnet: pay in testnet ZEC (TAZ) from a Zcash wallet running on testnet that can pay a t-address. A mainnet wallet will refuse the address. TAZ comes from the <a href="https://github.com/sova-chain/sova/blob/main/docs/guides/testnet.md#3b-get-taz-from-the-faucet">testnet faucet</a>. Sova verifies the payment on Zcash itself; you need no SOVA.</p>
 
     <ol class="track" aria-label="Progress">
       <li data-s="cur">reserve</li>

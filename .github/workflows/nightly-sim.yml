@@ -77,7 +77,8 @@ jobs:
     # two-node relay scenario, each with its own minutes-long chain-driving
     # loops, can comfortably run long. This is a nightly job with no one
     # blocking on it, so erring high costs nothing but runner minutes.
-    timeout-minutes: 90
+    # +30 for the 15-minute reorg stress run (plus its setup and settle).
+    timeout-minutes: 120
     steps:
       - name: Free disk space
         # See this file's top-of-file comment: a debug build of this
@@ -282,8 +283,23 @@ jobs:
           mkdir -p "${RUNNER_TEMP}/nightly-sim-logs"
           box/sim/null-reorg-scenario.sh 2>&1 | tee "${RUNNER_TEMP}/nightly-sim-logs/null-reorg-scenario.log"
 
+      - name: Run Zcash reorg stress (box/sim/reorg-stress-scenario.sh, 15 min)
+        # Both serious testnet stalls (heights 323 and 6225) were Zcash
+        # reorgs hitting consensus code at an awkward moment. A seeded,
+        # randomized mix of depth-1..4 reorgs, reorg flip-flops (A -> B -> A),
+        # keeper/seed restarts, burns and txs on the testnet topology (keeper
+        # A, seed B, rpc C), invariants checked every 10 s. Nightly runs 15
+        # min; local runs the 45-min default. The seed is printed; the run dir
+        # (timeline, schedule, logs) lands in the uploaded artifact.
+        id: reorg-stress-scenario
+        continue-on-error: true
+        run: |
+          mkdir -p "${RUNNER_TEMP}/nightly-sim-logs"
+          REORG_STRESS_MINUTES=15 REORG_STRESS_RUN_DIR="${RUNNER_TEMP}/nightly-sim-logs/reorg-stress" \
+            box/sim/reorg-stress-scenario.sh 2>&1 | tee "${RUNNER_TEMP}/nightly-sim-logs/reorg-stress-scenario.log"
+
       - name: Upload sim logs
-        if: steps.run-scenarios.outcome == 'failure' || steps.two-node-scenario.outcome == 'failure' || steps.ladder-scenario.outcome == 'failure' || steps.two-node-p2p-scenario.outcome == 'failure' || steps.ladder-p2p-scenario.outcome == 'failure' || steps.three-node-discovery-scenario.outcome == 'failure' || steps.join-scenario.outcome == 'failure' || steps.checkpoint-scenario.outcome == 'failure' || steps.anchor-precompile-scenario.outcome == 'failure' || steps.zcash-reorg-scenario.outcome == 'failure' || steps.tx-gossip-scenario.outcome == 'failure' || steps.null-reorg-scenario.outcome == 'failure'
+        if: steps.run-scenarios.outcome == 'failure' || steps.two-node-scenario.outcome == 'failure' || steps.ladder-scenario.outcome == 'failure' || steps.two-node-p2p-scenario.outcome == 'failure' || steps.ladder-p2p-scenario.outcome == 'failure' || steps.three-node-discovery-scenario.outcome == 'failure' || steps.join-scenario.outcome == 'failure' || steps.checkpoint-scenario.outcome == 'failure' || steps.anchor-precompile-scenario.outcome == 'failure' || steps.zcash-reorg-scenario.outcome == 'failure' || steps.tx-gossip-scenario.outcome == 'failure' || steps.null-reorg-scenario.outcome == 'failure' || steps.reorg-stress-scenario.outcome == 'failure'
         uses: actions/upload-artifact@v4
         with:
           name: nightly-sim-logs
@@ -299,7 +315,7 @@ jobs:
         # `on:` block: no push/pull_request trigger at all).
         if: always()
         run: |
-          if [[ "${{ steps.run-scenarios.outcome }}" == "failure" || "${{ steps.two-node-scenario.outcome }}" == "failure" || "${{ steps.ladder-scenario.outcome }}" == "failure" || "${{ steps.two-node-p2p-scenario.outcome }}" == "failure" || "${{ steps.ladder-p2p-scenario.outcome }}" == "failure" || "${{ steps.three-node-discovery-scenario.outcome }}" == "failure" || "${{ steps.join-scenario.outcome }}" == "failure" || "${{ steps.checkpoint-scenario.outcome }}" == "failure" || "${{ steps.anchor-precompile-scenario.outcome }}" == "failure" || "${{ steps.zcash-reorg-scenario.outcome }}" == "failure" || "${{ steps.tx-gossip-scenario.outcome }}" == "failure" || "${{ steps.null-reorg-scenario.outcome }}" == "failure" ]]; then
+          if [[ "${{ steps.run-scenarios.outcome }}" == "failure" || "${{ steps.two-node-scenario.outcome }}" == "failure" || "${{ steps.ladder-scenario.outcome }}" == "failure" || "${{ steps.two-node-p2p-scenario.outcome }}" == "failure" || "${{ steps.ladder-p2p-scenario.outcome }}" == "failure" || "${{ steps.three-node-discovery-scenario.outcome }}" == "failure" || "${{ steps.join-scenario.outcome }}" == "failure" || "${{ steps.checkpoint-scenario.outcome }}" == "failure" || "${{ steps.anchor-precompile-scenario.outcome }}" == "failure" || "${{ steps.zcash-reorg-scenario.outcome }}" == "failure" || "${{ steps.tx-gossip-scenario.outcome }}" == "failure" || "${{ steps.null-reorg-scenario.outcome }}" == "failure" || "${{ steps.reorg-stress-scenario.outcome }}" == "failure" ]]; then
             echo "::error::One or more nightly sim scenarios failed -- see the nightly-sim-logs artifact."
             exit 1
           fi

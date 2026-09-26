@@ -1293,3 +1293,199 @@ testnet ordering in round 2. After the restart, A never re-sealed (0
 stale-lower ordering, it was re-sealed and the chain went on 7 → 12. In
 phase 2, A restarted on the stale tip, re-sealed 13 and went on to 19.
 Neither node logged a `DeltaMismatch`.
+
+## Randomized Zcash reorg stress: `reorg-stress-scenario.sh` (nightly 15 min, local 45 min)
+
+Both serious public-testnet stalls were a Zcash reorg reaching consensus code
+at an awkward moment: 2026-09-24 at height 323 (a stale null block against
+its re-seal; `null-reorg-scenario.sh`), and 2026-09-26 at height 6225. At
+6225 the keeper built a block during a Zcash reorg *flip-flop* (A → B → A
+within seconds). The retried build hit the same SIP-6 seal-journal slot and
+re-published a block that re-executed to a different state root. The
+journal then forbade a new seal, so the chain stalled (fixed in `6a5aaa6`).
+This scenario looks for the next one of these. It runs a long, seeded,
+randomized schedule on the testnet topology and checks the chain's
+invariants every 10 s.
+
+**Topology.** **A** is the keeper: mine mode, `SOVA_SIP6=1` and
+`SOVA_SIP7=1`, a `sova-miner init` sealing keystore and a persistent
+datadir. **B** is the seed: follow-only, static peer A, persistent datadir.
+**C** is the RPC node: follow-only, `SOVA_RPC_PROFILE=public`, static peer
+B only. All three share one regtest zebrad. The script mines Zcash itself,
+one block every `REORG_STRESS_BLOCK_S` (5) s, so that events can pause it.
+
+**How the 6225 shape arises.** A build takes its anchor from the *sealer's*
+Zcash follower. SIP-7's `ZcashBlocks.record` system call runs from the zcash
+*index*, and a separate *expectations* follower feeds that index. Both poll
+every 2 s. If Zcash block `Z_A` lives only briefly, the sealer can see it
+while the index only ever sees its replacement `Z_B`. The sealed block then
+commits to `Z_A` but records `Z_B`. It is journaled under
+`(N, parent, Z_A)`, and our own node holds it on the anchor. When Zcash
+flips back to `Z_A`, every rebuild of `N` gets that journaled block back,
+and it now re-executes to a different state root. The flip-flop event keeps
+`Z_A` for 0.2–2.5 s so that some flips fall between the two poll loops.
+In practice the loops are phase-locked, with the expectations poll about
+10–150 ms ahead of the sealer's (compare the timestamps of A's `expectations
+and candidates unwound` and `zcash reorg observed` lines). A randomly timed
+`Z_A` therefore lands in that gap only 1–3% of the time. So half the
+flip-flops are **aimed**. They estimate A's next sealer poll from its log
+(the period comes from its recent trigger lines, the gap from its last
+unwound/observed pair) and time `generate` so that `Z_A` becomes visible
+inside the gap. The timeline records the predicted poll, the gap and where
+`Z_A` actually landed.
+
+**Schedule.** `REORG_STRESS_SEED` seeds the RNG. The seed is printed and
+saved, and the whole schedule is generated from it up front
+(`schedule.txt`). An event comes every 30–90 s (`REORG_STRESS_GAP_S`). An
+event never starts before its scheduled time, and a slow one pushes the rest
+back. Mix (`REORG_STRESS_WEIGHTS`):
+
+| event | what it does |
+|---|---|
+| `flipflop` (34) | Waits for a burn epoch (¾, with A's burn actually waiting in the mempool) or a null one. Mines `Z_A` (depth 1, sometimes 2) as A is about to build; half the time the timing is aimed (depth 1, `dwell_a` ≤ 1.4 s). After `dwell_a`, runs `invalidateblock(Z_A)` and mines `Z_B` (Sapling coinbase half the time). After `dwell_b` (0.5–8 s), runs `reconsiderblock(Z_A)` and `invalidateblock(Z_B)`, so the original chain wins again. One in five flips once more, back to B. |
+| `reorg1` (18), `reorgN` (14) | `invalidateblock` and replacement blocks, depth 1 or depth 2–4. Runs under a NULL tip, a SEALED (burn) tip, or wherever the chain is. The Sapling coinbase goes to none, the first, or all of the replacement blocks, so that SIP-7 pool deltas change. The replacement is sometimes one block longer. |
+| `keeper` (8) | SIGTERM A. Half the time, runs a depth 1–2 reorg while A is down. Zcash keeps moving. Restarts A on the same datadir. |
+| `seed` (once) | SIGTERM B, then restarts it on the same datadir. C has no other peer meanwhile. |
+| `burn` (8) | Runs `sova-miner mine` for 4–12 epochs (one burn per Zcash block). |
+| `tx` (18) | Sends 1–3 transfers to C with `cast mktx` and `eth_sendRawTransaction` (they travel C → B → A). Also starts a burn stretch, because only sealed blocks carry transactions. |
+
+`REORG_STRESS_MAX_DEPTH` (4) caps every drawn depth and leaves the rest of
+the schedule unchanged. For example, `1` leaves out depth ≥ 2.
+
+**Invariants.** Every event disturbs the chain for a few seconds, so a
+windowed check fails the run only when its violation lasts longer than the
+recovery allowance K (`REORG_STRESS_RECOVERY_MIN`, 3 min):
+
+- **lag**: each head is within 2 of `N = zcash_tip − B + 1`. A node down for
+  a scheduled restart is exempt while it is down.
+- **agree**: A, B and C have the same hash at every height up to their
+  common head. The last 40 heights (`REORG_STRESS_WINDOW`) are checked
+  continuously, and every height at the end.
+- **anchor**: every canonical `parentBeaconBlockRoot` equals zebrad's
+  `getblockhash(N + B − 1)`. Same window as **agree**.
+- **stuck**: no node stays on the same head for more than 5 min while Zcash
+  advances.
+- **tx**: each tx has a receipt on C before 5 **sealed** blocks go by on C
+  (null blocks carry none), and at least 30 s after it was sent. At the end,
+  every tx has the same receipt block on A, B and C.
+- **sip7** (fails at once): no `DeltaMismatch` or `78bab1c2` line more than
+  60 s (`REORG_STRESS_DM_GRACE_S`) after the latest Zcash reorg.
+- **arbiter** (fails at once): never more than 60 consecutive `arbiter
+  forkchoice update failed` lines for one height on any node. This was the
+  6225 signature.
+
+After the stress period, burns stay on and no more events run. The chain
+must fully converge within K. Then a strict final check runs over every
+height.
+
+**Output.** On any violation the run stops at once. On every exit, the run
+dir (`REORG_STRESS_RUN_DIR`, default
+`$TMPDIR/sova-reorg-stress/<utc>-seed<seed>`) gets:
+
+- `seed` and `schedule.txt`;
+- `timeline.txt`, every executed step with Zcash hashes, dwell times and
+  A's tip kind;
+- `checks.log` (one line per check) and `summary.txt`, with events by type
+  and per-log counters such as `slot freed for a new seal`, re-seals,
+  `DeltaMismatch` and failed FCUs;
+- chain dumps of the last 80 heights on each node, next to zebrad's view;
+- `txs.txt`;
+- every node, burner and zebrad log, gzipped.
+
+Reproduce a run with the `REORG_STRESS_SEED=… REORG_STRESS_MINUTES=…` line
+in `summary.txt`. The schedule is exact. Timing against the nodes' poll
+loops is not, so a race-dependent failure can take a few seeds or reruns.
+
+Needs `cast`, `python3` and `perl`. Isolation: zebrad on `:18452` (project
+`sova-reorg-stress-sim`, container `sova-zebrad-reorg-stress`), A on
+10745/10751/31111, B on 10845/10851/31112, C on 10945/10951/31113. All can
+be overridden. Nightly runs `REORG_STRESS_MINUTES=15`, and its run dir goes
+into the uploaded artifact.
+
+### Results on 2026-09-26: 6225 reproduced before the fix; two new failures on `release`
+
+All runs use debug `bin/sova` builds. Pre-fix means `d32b67a` (`6a5aaa6^`);
+`release` means `1c915ad`.
+
+| run | build | settings | result |
+|---|---|---|---|
+| seed 909 | pre-fix | depth ≤ 1, every flip-flop aimed, flip-flop-heavy mix, 20–40 s gaps | **FAIL at the 4th flip-flop: the 6225 stall** (details below) |
+| seed 909 | `release` | the same, K = 15 min | **PASS** (63 events, 45 aimed flip-flops, 98 Zcash flips). The 6225 shape hit 8 times, and each time the fix freed the slot. There were also 10 new-failure-**2** stretches of 113–307 s, so the default K = 3 would have failed it. |
+| seed 303 | pre-fix | depth ≤ 1, flip-flops not aimed (before aiming existed), 45 min | PASS. 46 events, 14 flip-flops, 40 Zcash flips. Randomly timed flips never landed in the poll gap. |
+| seed 808 | `release` | depth ≤ 1, default mix (half the flip-flops aimed), K = 15 min | **PASS** (49 events). The 6225 shape hit 3 times, each recovered by the fix (below). New-failure-**2** stretches of 135–180 s occurred. |
+| seed 505 | `release` | depth ≤ 1, K = 15 min, 45 min | PASS, but new failure **2** occurred: B and C stayed on 513 for 181 s |
+| seed 404 | `release` | depth ≤ 1, 45 min | **FAIL, new failure 2**: B and C stuck at 290 |
+| seed 202 | `release` | full default, 45 min | **FAIL, new failure 2**: B and C stuck at 73 |
+| seed 11 (twice) | `release` | 4 min, 15–30 s gaps | **FAIL, new failure 1** at a depth-2 reorg (run 1) and at a depth-3 reorg (run 2) |
+
+**The 6225 stall on the pre-fix build** (seed 909). `Z_A` at Zcash 145
+became visible 18 ms before A's predicted sealer poll:
+
+    05:11:39.146 sova epoch trigger height=145 sova_height=25 settled=true
+    05:11:41.219 build skipped target=25: sova-hold: zcash anchor mismatch at height 25: block commits to 0x94bb69…(Z_A), our zebrad has 0x04b77…(Z_B)
+    05:11:43.144 expectations and candidates unwound (zcash reorg) to_height=144      <- back to Z_A
+    05:11:55.312 seal journal: slot already signed; re-publishing that block … height=25 journaled=0x27abad…
+    05:11:55.764 Invalid block … mismatched block state root: got 0xf4c362…, expected 0x59dca1…
+    05:11:55.764 arbiter forkchoice update failed; will retry height=25 err=Invalid { "links to previously rejected block" }   (every second)
+    VIOLATION: (arbiter) node A: 61 consecutive 'arbiter forkchoice update failed' for height 25
+
+**The same shape on `release`** (seed 808, height 30). The sequence is the
+same up to the state-root mismatch. Then the fix takes over: `seal journal:
+our own block is invalid; slot freed for a new seal height=30`, the 15 s
+retrigger seals a new block, and the chain goes on.
+
+**New failure 1 (`release`): a depth ≥ 2 Zcash reorg can stop the keeper
+for good.** `run_sealer` calls `sova_head()` (the SIP-4 §7 effective head)
+*before* `SealerCore::process` polls zebrad (`crates/engine/src/driver.rs`).
+The sealer's follower can see the reorg before the expectations follower
+has unwound it. When it does, the head it was handed is still the stale
+tip. `process` then skips the re-emitted epochs below that stale tip as
+settled history (`expected_sova_height(epoch.height) < sova_head` →
+`continue`, then the `retain`), and the follower never emits them again.
+On the next poll the effective head drops to the rollback floor, but the
+queue now has a gap in front. Production is in-order, so every later pass
+stops at `expected != produced_head + 1`. No trigger fires again and
+nothing is logged, not even at `engine=debug`. A and every follower stay on
+the stale tip until A restarts, since a restart rebuilds the queue from a rescan.
+Until this is fixed, runs need `REORG_STRESS_MAX_DEPTH=1` to get past it.
+Depth 1 always survives, because the tip epoch itself is not below the
+stale head.
+
+Run 1, seed 11: a depth-2 reorg at Zcash 134..135 (tip 15), the last
+trigger at 15, then silence while Zcash went 135 → 145. Run 2: a depth-3
+reorg at 141..143 (tip 23), stuck at 23. In the recovered depth-2 reorg of
+run 2 the sealer triggered 14 and 15 at once. Whether a given reorg stalls
+depends on which follower polls first, and in these logs the expectations
+follower logs first by 10–150 ms.
+
+**New failure 2 (`release`): after a flip-flop A → B → A, the followers can
+stay on the B block.** A adopts `Z_A`'s block `X` at `N` and announces it.
+Zcash flips to `B`: A re-seals `N` as `Y`, and the followers unwind their
+candidate trackers above `N − 1` and adopt `Y`. Zcash flips back: A re-seals
+`N` on the same `(parent, Z_A)` slot. The journal (or the deterministic null
+block) gives back `X` itself, which A has already announced, so the sova/1
+service does not announce it again (`announced` LRU). The followers'
+trackers dropped `X` in the second unwind. When `N + 1` (parent `X`)
+arrives, the tracker cannot attach it: `seen[N]` lacks `X`, so
+`best(N + 1)` is `None` and nothing is adopted. reth imports `N + 1…` as
+side blocks while the head stays on `Y`, which is anchored to an orphaned
+Zcash block.
+
+Recovery comes only when A is more than `MAX_ANCESTOR_DEPTH + 1 = 33`
+blocks ahead. At that point `on_announce` hands the tip to the sync driver
+("peer is beyond p2p catch-up range"). In the sim that takes about 3 min
+(5 s Zcash blocks). On the testnet it would be about **33 × 75 s ≈ 41 min
+of the seed and every RPC node serving a stale head**, and a tx sent to the
+RPC node would be mined by A with no receipt shown. Seen in 3 of 3 `release`
+runs at depth ≤ 1:
+
+- seed 202: B and C at 73 while A went to 106;
+- seed 404: B and C at 290, and B at 293 after its scheduled restart;
+- seed 505: B and C at 513 for 181 s, then a jump to 548.
+
+The mechanism does not involve `6a5aaa6`'s code: no INVALID or hold on the
+followers. It needs A to adopt `X`, re-seal on `B` and return to `X`, and
+the pre-fix run happened not to produce that sequence. It happened in all
+5 `release` runs at depth ≤ 1 (seeds 202, 404, 505, 808, 909). Until it is
+fixed, a run passes only with `REORG_STRESS_RECOVERY_MIN=15`, which lets
+the 33-block self-heal happen.

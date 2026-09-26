@@ -183,6 +183,9 @@ pub struct GossipService<B> {
     held: LruMap<B256, Held>,
     in_flight: HashMap<B256, InFlight>,
     last_head: Option<B256>,
+    /// The candidate tracker's rollback generation when the caches were
+    /// last reset (see [`Self::on_rollback_reset`]).
+    rollback_gen: u64,
 }
 
 impl<B> std::fmt::Debug for GossipService<B> {
@@ -208,6 +211,7 @@ impl<B: GossipBackend> GossipService<B> {
             held: LruMap::new(ByLength::new(MAX_HELD)),
             in_flight: HashMap::new(),
             last_head: None,
+            rollback_gen: crate::candidates::rollback_generation(),
         }
     }
 
@@ -242,8 +246,31 @@ impl<B: GossipBackend> GossipService<B> {
         tracing::warn!("sova/1: gossip service stopped (connection channels closed)");
     }
 
+    /// After a Zcash rollback (the candidate tracker was unwound), forget
+    /// which blocks were already fetched and announced. The unwind dropped
+    /// the candidates above the rollback point, and a flip-flop can make
+    /// exactly those blocks current again: they have to be announced and
+    /// fetched again so the validator records them as candidates. Without
+    /// this a follower stayed on the other branch's block until the chain
+    /// was `MAX_ANCESTOR_DEPTH` blocks ahead (the reorg-stress sim,
+    /// 2026-09-26: 30+ blocks, ~41 min at testnet cadence). A block we still
+    /// hold is re-submitted cheaply (the engine answers from its tree; the
+    /// validator re-observes it on the way).
+    fn on_rollback_reset(&mut self) {
+        let g = crate::candidates::rollback_generation();
+        if g == self.rollback_gen {
+            return;
+        }
+        self.rollback_gen = g;
+        self.seen.clear();
+        self.announced.clear();
+        self.last_head = None;
+        tracing::info!("sova/1: zcash rollback; announce and fetch caches reset");
+    }
+
     /// Handles one connection event.
     pub(crate) async fn handle_event(&mut self, ev: PeerEvent, now: Instant) {
+        self.on_rollback_reset();
         match ev {
             PeerEvent::Connected {
                 peer_id,
@@ -671,6 +698,7 @@ impl<B: GossipBackend> GossipService<B> {
     /// Announces every canonical block not yet announced, oldest first,
     /// walking back at most [`MAX_ANNOUNCE_WALK`] blocks from the head.
     pub(crate) fn on_head_tick(&mut self) {
+        self.on_rollback_reset();
         let Some((head_height, head_hash)) = self.backend.head() else {
             return;
         };

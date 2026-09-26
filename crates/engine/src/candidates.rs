@@ -432,6 +432,7 @@ impl CandidateTracker {
 
     /// Drop candidates above `sova_height` (Zcash reorg unwinding).
     pub fn unwind_above(&self, sova_height: u64) {
+        ROLLBACK_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if let Ok(mut seen) = self.seen.lock() {
             seen.retain(|&h, _| h <= sova_height);
         }
@@ -582,6 +583,18 @@ fn replaces_canonical(height: u64, block_hash: [u8; 32]) -> bool {
     CANONICAL
         .get()
         .is_some_and(|reader| reader(height).is_some_and(|ours| ours != block_hash))
+}
+
+/// Bumped on every unwind of the process-global tracker (a Zcash rollback),
+/// so the sova/1 service can forget which blocks it already fetched and
+/// announced: blocks above the rollback point must be able to become
+/// candidates again (see [`rollback_generation`]).
+static ROLLBACK_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many times the process-global tracker has been unwound.
+#[must_use]
+pub fn rollback_generation() -> u64 {
+    ROLLBACK_GENERATION.load(std::sync::atomic::Ordering::SeqCst)
 }
 
 /// Process-global candidate tracker (see module docs for why).

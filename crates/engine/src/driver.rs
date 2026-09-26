@@ -200,6 +200,10 @@ pub struct SealerCore {
     queue: std::collections::BTreeMap<u64, QueueEntry>,
 }
 
+/// Epochs kept below the head (see [`SealerCore::process`]): the same reach
+/// as the stale-tip scan behind the head, beyond Zebra's 99-block reorg limit.
+const SETTLED_KEEP: u64 = crate::expectations::STALE_SCAN_MAX;
+
 /// An epoch awaiting in-order production.
 #[derive(Debug)]
 struct QueueEntry {
@@ -259,6 +263,16 @@ impl SealerCore {
         now: std::time::Instant,
         best_seen: impl Fn(u64) -> Option<consensus::sealer::Candidate>,
     ) -> Result<Vec<SealerOutcome>, ViewError> {
+        // `sova_head` comes from the expectations follower, a separate
+        // poller, and can still come DOWN: a Zcash rollback our follower saw
+        // first, or (after a restart) a stale tip it hasn't recognised yet.
+        // Epochs below it are therefore never dropped for good, only skipped
+        // while covered: the last SETTLED_KEEP stay queued, so if the head
+        // drops they are produced in order. Dropping them (as before) left a
+        // gap the follower never re-fills, and production stopped for good
+        // (the reorg-stress sim, 2026-09-26: a depth >= 2 reorg, or a keeper
+        // restart onto a two-block stale tip).
+        let keep_from = sova_head.saturating_sub(SETTLED_KEEP);
         let events = self.follower.poll(view)?;
         let mut out = Vec::new();
         for event in events {
@@ -268,10 +282,9 @@ impl SealerCore {
                     out.push(SealerOutcome::Rollback { to_height });
                 }
                 FollowerEvent::Epoch(mut epoch) => {
-                    // Below the tip: settled history for the sealer (see
-                    // the retain below). Skipped here too, so a rescan from
-                    // the base after a restart never queues it.
-                    if self.expected_sova_height(epoch.height) < sova_head {
+                    // Far below the head: settled history (a rescan from the
+                    // base after a restart never queues it).
+                    if self.expected_sova_height(epoch.height) < keep_from {
                         continue;
                     }
                     // The sealer needs burns, not the full tx list.
@@ -290,12 +303,11 @@ impl SealerCore {
             }
         }
 
-        // Epochs below the tip are settled history for the sealer (the
-        // arbiter never reorgs below the tip); the tip epoch stays for a
-        // possible late win.
+        // Epochs far below the tip are settled history; the ones within
+        // SETTLED_KEEP stay (see above), and only the tip epoch may late-win.
         let base = self.base_height;
         self.queue
-            .retain(|&h, _| h.saturating_sub(base).saturating_add(1) >= sova_head);
+            .retain(|&h, _| h.saturating_sub(base).saturating_add(1) >= keep_from);
 
         let mut produced_head = sova_head;
         let mut keys: Vec<u64> = self.queue.keys().copied().collect();
@@ -325,10 +337,12 @@ impl SealerCore {
                 // Covered tip. Late win only when a block we can beat
                 // holds the height: a known candidate strictly worse than
                 // our rank. (None — e.g. after a restart — means covered.)
-                let beatable = match (settles, our_rank, best_seen(expected)) {
-                    (true, Some(rank), Some(best)) => best.sealer_rank > rank,
-                    _ => false,
-                };
+                // Only the tip epoch: a covered epoch below it is history.
+                let beatable = expected == sova_head
+                    && match (settles, our_rank, best_seen(expected)) {
+                        (true, Some(rank), Some(best)) => best.sealer_rank > rank,
+                        _ => false,
+                    };
                 if !beatable {
                     continue;
                 }
@@ -516,13 +530,29 @@ pub async fn run_sealer<V: ZcashView>(
     poll_interval: std::time::Duration,
 ) {
     loop {
-        match core.process(
-            &view,
-            sova_head(),
-            &pending,
-            std::time::Instant::now(),
-            |h| crate::candidates::global().best(h),
-        ) {
+        let head = sova_head();
+        // SIP-4 §7 can only tell whether the head is stale once our own
+        // expectations follower has recorded the head's epoch. Until then
+        // (a restart racing its rescan, or a brief lag behind the sealer's
+        // follower) do not build on it: a keeper restarted onto a stale tip
+        // built its next block on that tip before the tip was recognised as
+        // stale, and followers stayed on that branch (the reorg-stress sim,
+        // 2026-09-26). Only when the expectations follower runs at all.
+        let expectations = crate::expectations::global();
+        if head > 0
+            && expectations.scanned_through().is_some()
+            && expectations.record(head).is_none()
+        {
+            tracing::debug!(
+                head,
+                "sealer: waiting for our Zcash scan to record the head's epoch"
+            );
+            tokio::time::sleep(poll_interval).await;
+            continue;
+        }
+        match core.process(&view, head, &pending, std::time::Instant::now(), |h| {
+            crate::candidates::global().best(h)
+        }) {
             Ok(outcomes) => {
                 for outcome in outcomes {
                     match outcome {
@@ -822,6 +852,97 @@ mod tests {
         assert_eq!(staged.zcash_hash, [2; 32]);
         assert_eq!(staged.settlements.len(), 1);
         assert!(pending.take().is_none(), "mailbox drains exactly once");
+    }
+
+    fn cadence_blocks(
+        tag: u8,
+        heights: std::ops::RangeInclusive<u64>,
+        first_prev: [u8; 32],
+    ) -> Vec<consensus::follower::BlockView> {
+        let mut prev = first_prev;
+        heights
+            .map(|h| {
+                let hash = [tag.wrapping_add(h as u8); 32];
+                let b = consensus::follower::BlockView {
+                    height: h,
+                    hash,
+                    prev_hash: prev,
+                    txs: vec![],
+                    time: 0,
+                    pools: None,
+                };
+                prev = hash;
+                b
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_deep_reorg_seen_before_the_head_unwinds_still_reseals() {
+        let our = addr(0xAA);
+        let pending = PendingEpoch::default();
+        let mut core = SealerCore::new(config(our, DEFAULT_RANK_STEP), 1, 50);
+        // Zcash 1..=5, all produced: head 5.
+        let a = OneShotView {
+            blocks: cadence_blocks(0x10, 1..=5, [0; 32]),
+        };
+        let _ = core.process(&a, 0, &pending, Instant::now(), NO_BEST);
+        // Depth-2 reorg: 4 and 5 replaced. Our follower sees it while the
+        // node's head (the other follower) is still the stale tip, 5.
+        let mut blocks = cadence_blocks(0x10, 1..=3, [0; 32]);
+        let tail_prev = blocks[2].hash;
+        blocks.extend(cadence_blocks(0x80, 4..=5, tail_prev));
+        let b = OneShotView { blocks };
+        let later = Instant::now() + RETRIGGER + Duration::from_secs(1);
+        let out = core
+            .process(&b, 5, &pending, later, NO_BEST)
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert!(out.contains(&SealerOutcome::Rollback { to_height: 3 }));
+        // The head comes down to the kept tip (3): 4 and 5 are re-sealed in
+        // order. Before the fix they had been dropped as settled history
+        // and nothing was ever produced again.
+        let out = core
+            .process(&b, 3, &pending, later, NO_BEST)
+            .unwrap_or_else(|e| panic!("{e}"));
+        let heights: Vec<u64> = out
+            .iter()
+            .filter_map(|o| match o {
+                SealerOutcome::Trigger { sova_height, .. } => Some(*sova_height),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(heights, vec![4, 5]);
+        assert_eq!(pending.take_for(4).map(|a| a.zcash_hash), Some([0x84; 32]));
+    }
+
+    #[test]
+    fn a_restart_onto_a_stale_tip_still_reseals_below_it() {
+        let our = addr(0xAA);
+        let pending = PendingEpoch::default();
+        // A restarted sealer rescans Zcash 1..=5 while the node's head still
+        // reads 5: its tip (4, 5) is stale but not recognised yet.
+        let mut core = SealerCore::new(config(our, DEFAULT_RANK_STEP), 1, 50);
+        let v = OneShotView {
+            blocks: cadence_blocks(0x10, 1..=5, [0; 32]),
+        };
+        let out = core
+            .process(&v, 5, &pending, Instant::now(), NO_BEST)
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert!(out.is_empty(), "everything covered while the head reads 5");
+        // Then the head drops to 3 (the stale tip recognised): 4 and 5 are
+        // produced in order. Before the fix, epoch 4 had been dropped as
+        // settled history and production never resumed.
+        let out = core
+            .process(&v, 3, &pending, Instant::now(), NO_BEST)
+            .unwrap_or_else(|e| panic!("{e}"));
+        let heights: Vec<u64> = out
+            .iter()
+            .filter_map(|o| match o {
+                SealerOutcome::Trigger { sova_height, .. } => Some(*sova_height),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(heights, vec![4, 5]);
     }
 
     #[test]
