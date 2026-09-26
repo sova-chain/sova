@@ -109,7 +109,7 @@ Get `snapshot.sh` from a checkout of the repo at the release tag:
 
 ```bash
 git clone https://github.com/sova-chain/sova ~/.sova-testnet/src
-git -C ~/.sova-testnet/src checkout v0.1.4
+git -C ~/.sova-testnet/src checkout v0.1.5
 SNAP=~/.sova-testnet/src/box/testnet/snapshot.sh
 ```
 
@@ -230,7 +230,7 @@ tarball holds `sova`, `sova-miner`, `SHA256SUMS` and `BUILD-INFO`.
 
 ```bash
 cd ~/.sova-testnet
-TAG=v0.1.4
+TAG=v0.1.5
 PLATFORM=linux-x86_64          # or darwin-arm64
 BASE=https://github.com/sova-chain/sova/releases/download/$TAG
 curl -fLO "$BASE/SHA256SUMS"
@@ -248,13 +248,13 @@ release. On an Apple Silicon Mac, use the `darwin-arm64` binary on the
 Mac itself, or build from source in a `linux/arm64` container.
 
 (`v0.1.3` and earlier needed glibc 2.38 and a CPU with ADX and BMI2; on
-anything older they exit with `Illegal instruction`. Use `v0.1.4`.)
+anything older they exit with `Illegal instruction`. Use `v0.1.5` or later.)
 
 **From source** (fallback, or any other platform):
 
 ```bash
 git clone https://github.com/sova-chain/sova ~/.sova-testnet/src   # skip if you cloned in 1b
-cd ~/.sova-testnet/src && git checkout v0.1.4
+cd ~/.sova-testnet/src && git checkout v0.1.5
 cargo build --release --locked -p sova
 cargo build --release --locked -p sova-miner --manifest-path crates/burn-wallet/Cargo.toml
 install -m 0755 target/release/sova crates/burn-wallet/target/release/sova-miner ~/.sova-testnet/bin/
@@ -616,7 +616,7 @@ node has no such limit.
 | `SOVA_SIP6=1 mine mode requires SOVA_SEALER_KEYSTORE` and the node exits | `SOVA_FOLLOW_ONLY` was unset without a keystore | Keep `SOVA_FOLLOW_ONLY=1` (2d), or set `SOVA_SEALER_KEYSTORE` (4) |
 | `no SOVA_ZEBRAD_RPC: importing without settlement enforcement (C5 off)` | The env didn't reach `sova` | Run `. ./testnet.env` in the same shell that starts `sova` |
 | `usage: sova ...` and the node exits | An argument other than `genesis-hash` (releases after v0.1.3 also take `--version` and `--help`) | `sova` takes no other arguments; everything is `SOVA_*` env |
-| `sova genesis-hash` or block 0 isn't `0xb7391a4a83644e1dce95c95348a005febedeaa12fa46eb30ac0dfb5f36f00b71` | Wrong release, or `SOVA_SIP7` isn't `1` | Use `v0.1.4` and the unedited `testnet.env` |
+| `sova genesis-hash` or block 0 isn't `0xb7391a4a83644e1dce95c95348a005febedeaa12fa46eb30ac0dfb5f36f00b71` | Wrong release, or `SOVA_SIP7` isn't `1` | Use `v0.1.5` and the unedited `testnet.env` |
 | `0 bootnode(s)` in the discovery line, or never `sova/1: peer active` | `SOVA_BOOTNODES` empty or not exported, or outbound `30303` blocked | Check `echo $SOVA_BOOTNODES`; allow outbound TCP and UDP `30303`; then [No peers after 5 minutes](#no-peers-after-5-minutes) |
 | `WARN Post-merge network, but never seen beacon client. Please launch one to follow the chain!` every 5 minutes | reth's check for an Ethereum consensus client. Sova has none by design, so on v0.1.3 it fires until the node receives its first block (releases after v0.1.3 don't print it) | Nothing to launch. If it keeps coming, the node has no blocks yet: check its peers (below) |
 | `bad SOVA_BOOTNODES entry` | A mangled enode | Copy the line from `testnet.env` exactly |
