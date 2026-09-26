@@ -20,18 +20,14 @@ This guide takes you from nothing to:
 
 A laptop (Linux x86_64 or Apple Silicon Mac) or a small VPS is enough.
 
----
-
-## Filled at launch
-
-The testnet is live and the network's values are filled in. The one
-still marked `<<LIKE_THIS>>` comes after launch: the keeper
-disclosure. Maintainers: replace each one when it exists, then delete
-this section.
-
-| Placeholder | What it is | Produced by |
-| --- | --- | --- |
-| `<<KEEPER_DISCLOSURE>>` | Where the project's keeper-miner disclosure (its addresses and budget) is posted | `deploy.sh` records the addresses (`out/servers/sova-keeper-1.keeper_*`); text template in `docs/ops/keeper-miner.md` |
+<!--
+Maintainers: one placeholder is still open, `<<KEEPER_DISCLOSURE>>` in 3c
+("How SOVA is paid"): where the project's keeper-miner disclosure (its
+addresses and budget) is posted. `deploy.sh` records the addresses
+(`out/servers/sova-keeper-1.keeper_*`); the text template is in
+`docs/ops/keeper-miner.md`. Replace it with the link and drop the
+"pending" wording around it.
+-->
 
 ---
 
@@ -52,7 +48,7 @@ work with outbound connections only. Opening `30303` (TCP and UDP) and
 | | |
 | --- | --- |
 | **OS** | Prebuilt binaries: Linux x86_64 and macOS on Apple Silicon. Anything else: build from source. |
-| **Tools** | Docker (zebrad runs from the official `zfnd/zebra:6.3.0` image), `curl`, `jq`, `zstd` (snapshot restore), `git`, `python3` (optional, for decimal balances). |
+| **Tools** | Docker (zebrad runs from the official `zfnd/zebra:6.3.0` image), `curl`, `jq`, `zstd` (snapshot restore), `git`. Optional: `aria2c` (faster snapshot download), `python3` (decimal balances), Foundry's `cast` (sending SOVA from the command line). |
 | **Disk** | Zcash testnet state measured **12 GB** at height 4,382,331 (2026-09-22). A snapshot restore needs about twice that while the archive and the state both exist. The project's own nodes use 40 GB volumes. Plan on 40 GB free. |
 | **Time** | From zero, a zebrad testnet sync took about **12 hours** in our own run (2026-09-22, native zebrad on a laptop with an external SSD). The snapshot restore below is the fast path: download, check, start, and zebrad only syncs from the snapshot's height. |
 | **Machine size** | The project's keeper (zebrad, a sealing Sova node and a miner) runs on a Hetzner CX33 with a 40 GB volume. |
@@ -113,19 +109,26 @@ Get `snapshot.sh` from a checkout of the repo at the release tag:
 
 ```bash
 git clone https://github.com/sova-chain/sova ~/.sova-testnet/src
-git -C ~/.sova-testnet/src checkout v0.1.3
+git -C ~/.sova-testnet/src checkout v0.1.4
 SNAP=~/.sova-testnet/src/box/testnet/snapshot.sh
 ```
 
-Download the three files into one directory:
+Download the three files into one directory. The archive is 11 GB, and
+a single stream can be slow far from the server (0.2–0.7 MB/s in one
+test, several hours). `aria2c` fetches it over 8 connections and resumes
+if interrupted (`apt install aria2`, `brew install aria2`):
 
 ```bash
 mkdir -p ~/.sova-testnet/snapshot && cd ~/.sova-testnet/snapshot
-curl -fLO https://dl.testnet.sova.io/zebrad-testnet/4390524/zebrad-testnet-4390524.tar.zst
+aria2c -x 8 -s 8 -c https://dl.testnet.sova.io/zebrad-testnet/4390524/zebrad-testnet-4390524.tar.zst
 curl -fLO https://dl.testnet.sova.io/zebrad-testnet/4390524/SHA256SUMS
 curl -fLO https://dl.testnet.sova.io/zebrad-testnet/4390524/snapshot.json
 jq -r '.height, .hash, .sha256, .zebra_version' snapshot.json
 ```
+
+Without `aria2c`, use `curl -fLO -C - <url>` for the archive: one stream,
+but re-running the same command resumes where it stopped. Either way,
+the checksum checks below catch a broken download.
 
 The height, hash and SHA-256 must equal `4390524`,
 `000007d5b1a082776d85c9bc5eabc0b093110675c33c78d9eb78c5b0449a57bb` and `e78e551d89b66a07b6623b3eb02ea71c5adf532addd510e59b55717adfd2c4a3`, the copy posted outside
@@ -144,16 +147,35 @@ anything but zebrad state. The state format must match the zebrad
 version in `snapshot.json` (`zfnd/zebra:6.3.0`, state format 28). An older
 zebrad ignores it and full-syncs.
 
+Keep `cache_dir = "/var/lib/sova/zebrad"` in `zebrad.toml` as written in
+1a: that is where the container sees `~/.sova-testnet/zebrad-state`
+(1c mounts it there), so don't change it to the host path the restore
+prints. The restored files belong to you until 1c's `chown`, so do 1c
+after this step.
+
 Start zebrad (1c), then check the snapshot's block on your own node:
 
 ```bash
 bash "$SNAP" verify --rpc http://127.0.0.1:18232 --manifest ~/.sova-testnet/snapshot/snapshot.json
 ```
 
-Then compare that hash at that height with any public Zcash testnet
-block explorer. If it differs, or your zebrad stalls and won't follow
-the network: stop zebrad, empty `~/.sova-testnet/zebrad-state`, and
-full-sync.
+Then compare that hash at that height with a source the project doesn't
+run. CipherScan's testnet explorer shows it at
+`https://testnet.cipherscan.app/block/<height>`:
+
+```bash
+curl -s https://testnet.cipherscan.app/block/4390524 | grep -o '000007d5b1a0[0-9a-f]*' | sort -u
+```
+
+That prints the hash above if the explorer agrees (it did on
+2026-09-25). If the explorer is down, ask a second zebrad you run, or
+someone else's, for `getblockhash 4390524`.
+
+If the hash differs: stop zebrad, empty `~/.sova-testnet/zebrad-state`,
+and full-sync. If zebrad stops advancing after the restore, restart it
+first (`docker restart -t 110 zebrad`): in one test it stalled several
+times while catching up and moved on after each restart. Full-sync only
+if restarts don't help.
 
 ### 1c. Start zebrad
 
@@ -208,7 +230,7 @@ tarball holds `sova`, `sova-miner`, `SHA256SUMS` and `BUILD-INFO`.
 
 ```bash
 cd ~/.sova-testnet
-TAG=v0.1.3
+TAG=v0.1.4
 PLATFORM=linux-x86_64          # or darwin-arm64
 BASE=https://github.com/sova-chain/sova/releases/download/$TAG
 curl -fLO "$BASE/SHA256SUMS"
@@ -219,14 +241,20 @@ mkdir -p release && tar -xzf "sova-box-bin-$PLATFORM.tar.gz" -C release
 install -m 0755 release/sova release/sova-miner bin/
 ```
 
-The Linux binary is built on GitHub's `ubuntu-latest` runner. If it
-won't start on an older distribution, build from source.
+The Linux binary is built on glibc 2.31 for any x86-64-v2 CPU (SSE4.2,
+about 2009 on): it runs on Ubuntu 20.04+, Debian 11+, RHEL 9 and Amazon
+Linux 2023 (`ldd --version` shows yours), and `sova --version` prints the
+release. On an Apple Silicon Mac, use the `darwin-arm64` binary on the
+Mac itself, or build from source in a `linux/arm64` container.
+
+(`v0.1.3` and earlier needed glibc 2.38 and a CPU with ADX and BMI2; on
+anything older they exit with `Illegal instruction`. Use `v0.1.4`.)
 
 **From source** (fallback, or any other platform):
 
 ```bash
 git clone https://github.com/sova-chain/sova ~/.sova-testnet/src   # skip if you cloned in 1b
-cd ~/.sova-testnet/src && git checkout v0.1.3
+cd ~/.sova-testnet/src && git checkout v0.1.4
 cargo build --release --locked -p sova
 cargo build --release --locked -p sova-miner --manifest-path crates/burn-wallet/Cargo.toml
 install -m 0755 target/release/sova crates/burn-wallet/target/release/sova-miner ~/.sova-testnet/bin/
@@ -246,20 +274,20 @@ curl -fsSLO https://dl.testnet.sova.io/seeds.json
 `testnet.env` holds the network's settings. Every node must use the same
 values for these:
 
-```
-SOVA_CHAIN=sova-testnet
-SOVA_GOSSIP=p2p
-SOVA_EPOCH_BASE=4388500
-SOVA_EMISSION_SCHEDULE=flat
-SOVA_SIP6=1
-SOVA_SIP7=1
-SOVA_BOOTNODES=enode://4788bec82fa9559623dd997cd97a01d0203fc8b419712f3fcfbb186b006496c5896be5daaa9bdabb9d8adaa950b3c6e7a66278d936a30338d1497639be25c17f@2.28.138.164:30303
+```bash
+export SOVA_CHAIN=sova-testnet
+export SOVA_GOSSIP=p2p
+export SOVA_EPOCH_BASE=4388500
+export SOVA_EMISSION_SCHEDULE=flat
+export SOVA_SIP6=1
+export SOVA_SIP7=1
+export SOVA_BOOTNODES=enode://4788bec82fa9559623dd997cd97a01d0203fc8b419712f3fcfbb186b006496c5896be5daaa9bdabb9d8adaa950b3c6e7a66278d936a30338d1497639be25c17f@2.28.138.164:30303
 ```
 
-Below its `---- yours ----` line are two values of your own:
-`SOVA_ZEBRAD_RPC=http://127.0.0.1:18232` (your zebrad) and
-`SOVA_DATADIR=$HOME/.sova-testnet/node` (where your node keeps its chain
-and its node key).
+Below its `---- yours ----` line are three values of your own:
+`SOVA_ZEBRAD_RPC=http://127.0.0.1:18232` (your zebrad),
+`SOVA_DATADIR="$HOME/.sova-testnet/node"` (where your node keeps its chain
+and its node key) and `SOVA_FOLLOW_ONLY=1` (2d; step 4 removes it).
 
 `seeds.json` repeats the same values in JSON, with the genesis hash:
 `jq . seeds.json`.
@@ -429,11 +457,12 @@ about 330.
   epoch gets a null block and mints nothing.
 
 So a burn-only miner is paid whenever someone else ranked in the same
-epoch seals. The project runs a disclosed keeper miner that burns a small
-fixed amount (10,000 zat per epoch by default) about every other block
-and seals its epochs (`<<KEEPER_DISCLOSURE>>`). It has no special
-standing, and anyone who burns more outranks it. To be sure your epochs
-get sealed, and to earn the tip, seal them yourself (step 4).
+epoch seals. The project runs a keeper miner that burns a small fixed
+amount (10,000 zat per epoch by default) about every other block and
+seals its epochs. Its disclosure (addresses and budget) is **pending**,
+not posted yet: `<<KEEPER_DISCLOSURE>>` marks where the link goes. It has
+no special standing, and anyone who burns more outranks it. To be sure
+your epochs get sealed, and to earn the tip, seal them yourself (step 4).
 
 ### Optional: let an agent mine
 
@@ -532,10 +561,25 @@ Each withdrawal's `amount` is in gwei. A sealed block has a 97-byte
 sova-miner --data-dir ~/.sova-testnet/miner export-evm-key --i-understand
 ```
 
-It prints the key on stdout. Anyone who sees it can take both your SOVA
-and your TAZ. Import it into an EVM wallet and add the network: chain ID
-`82330`, currency `SOVA`, RPC `https://rpc.testnet.sova.io` (or your own
-`http://127.0.0.1:8545`).
+It prints the key on stdout (its warnings go to stderr). Anyone who sees
+it can take both your SOVA and your TAZ. Import it into an EVM wallet and
+add the network: chain ID `82330`, currency `SOVA`, RPC
+`https://rpc.testnet.sova.io` (or your own `http://127.0.0.1:8545`).
+
+No wallet app, for example on a server: Foundry's `cast`
+(`curl -L https://foundry.paradigm.xyz | bash`, then `foundryup`) signs
+locally and sends through any RPC. SOVA has 18 decimals, so `1ether` is
+1 SOVA:
+
+```bash
+KEY=$(sova-miner --data-dir ~/.sova-testnet/miner export-evm-key --i-understand)   # warnings still show; only the key lands in KEY
+cast send --rpc-url https://rpc.testnet.sova.io --private-key "$KEY" 0x<to address> --value 1ether
+unset KEY
+cast balance --ether --rpc-url https://rpc.testnet.sova.io 0x<evm address>
+```
+
+`cast send` waits for the receipt and prints it (`status 1` is success).
+Use `http://127.0.0.1:8545` instead once your own node is synced.
 
 The public RPC is read-and-broadcast only (no signing, no admin or
 debug methods) and allows 50 requests per 10 seconds per IP. Your own
@@ -571,14 +615,17 @@ node has no such limit.
 | --- | --- | --- |
 | `SOVA_SIP6=1 mine mode requires SOVA_SEALER_KEYSTORE` and the node exits | `SOVA_FOLLOW_ONLY` was unset without a keystore | Keep `SOVA_FOLLOW_ONLY=1` (2d), or set `SOVA_SEALER_KEYSTORE` (4) |
 | `no SOVA_ZEBRAD_RPC: importing without settlement enforcement (C5 off)` | The env didn't reach `sova` | Run `. ./testnet.env` in the same shell that starts `sova` |
-| `usage: sova ...` and the node exits | An argument other than `genesis-hash` | `sova` takes no arguments; everything is `SOVA_*` env |
-| `sova genesis-hash` or block 0 isn't `0xb7391a4a83644e1dce95c95348a005febedeaa12fa46eb30ac0dfb5f36f00b71` | Wrong release, or `SOVA_SIP7` isn't `1` | Use `v0.1.3` and the unedited `testnet.env` |
-| `0 bootnode(s)` in the discovery line, or never `sova/1: peer active` | `SOVA_BOOTNODES` empty or not exported, or outbound `30303` blocked | Check `echo $SOVA_BOOTNODES`; allow outbound TCP and UDP `30303` |
+| `usage: sova ...` and the node exits | An argument other than `genesis-hash` (releases after v0.1.3 also take `--version` and `--help`) | `sova` takes no other arguments; everything is `SOVA_*` env |
+| `sova genesis-hash` or block 0 isn't `0xb7391a4a83644e1dce95c95348a005febedeaa12fa46eb30ac0dfb5f36f00b71` | Wrong release, or `SOVA_SIP7` isn't `1` | Use `v0.1.4` and the unedited `testnet.env` |
+| `0 bootnode(s)` in the discovery line, or never `sova/1: peer active` | `SOVA_BOOTNODES` empty or not exported, or outbound `30303` blocked | Check `echo $SOVA_BOOTNODES`; allow outbound TCP and UDP `30303`; then [No peers after 5 minutes](#no-peers-after-5-minutes) |
+| `WARN Post-merge network, but never seen beacon client. Please launch one to follow the chain!` every 5 minutes | reth's check for an Ethereum consensus client. Sova has none by design, so on v0.1.3 it fires until the node receives its first block (releases after v0.1.3 don't print it) | Nothing to launch. If it keeps coming, the node has no blocks yet: check its peers (below) |
 | `bad SOVA_BOOTNODES entry` | A mangled enode | Copy the line from `testnet.env` exactly |
 | Head stays low while peers are connected | Your zebrad isn't synced: the node syncs only as far as its zebrad has scanned | Finish 1d |
 | Head stopped moving | Compare `eth_blockNumber` with `https://rpc.testnet.sova.io`. If the public RPC is stuck too, the network is waiting for a sealer, not you | Nothing to fix locally. Running a sealing node (4) helps |
 | `settlement mismatch at height ...` | A block contradicts your own zebrad | Check your zebrad is on Zcash testnet and synced. If you restored a snapshot, re-check its hash with an explorer; if in doubt, full-sync |
 | `SOVA_EPOCH_BASE is required for sova-testnet` or `... contradicts the sova-testnet epoch base` | The env didn't carry the network's B, or carries another | Use the unedited `testnet.env` (a release that knows B needs none) |
+| `expectations poll failed; retrying` every 2 seconds | The node can't reach zebrad's RPC, for example while zebrad restarts | Nothing, if zebrad is coming back; otherwise see the next row |
+| zebrad's height stops rising after a snapshot restore, with `error downloading and verifying block ... TransparentInputNotFound` | zebrad's catch-up stalled waiting on a block download | `docker restart -t 110 zebrad`; repeat if it stalls again. Full-sync only if restarts don't help |
 | zebrad RPC refuses connections | Container down, or RPC not reachable | `docker ps`; `docker logs zebrad`; keep `listen_addr = "0.0.0.0:18232"` inside the container and `-p 127.0.0.1:18232:18232` |
 | Port already in use | Something else holds 8545, 8551 or 30303 | `SOVA_HTTP_PORT`, `SOVA_AUTH_PORT`, `SOVA_P2P_PORT` |
 | `Too many open files` | Low file-descriptor limit | Raise it (`ulimit -n`); the project's unit sets `LimitNOFILE=1048576` |
@@ -588,6 +635,54 @@ node has no such limit.
 | Faucet `429` `address_cooldown`, `ip_cooldown`, `daily_cap_reached` | A limit was hit | Wait for `Retry-After` |
 | Faucet `503` `busy` | Every faucet coin is in an unmined drip | Retry after the next block |
 | Burns confirm but no SOVA arrives | Your epochs had no ranked sealer (null blocks), or they were before `4388500`, or the credit address is `LEGACY` | Seal yourself (4); check `report` for a `WARNING`; check the block's withdrawals (5) |
+
+### No peers after 5 minutes
+
+The node logs a `Status` line every 25 seconds with its peer count, and
+also answers over RPC:
+
+```bash
+grep -o 'connected_peers=[0-9]*' node.log | tail -1
+rpc http://127.0.0.1:8545 net_peerCount | jq -r .result    # "0x0" = no peers
+```
+
+A healthy node on an ordinary connection logs `sova/1: peer active`
+within seconds of starting. If it's still at 0 after 5 minutes:
+
+1. **Check the bootnode reached the node.** The discovery line must say
+   `1 bootnode(s)` (or more), and `echo $SOVA_BOOTNODES` must print the
+   enode from `testnet.env`.
+2. **Check outbound 30303, UDP and TCP.** Discovery uses UDP 30303 and the
+   peer connection uses TCP 30303. Firewalls, cloud security groups
+   (egress rules) and some office or hotel networks block one or both.
+   `nc -vz 2.28.138.164 30303` tests TCP only, and a successful connect
+   doesn't prove the path works (next point).
+3. **Suspect a VPN, proxy or unusual network path.** Some paths let the
+   TCP connection open but break the encrypted RLPx handshake that
+   follows, and drop the UDP replies discovery waits for. In the
+   project's own stranger test, a machine whose traffic left through Hong
+   Kong got 0 peers for almost two hours, while a fresh node on an
+   ordinary VPS joined within seconds. Turn off the VPN or proxy, or try
+   another network or a small VPS.
+4. **Try the bootnode as a static peer.** This skips discovery and dials
+   it directly, and keeps redialing:
+
+   ```bash
+   . ./testnet.env
+   export SOVA_P2P_PEERS="$SOVA_BOOTNODES"
+   sova 2>&1 | tee -a node.log
+   ```
+
+   `static peer ... not connected; redialing` over and over means the
+   connection itself fails: go back to 2 and 3.
+5. **See why the handshake fails.** Restart with
+   `RUST_LOG=info,net::session=trace` and look for `ecies auth failed`:
+   the TCP connection opened, and then the handshake was cut off. That
+   points at the network path (3), not at your configuration.
+
+Your node needs just one peer: any Sova node works as a bootnode, so a
+friend's enode (their node logs it as `local enode enode://...`) is as
+good as the project's.
 
 Still stuck: open an issue at `github.com/sova-chain/sova/issues` with
 your `node.log` lines, or ask in `t.me/sovazec`.

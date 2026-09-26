@@ -5,7 +5,9 @@ not part of the Sova protocol (SIP-5 withdrawn). It is openly custodial:
 NEAR Chain Signatures hold the ZEC, a Sova Labs relayer tells the NEAR vault
 about burns on Sova, and Sova Labs takes a small operating fee. The network
 makes no guarantees about it; sova.io will link it from an ecosystem page.
-Design: `docs/design/wz-cash.md`. No product code exists yet.
+Design: `docs/design/wz-cash.md`. Build plan and phase 1 status:
+`docs/design/wz-cash-build.md` (2026-09-25: Sova contracts and tests done,
+NEAR vault core done and unit-tested, relayer skeleton; nothing deployed).
 
 **Depends on:** SIP-4 v1 (landing), SIP-4 v1.1 `spentBy` (vault monitoring
 from Zcash), SIP-6 (accepted; censorship-resistance for the product's own

@@ -1,7 +1,8 @@
 ---
 // /build: for developers. What the SIP-4 precompile answers, the IZcash
 // interface, the rules a contract relies on, what stays private, the patterns
-// it enables, how to try it locally, and how to contribute (merged here rather
+// it enables, block timing (one block per Zcash block: batch, pipeline,
+// wait, count Zcash heights), how to try it locally, and how to contribute (merged here rather
 // than a separate /contribute: one developer page, one nav slot).
 // Sources: sips/sip-4-draft-zcash-state-precompile.md, contracts/src/zcash/
 // (IZcash.sol, ZcashLib.sol, ZecEscrow.sol, ZecCheckout.sol),
@@ -10,6 +11,10 @@
 import Site from '../layouts/Site.astro';
 import Tag from '../components/Tag.astro';
 import { repo, CLONE } from '../data/sova';
+import testnet from '../../../infra/testnet/deployments/sova-testnet.json';
+
+// The testnet's Multicall3, from the deploy record.
+const MULTICALL3 = testnet.multicall3;
 
 const methods = [
   ['anchor()', 'The Zcash block this Sova block commits to: height and hash.'],
@@ -74,6 +79,15 @@ ZcashLib.Payment memory p = ZcashLib.requireOutputPays(
 
   <h2>shielded stays shielded</h2>
   <p>The precompile reads transparent Zcash state. Shielded amounts, recipients, senders and memos stay private, from contracts as from everyone. A shielded wallet pays a transparent address with a z→t send; that one output is public, and it is what a contract verifies.</p>
+
+  <h2 id="timing">timing</h2>
+  <p>Sova makes one block per Zcash block: about a minute on average, and a five-minute gap is normal. Design for few, full transactions.</p>
+  <dl class="kv rules">
+    <dt>batch</dt><dd>Put many calls in one transaction: Multicall3 at <code>{MULTICALL3}</code> on the testnet, or an EIP-7702 batch from your own account (Prague rules apply).</dd>
+    <dt>pipeline</dt><dd>Send a run of transactions with consecutive nonces at once. Don’t wait for each receipt before sending the next.</dd>
+    <dt>wait</dt><dd><code>eth_sendRawTransactionSync</code> returns the receipt. A node waits up to 300 s (<code>SOVA_SEND_SYNC_TIMEOUT_SECS</code>); the public RPC waits up to 90 s. After a timeout, poll <code>eth_getTransactionReceipt</code>: the transaction is still in the pool.</dd>
+    <dt>clock</dt><dd>Count time in Zcash blocks: <code>anchor()</code>’s height, or <code>block.timestamp</code> (the Zcash block’s time). Not <code>block.number</code>: Sova’s block rate may change, Zcash’s height won’t. <code>ZecCheckout</code> counts its payment window in Zcash blocks.</dd>
+  </dl>
 
   <h2 id="patterns">patterns</h2>
   <ul class="pats">

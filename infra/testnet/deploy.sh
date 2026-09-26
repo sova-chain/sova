@@ -59,7 +59,10 @@ if [[ "${CMD}" == check || "${CMD}" == render ]]; then
   validate_config
 else
   validate_servers
+  validate_edge_config
   validate_sip6
+  validate_checkout_config
+  validate_health_config
 fi
 EXTRA_BOOTNODES="${EXTRA_BOOTNODES:-}"
 REMOTE_DIR=/tmp/sova-infra-kit
@@ -109,10 +112,46 @@ SOVA_HTTP_PORT=${SOVA_HTTP_PORT}
 SOVA_AUTH_PORT=${SOVA_AUTH_PORT}
 FAUCET_PORT=${FAUCET_PORT}
 HEALTH_REFERENCE_RPC=${ref_rpc}
+BLOCK_AGE_ALERT_MIN=${BLOCK_AGE_ALERT_MIN}
+NULL_RUN_ALERT=${NULL_RUN_ALERT}
 KEEPER_PER_EPOCH_ZAT=${KEEPER_PER_EPOCH_ZAT:-10000}
 KEEPER_BUDGET_ZAT=${KEEPER_BUDGET_ZAT:-35000000}
 KEEPER_LIFETIME_BUDGET_ZAT=${KEEPER_LIFETIME_BUDGET_ZAT:-1000000000}
 EOF
+  # The checkout relayer runs on the faucet host only.
+  if [[ "${role}" == faucet && "${CHECKOUT_RELAYER}" == 1 ]]; then
+    cat <<EOF
+CHECKOUT_RELAYER=1
+CHECKOUT_RELAYER_PORT=${CHECKOUT_RELAYER_PORT}
+CHECKOUT_RELAYER_SOVA_RPC=${CHECKOUT_RELAYER_SOVA_RPC}
+CHECKOUT_RELAYER_RPC_PER_10S=${CHECKOUT_RELAYER_RPC_PER_10S}
+CHECKOUT_RELAYER_CORS_ORIGIN=${CHECKOUT_RELAYER_CORS_ORIGIN}
+CHECKOUT_RELAYER_LISTINGS=${CHECKOUT_RELAYER_LISTINGS}
+CHECKOUT_RELAYER_CHECKOUT=${CHECKOUT_RELAYER_CHECKOUT}
+CHECKOUT_ASHWINGS=${CHECKOUT_ASHWINGS}
+CHECKOUT_START_BLOCK=${CHECKOUT_START_BLOCK}
+CHECKOUT_RELAYER_NODE_MAJOR=${CHECKOUT_RELAYER_NODE_MAJOR}
+CHECKOUT_RELAYER_MAX_OPEN=${CHECKOUT_RELAYER_MAX_OPEN}
+CHECKOUT_RELAYER_RESERVE_PER_IP_PER_HOUR=${CHECKOUT_RELAYER_RESERVE_PER_IP_PER_HOUR}
+CHECKOUT_RELAYER_RESERVE_PER_HOUR=${CHECKOUT_RELAYER_RESERVE_PER_HOUR}
+CHECKOUT_RELAYER_RESERVE_PER_MINUTE=${CHECKOUT_RELAYER_RESERVE_PER_MINUTE}
+CHECKOUT_RELAYER_CLAIM_PER_IP_PER_HOUR=${CHECKOUT_RELAYER_CLAIM_PER_IP_PER_HOUR}
+CHECKOUT_RELAYER_MIN_BALANCE_WEI=${CHECKOUT_RELAYER_MIN_BALANCE_WEI}
+CHECKOUT_RELAYER_ALERT_BALANCE_WEI=${CHECKOUT_RELAYER_ALERT_BALANCE_WEI}
+EOF
+  else
+    echo "CHECKOUT_RELAYER=0"
+  fi
+}
+
+# The relayer's code (tools/checkout-relayer: src/ and the lockfile; no
+# node_modules, tests or e2e) staged for rsync to <remote>/checkout-relayer/.
+# From this checkout, like host/: what you deploy is what you reviewed.
+relayer_stage() {
+  local src="${REPO_ROOT}/tools/checkout-relayer" dir
+  dir="$(mktemp -d)"
+  cp -R "${src}/src" "${src}/package.json" "${src}/package-lock.json" "${dir}/"
+  printf '%s' "${dir}"
 }
 
 # Copies host/ and a host.env to the server and runs setup-host.sh with
@@ -123,10 +162,13 @@ remote_setup() { # server-entry bootnodes [--enode-only]
   name="$(srv_name "${s}")"
   envf="${OUT_DIR}/servers/${name}.host.env"
   host_env "${s}" "$2" >"${envf}"
+  local relayer=0
+  [[ "$(srv_role "${s}")" == faucet && "${CHECKOUT_RELAYER}" == 1 && -z "${3:-}" ]] && relayer=1
   if [[ "${DRY_RUN}" == 1 ]]; then
     local at="${name}"
     srv_is_byo "${s}" && at="${name}[byo $(srv_address "${s}")]"
     echo "+ rsync host/ + ${envf##*/} -> sova-admin@${at}:${REMOTE_DIR}/"
+    [[ ${relayer} == 0 ]] || echo "+ rsync tools/checkout-relayer/{src,package.json,package-lock.json} -> sova-admin@${at}:${REMOTE_DIR}/checkout-relayer/"
     echo "+ ssh sova-admin@${at} sudo bash ${REMOTE_DIR}/setup-host.sh ${REMOTE_DIR}/host.env ${3:-}"
     return 0
   fi
@@ -134,6 +176,12 @@ remote_setup() { # server-entry bootnodes [--enode-only]
   ip="$(server_ip "${name}")"
   set_ssh_opts
   rsync -a --delete -e "ssh ${SSH_OPTS[*]}" "${KIT_DIR}/host/" "sova-admin@${ip}:${REMOTE_DIR}/"
+  if [[ ${relayer} == 1 ]]; then
+    local stage
+    stage="$(relayer_stage)"
+    rsync -a --delete -e "ssh ${SSH_OPTS[*]}" "${stage}/" "sova-admin@${ip}:${REMOTE_DIR}/checkout-relayer/"
+    rm -rf "${stage}"
+  fi
   kit_scp "${name}" "${REMOTE_DIR}" "${envf}"
   kit_ssh "${name}" "mv ${REMOTE_DIR}/${name}.host.env ${REMOTE_DIR}/host.env"
   local logf="${OUT_DIR}/servers/${name}.setup.log"
@@ -195,6 +243,11 @@ cmd_deploy() {
     remote_setup "${s}" "$(bootnodes_for "${name}")"
   done 3< <(ordered_servers)
   log "Deployed. Next: ./cloudflare.sh all, then ./bootnodes.sh (runbook O3-O4)"
+  local f
+  for f in "${OUT_DIR}"/servers/*.checkout_relayer_address; do
+    [[ -s "${f}" ]] && log "checkout relayer: fund $(cat "${f}") with SOVA (runbook: Checkout relayer)"
+  done
+  return 0
 }
 
 cmd_alerts() {
@@ -235,6 +288,8 @@ lint_render() { # render-root server
         :
       elif [[ "${ef}" == /etc/sova/cloudflared.env ]]; then
         echo "  note ${name}/${unit##*/}: ${ef} is written later by cloudflare.sh tunnels"
+      elif [[ "${ef}" == /etc/sova/checkout-relayer.key.env ]]; then
+        echo "  note ${name}/${unit##*/}: ${ef} is the relayer's hot key, made on the host by setup-host.sh (root 0600), never rendered"
       else
         echo "  FAIL ${name}/${unit##*/}: EnvironmentFile ${ef} was not rendered"
         LINT_FAIL=$((LINT_FAIL + 1))
@@ -281,10 +336,10 @@ systemd_verify() { # render-dir
     set -e
     apt-get update -qq >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq systemd >/dev/null
     for b in /usr/local/bin/sova /usr/local/bin/sova-miner /usr/local/bin/sova-faucet /usr/bin/docker \
-      /usr/bin/cloudflared /usr/local/lib/sova-infra/health.sh; do
+      /usr/bin/cloudflared /usr/local/lib/sova-infra/health.sh /usr/bin/node; do
       mkdir -p "$(dirname "$b")"; printf "#!/bin/sh\n" >"$b"; chmod 755 "$b"
     done
-    for u in sova sova-faucet sova-keeper; do useradd --system "$u" 2>/dev/null || true; done
+    for u in sova sova-faucet sova-keeper sova-checkout; do useradd --system "$u" 2>/dev/null || true; done
     # cloud-init installs Docker on the real hosts; stand in for its unit.
     printf "[Unit]\nDescription=stub\n[Service]\nExecStart=/usr/bin/docker\n" >/etc/systemd/system/docker.service
     rc=0

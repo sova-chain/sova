@@ -16,7 +16,9 @@
 # config.env values below. Roles:
 #   seed   zebrad (inbound 18233) + sova-node follow-only, P2P inbound
 #   rpc    zebrad + sova-node follow-only (public RPC profile) + cloudflared
-#   faucet zebrad + sova-faucet (own hot key) + cloudflared
+#   faucet zebrad + sova-faucet (own hot key) + cloudflared; with
+#          CHECKOUT_RELAYER=1 also sova-checkout-relayer (the Ashwings ZEC
+#          checkout's public relayer: Node, its own hot key, loopback only)
 #   keeper zebrad + sova-node in MINE mode (seals, incl. null blocks;
 #          with SOVA_SIP6=1 it signs as the keeper's miner key)
 #          + sova-keeper burner (installed, not started)
@@ -50,6 +52,7 @@ SOVA_EMISSION_SCHEDULE="${SOVA_EMISSION_SCHEDULE:-flat}"
 SOVA_SIP6="${SOVA_SIP6:-1}"
 SOVA_SIP7="${SOVA_SIP7:-1}"
 BUILD_FROM_SOURCE="${BUILD_FROM_SOURCE:-0}"
+CHECKOUT_RELAYER="${CHECKOUT_RELAYER:-0}"
 
 DATA=/var/lib/sova
 ETC=/etc/sova
@@ -86,9 +89,14 @@ case "${ROLE}" in seed | rpc | faucet | keeper) ;; *) die "unknown ROLE ${ROLE}"
 case "${SOVA_EMISSION_SCHEDULE}" in sip3 | flat) ;; *) die "SOVA_EMISSION_SCHEDULE must be sip3 or flat" ;; esac
 case "${SOVA_SIP6}" in 0 | 1) ;; *) die "SOVA_SIP6 must be 0 or 1" ;; esac
 case "${SOVA_SIP7}" in 0 | 1) ;; *) die "SOVA_SIP7 must be 0 or 1" ;; esac
+case "${CHECKOUT_RELAYER}" in 0 | 1) ;; *) die "CHECKOUT_RELAYER must be 0 or 1" ;; esac
 
 has_node() { [[ "${ROLE}" == seed || "${ROLE}" == rpc || "${ROLE}" == keeper ]]; }
 has_tunnel() { [[ "${ROLE}" == rpc || "${ROLE}" == faucet ]]; }
+has_relayer() { [[ "${ROLE}" == faucet && "${CHECKOUT_RELAYER}" == 1 ]]; }
+if has_relayer; then
+  : "${CHECKOUT_RELAYER_PORT:?}" "${CHECKOUT_RELAYER_SOVA_RPC:?}" "${CHECKOUT_RELAYER_CORS_ORIGIN:?}" "${CHECKOUT_RELAYER_NODE_MAJOR:?}"
+fi
 
 # ---- data volume ----------------------------------------------------------------
 mount_volume() {
@@ -134,6 +142,10 @@ setup_dirs() {
   if [[ "${ROLE}" == faucet ]]; then
     ensure_user sova-faucet
     install -d -m 0700 -o sova-faucet -g sova-faucet "${DATA}/faucet"
+  fi
+  if has_relayer; then
+    ensure_user sova-checkout
+    install -d -m 0700 -o sova-checkout -g sova-checkout "${DATA}/checkout-relayer"
   fi
   if [[ "${ROLE}" == keeper ]]; then
     ensure_user sova-keeper
@@ -450,6 +462,131 @@ setup_faucet() {
   log "faucet running on 127.0.0.1:${FAUCET_PORT} (fund the t-addr with a plain transfer)"
 }
 
+# ---- checkout relayer (tools/checkout-relayer) --------------------------------------------
+# The Ashwings ZEC checkout's public relayer. Code: deploy.sh copies this
+# checkout's tools/checkout-relayer (src + lockfile) next to this script;
+# npm ci (lockfile integrity hashes, no install scripts) runs as the build
+# user, and the result is installed root-owned in /opt. It runs as
+# sova-checkout, which can write only its state dir. Its hot key is made
+# here (keygen.mjs) into a root 0600 env file that systemd reads before
+# dropping privileges; like the faucet's key it is never copied anywhere,
+# and deploy.sh records only the address (KIT-OUT checkout_relayer_address).
+RELAYER_APP=/opt/sova-checkout-relayer
+RELAYER_KEY_FILE="${ETC}/checkout-relayer.key.env"
+
+checkout_relayer_env_text() {
+  cat <<EOF
+# Written by setup-host.sh (faucet); re-run deploy.sh to change it. Not
+# secret: RELAYER_KEY is in checkout-relayer.key.env (root 0600, made on
+# this host). Meanings: tools/checkout-relayer/README.md.
+ASHWINGS=${CHECKOUT_ASHWINGS:-}
+CHECKOUT=${CHECKOUT_RELAYER_CHECKOUT:-}
+START_BLOCK=${CHECKOUT_START_BLOCK:-0}
+LISTINGS=${CHECKOUT_RELAYER_LISTINGS:-1}
+SOVA_RPC_URL=${CHECKOUT_RELAYER_SOVA_RPC}
+RPC_PER_10S=${CHECKOUT_RELAYER_RPC_PER_10S:-30}
+HOST=127.0.0.1
+PORT=${CHECKOUT_RELAYER_PORT}
+CORS_ORIGIN=${CHECKOUT_RELAYER_CORS_ORIGIN}
+# cloudflared on this host is the only socket peer; believe its header.
+TRUST_PROXY_HEADER=cf-connecting-ip
+MAX_OPEN_RESERVATIONS=${CHECKOUT_RELAYER_MAX_OPEN:-20}
+RESERVE_PER_IP_PER_HOUR=${CHECKOUT_RELAYER_RESERVE_PER_IP_PER_HOUR:-3}
+RESERVE_PER_HOUR=${CHECKOUT_RELAYER_RESERVE_PER_HOUR:-60}
+RESERVE_PER_MINUTE=${CHECKOUT_RELAYER_RESERVE_PER_MINUTE:-10}
+CLAIM_PER_IP_PER_HOUR=${CHECKOUT_RELAYER_CLAIM_PER_IP_PER_HOUR:-20}
+MIN_BALANCE_WEI=${CHECKOUT_RELAYER_MIN_BALANCE_WEI:-100000000000000000}
+STATE_FILE=${DATA}/checkout-relayer/state.json
+# The payment watcher: this host's zebrad, read-only calls only.
+ZCASH_RPC_URL=http://127.0.0.1:${ZEBRA_RPC_PORT}
+ZCASH_NET=test
+NODE_ENV=production
+EOF
+}
+
+# Node LTS from NodeSource's signed apt repo (the cloudflared pattern);
+# Ubuntu 24.04's own nodejs is 18.x. Pinned to CHECKOUT_RELAYER_NODE_MAJOR,
+# preferred over Ubuntu's by an apt pin.
+install_node() {
+  local major="${CHECKOUT_RELAYER_NODE_MAJOR}" have=""
+  command -v node >/dev/null 2>&1 && have="$(node --version)"
+  if [[ "${have}" != "v${major}."* ]]; then
+    install -d -m 0755 /usr/share/keyrings
+    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key |
+      gpg --dearmor --yes -o /usr/share/keyrings/nodesource.gpg
+    echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${major}.x nodistro main" \
+      >/etc/apt/sources.list.d/nodesource.list
+    printf 'Package: nodejs\nPin: origin deb.nodesource.com\nPin-Priority: 600\n' >/etc/apt/preferences.d/nodesource
+    apt-get update -qq && apt-get install -y -qq nodejs >/dev/null
+  fi
+  have="$(node --version)"
+  [[ "${have}" == "v${major}."* ]] || die "node ${have} installed, expected v${major}.x (NodeSource)"
+  log "node ${have}"
+}
+
+# Installs the code if it (or node) changed. Sets RELAYER_CODE_CHANGED.
+RELAYER_CODE_CHANGED=0
+install_relayer_code() {
+  local src="${HERE}/checkout-relayer" stage="${DATA}/build/checkout-relayer" sum
+  [[ -f "${src}/package-lock.json" && -f "${src}/src/server.mjs" ]] ||
+    die "no relayer code at ${src} (deploy.sh copies tools/checkout-relayer there)"
+  sum="$( (cd "${src}" && find src package.json package-lock.json -type f | LC_ALL=C sort | xargs sha256sum && node --version) |
+    sha256sum | cut -d' ' -f1)"
+  if [[ "$(cat "${RELAYER_APP}/.sum" 2>/dev/null)" == "${sum}" ]]; then
+    log "checkout relayer code unchanged"
+    return 0
+  fi
+  ensure_user sova-build
+  install -d -m 0755 -o sova-build -g sova-build "${DATA}/build"
+  rm -rf "${stage}"
+  install -d -m 0755 -o sova-build -g sova-build "${stage}"
+  cp -R "${src}/src" "${src}/package.json" "${src}/package-lock.json" "${stage}/"
+  chown -R sova-build:sova-build "${stage}"
+  sudo -u sova-build HOME="${DATA}/build" sh -c 'cd "$0" && npm ci --omit=dev --ignore-scripts --no-audit --no-fund --loglevel=error' \
+    "${stage}" >/dev/null || die "npm ci for the checkout relayer failed"
+  install -d -m 0755 "${RELAYER_APP}"
+  rsync -a --delete --chown=root:root --chmod=D755,F644 "${stage}/" "${RELAYER_APP}/"
+  echo "${sum}" >"${RELAYER_APP}/.sum"
+  RELAYER_CODE_CHANGED=1
+  log "checkout relayer code installed in ${RELAYER_APP}"
+}
+
+setup_checkout_relayer() {
+  install_node
+  install_relayer_code
+  local addr key_new=0
+  [[ -s "${RELAYER_KEY_FILE}" ]] || key_new=1
+  addr="$(umask 077 && node "${RELAYER_APP}/src/keygen.mjs" "${RELAYER_KEY_FILE}")" || die "checkout relayer keygen failed"
+  chown root:root "${RELAYER_KEY_FILE}"
+  chmod 0600 "${RELAYER_KEY_FILE}"
+  [[ "${addr}" =~ ^0x[0-9a-fA-F]{40}$ ]] || die "keygen printed '${addr}', not an address"
+  out checkout_relayer_address "${addr}"
+  checkout_relayer_env_text >"${ETC}/checkout-relayer.env.new"
+  local changed=${RELAYER_CODE_CHANGED}
+  ((key_new == 0)) || changed=1
+  if ! cmp -s "${ETC}/checkout-relayer.env.new" "${ETC}/checkout-relayer.env"; then
+    mv "${ETC}/checkout-relayer.env.new" "${ETC}/checkout-relayer.env"
+    changed=1
+  else
+    rm -f "${ETC}/checkout-relayer.env.new"
+  fi
+  chmod 0644 "${ETC}/checkout-relayer.env"
+  install -m 0644 "${HERE}/systemd/sova-checkout-relayer.service" "${UNIT_DIR}/sova-checkout-relayer.service"
+  systemctl daemon-reload
+  if [[ -z "${CHECKOUT_ASHWINGS:-}" && -z "${CHECKOUT_RELAYER_CHECKOUT:-}" ]]; then
+    systemctl disable --now sova-checkout-relayer >/dev/null 2>&1 || true
+    log "checkout relayer installed, NOT started: no Ashwings recorded yet (deploy the contracts, then re-run deploy.sh)"
+    return 0
+  fi
+  systemctl enable sova-checkout-relayer >/dev/null 2>&1
+  if [[ ${changed} == 1 ]] || ! systemctl is-active --quiet sova-checkout-relayer; then
+    systemctl restart sova-checkout-relayer
+    log "checkout relayer (re)started on 127.0.0.1:${CHECKOUT_RELAYER_PORT} as ${addr} (fund it with SOVA: docs/ops/testnet-launch.md)"
+  else
+    log "checkout relayer unchanged and running (${addr})"
+  fi
+}
+
 # ---- keeper ----------------------------------------------------------------------------
 keeper_evm_address() {
   local init
@@ -545,6 +682,11 @@ ZEBRA_RPC_PORT=${ZEBRA_RPC_PORT}
 SOVA_HTTP_PORT=${SOVA_HTTP_PORT}
 FAUCET_PORT=${FAUCET_PORT}
 HEALTH_REFERENCE_RPC=${HEALTH_REFERENCE_RPC:-}
+SOVA_SIP6=${SOVA_SIP6}
+BLOCK_AGE_ALERT_MIN=${BLOCK_AGE_ALERT_MIN:-10}
+NULL_RUN_ALERT=${NULL_RUN_ALERT:-20}
+CHECKOUT_RELAYER_PORT=${CHECKOUT_RELAYER_PORT:-}
+CHECKOUT_RELAYER_ALERT_BALANCE_WEI=${CHECKOUT_RELAYER_ALERT_BALANCE_WEI:-}
 EOF
 }
 
@@ -598,6 +740,11 @@ render_host() {
     faucet_toml_text >"${ETC}/faucet.toml"
     cp "${HERE}/systemd/sova-faucet.service" "${UNIT_DIR}/"
   fi
+  if has_relayer; then
+    # The key file is made on the host (keygen.mjs), never rendered.
+    checkout_relayer_env_text >"${ETC}/checkout-relayer.env"
+    cp "${HERE}/systemd/sova-checkout-relayer.service" "${UNIT_DIR}/"
+  fi
   if [[ "${ROLE}" == keeper ]]; then
     keeper_env_text >"${ETC}/keeper.env"
     cp "${HERE}/systemd/sova-keeper.service" "${UNIT_DIR}/"
@@ -626,6 +773,7 @@ install_binaries
 [[ "${ROLE}" == keeper ]] && setup_keeper
 has_node && setup_node
 [[ "${ROLE}" == faucet ]] && setup_faucet
+has_relayer && setup_checkout_relayer
 has_tunnel && setup_cloudflared
 setup_health
 check_no_keys

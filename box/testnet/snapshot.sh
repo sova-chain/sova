@@ -513,8 +513,13 @@ cmd_restore() {
   cat <<EOF
 
 NEXT (the snapshot is only a sync shortcut; this check is what makes it safe):
-  1. Point zebrad at it: [state] cache_dir = "${target}", same network,
+  1. Point zebrad at it: [state] cache_dir must be the path where zebrad SEES
+     ${target}: that path itself for a native zebrad; in Docker, the mount
+     target it is mounted on (docs/guides/testnet.md mounts it on
+     /var/lib/sova/zebrad, and its zebrad.toml already says so). Same network,
      and a zebrad whose state format major version matches (${sver:-see snapshot.json}).
+     The restored files belong to the user who ran this; the Docker image runs
+     zebrad as uid 10001 (Linux: sudo chown -R 10001:10001 ${target}).
   2. Start zebrad and let it come up (it restores the non-finalized blocks and
      checks the hard-coded checkpoints below the tip).
   3. Check the published block on YOUR node:

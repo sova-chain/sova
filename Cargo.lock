@@ -9704,6 +9704,7 @@ name = "sova"
 version = "0.1.0"
 dependencies = [
  "alloy-genesis",
+ "alloy-network",
  "alloy-primitives",
  "alloy-rpc-types",
  "consensus",
@@ -9714,6 +9715,7 @@ dependencies = [
  "jsonrpsee",
  "reth-ethereum",
  "reth-network-peers",
+ "reth-rpc-eth-api",
  "reth-rpc-layer",
  "reth-tracing",
  "serde_json",

@@ -38,6 +38,9 @@ export const ALLOWED = new Set([
   "eth_getLogs",
   // Broadcast.
   "eth_sendRawTransaction",
+  // Broadcast and wait for the receipt (EIP-7966); its timeout is capped
+  // at SYNC_TIMEOUT_MS below.
+  "eth_sendRawTransactionSync",
   // SIP-7 Zcash block feed (read-only; the node caps it at 1,000 heights
   // per call and serves it only with SOVA_SIP7=1).
   "sova_getZcashBlocks",
@@ -46,6 +49,41 @@ export const ALLOWED = new Set([
 export const MAX_BODY_BYTES = 64 * 1024;
 export const MAX_BATCH = 10;
 export const MAX_LOG_RANGE = 1000;
+// eth_sendRawTransactionSync holds the request open until the
+// transaction's block, and a Sova block follows each Zcash block (~75 s,
+// often a few minutes). Cloudflare gives up on an origin that hasn't
+// answered in ~100 s (HTTP 524, no JSON-RPC body), so the edge caps the
+// call's own timeout (its optional second param, timeout_ms) at 90 s. A
+// slow block then comes back as the node's JSON-RPC timeout error, with
+// the transaction hash, before the 524. The node's cap
+// (SOVA_SEND_SYNC_TIMEOUT_SECS, 300 s by default) is longer; reth takes
+// the smaller. So through this endpoint the effective limit is 90 s, and a
+// client that gets the timeout error polls eth_getTransactionReceipt.
+export const SYNC_METHOD = "eth_sendRawTransactionSync";
+export const SYNC_TIMEOUT_MS = 90_000;
+
+// A sync call with timeout_ms capped at SYNC_TIMEOUT_MS (added when
+// absent, null or 0, which reth reads as "the node's own cap"); any other
+// call unchanged. A non-numeric timeout is left for the origin to refuse.
+export function capSync(call) {
+  if (call.method !== SYNC_METHOD) return call;
+  const cap = (v) => (v === undefined || v === null || v === 0 || (typeof v === "number" && v > SYNC_TIMEOUT_MS) ? SYNC_TIMEOUT_MS : v);
+  const p = call.params;
+  if (Array.isArray(p)) {
+    const out = [...p];
+    if (out.length === 0) return call; // no transaction: the origin refuses it
+    out[1] = cap(out[1]);
+    return { ...call, params: out };
+  }
+  if (p && typeof p === "object") {
+    const out = { ...p };
+    if ("timeoutMs" in out) out.timeoutMs = cap(out.timeoutMs);
+    else out.timeout_ms = cap(out.timeout_ms);
+    return { ...call, params: out };
+  }
+  return call;
+}
+
 // 82330 = the sova-testnet chain ID (bin/sova/src/chain.rs). Answered here
 // without touching the origin.
 const CHAIN_ID_HEX = "0x1419a";
@@ -216,12 +254,20 @@ async function handle(request, env) {
     if (answer !== undefined) return json(answer);
   }
 
+  // Re-encoded only when a sync call's timeout was capped; otherwise the
+  // origin gets the client's exact bytes.
+  let forward = text;
+  if (calls.some((c) => c.method === SYNC_METHOD)) {
+    const capped = calls.map(capSync);
+    forward = JSON.stringify(batch ? capped : capped[0]);
+  }
+
   let upstream;
   try {
     upstream = await fetch(request.url, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: text,
+      body: forward,
     });
   } catch {
     return json(rpcError(batch ? null : calls[0].id, -32603, "origin unreachable"), 502);

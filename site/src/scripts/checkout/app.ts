@@ -6,7 +6,7 @@
 import { qrSvg } from './qr';
 import {
   ZCASH, ZERO_ADDR, SEL, TOPIC, rpc, useChain, reason, u256, addrWord, b32, calldata, words, num, asAddr,
-  dynBytes, utf8, payeeScript, tAddr, zec,
+  dynBytes, utf8, payeeScript, tAddr, zec, waitingForBlock, stopWaiting,
 } from './chain';
 
 type Cfg = { rpc: string; chainId?: number; ashw: string; checkout: string; listing: number; relayer: string; net: 'test' | 'main' };
@@ -38,6 +38,8 @@ const S = {
   resv: null as Resv | null,
   shownFor: '',
   busy: false,
+  // A reserve or claim is in flight: the loop leaves the status line alone.
+  sending: false,
   owl: false,
 };
 
@@ -77,7 +79,8 @@ async function claimed(id: bigint): Promise<{ item: bigint; txid: string } | nul
 // ---- sending: injected wallet, else relayer --------------------------------
 
 async function receipt(hash: string) {
-  for (let i = 0; i < 120; i++) {
+  // A Sova block follows each Zcash block (~75 s, sometimes a few minutes).
+  for (let i = 0; i < 400; i++) {
     const r = await rpc<any>(cfg.rpc, 'eth_getTransactionReceipt', [hash]);
     if (r) {
       if (r.status !== '0x1') throw new Error('transaction reverted');
@@ -85,23 +88,36 @@ async function receipt(hash: string) {
     }
     await new Promise((ok) => setTimeout(ok, 1500));
   }
-  throw new Error('no receipt after 3 min');
+  throw new Error(`not in a block after 10 min · tx ${hash.slice(0, 10)}… may still land: reload later`);
 }
 
-async function walletSend(data: string) {
+/** The sent transaction waits for its block: clock + note (see chain.ts). */
+const waiting = (label: string) => waitingForBlock($('status'), $('st'), `${label} · sent, waiting for a block`);
+
+async function walletSend(data: string, label: string) {
   await useChain(eth!, cfg.rpc, cfg.chainId);
   const hash = await eth!.request({ method: 'eth_sendTransaction', params: [{ from: S.wallet, to: cfg.checkout, data }] });
+  waiting(label);
   return receipt(hash);
 }
 
+// The relayer answers 200 with the result once its transaction is mined, or
+// 202 {txHash, pending} if the block is slow; then we wait for the receipt.
 async function relay(path: string, body: unknown) {
   if (!cfg.relayer) throw new Error('no relayer configured: connect a wallet');
   const res = await fetch(cfg.relayer + path, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
   });
   const j = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(j.error || `relayer ${res.status}`);
+  if (!res.ok) throw new Error(j.error || (res.status === 429 ? 'the relayer is busy: try again in a minute' : `relayer ${res.status}`));
   return j;
+}
+
+/** Order id from a reserve receipt's Reserved event. */
+function reservedId(rc: any): bigint {
+  const log = rc.logs.find((l: any) => l.topics[0] === TOPIC.reserved);
+  if (!log) throw new Error('no Reserved event in the receipt');
+  return num(log.topics[1].slice(2));
 }
 
 // ---- UI -------------------------------------------------------------------
@@ -116,6 +132,7 @@ function stage(k: string, conf?: string) {
 }
 function status(kind: 'wait' | 'ok' | 'err', text: string) {
   const el = $('status');
+  stopWaiting(el);
   el.dataset.k = kind;
   $('st').textContent = text;
 }
@@ -164,7 +181,7 @@ async function showOwl(itemId: bigint) {
 // ---- the loop ---------------------------------------------------------------
 
 async function tick() {
-  if (!S.rid || S.busy || !cfg.checkout) return;
+  if (!S.rid || S.busy || S.sending || !cfg.checkout) return;
   S.busy = true;
   try {
     await step();
@@ -264,23 +281,28 @@ async function doReserve() {
   if (!cfg.checkout) return status('err', 'checkout not loaded yet');
   const btn = $<HTMLButtonElement>('reserve');
   btn.disabled = true;
-  status('wait', S.wallet ? 'reserving · confirm in your wallet' : 'reserving · relayer pays the gas');
+  S.sending = true;
   try {
     if (S.wallet) {
-      const rc = await walletSend(calldata(SEL.reserve, u256(cfg.listing), addrWord(addr)));
-      const log = rc.logs.find((l: any) => l.topics[0] === TOPIC.reserved);
-      S.rid = num(log.topics[1].slice(2));
+      status('wait', 'reserving · confirm in your wallet');
+      S.rid = reservedId(await walletSend(calldata(SEL.reserve, u256(cfg.listing), addrWord(addr)), 'reserving'));
     } else {
+      // The relayer sends it at once and answers when it is mined (or 202
+      // if the block is slow): the wait starts now.
+      waiting('reserving (relayer pays the gas)');
       const j = await relay('/reserve', { listingId: cfg.listing, recipient: addr });
-      S.rid = BigInt(j.reservationId);
+      if (j.reservationId != null) S.rid = BigInt(j.reservationId);
+      else S.rid = reservedId(await receipt(j.txHash));
     }
     S.txid = '';
     S.vout = -1;
     setUrl();
+    S.sending = false;
     await tick();
   } catch (e) {
     status('err', reason(e));
   } finally {
+    S.sending = false;
     btn.disabled = false;
   }
 }
@@ -288,14 +310,23 @@ async function doReserve() {
 async function doClaim() {
   const btn = $<HTMLButtonElement>('claim');
   btn.disabled = true;
-  status('wait', S.wallet ? 'claiming · confirm in your wallet' : 'claiming · relayer pays the gas');
+  S.sending = true;
   try {
-    if (S.wallet) await walletSend(claimData());
-    else await relay('/claim', { reservationId: String(S.rid), txid: S.txid, vout: S.vout });
+    if (S.wallet) {
+      status('wait', 'claiming · confirm in your wallet');
+      await walletSend(claimData(), 'claiming');
+    } else {
+      waiting('claiming (relayer pays the gas)');
+      const j = await relay('/claim', { reservationId: String(S.rid), txid: S.txid, vout: S.vout });
+      if (j.pending) await receipt(j.txHash);
+    }
+    S.sending = false;
     await tick();
   } catch (e) {
     btn.disabled = false;
     status('err', reason(e));
+  } finally {
+    S.sending = false;
   }
 }
 

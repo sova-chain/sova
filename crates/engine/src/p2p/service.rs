@@ -495,6 +495,14 @@ impl<B: GossipBackend> GossipService<B> {
                     self.backend.penalize_invalid_block(peer);
                     // Descendants parked on it can never connect.
                     self.drop_orphans_of(hash);
+                    // It was observed before execution; it must not stay a
+                    // preferred candidate the arbiter keeps trying to adopt.
+                    if let Some(best) = crate::candidates::global().forget_invalid(height, hash.0) {
+                        crate::candidates::notify_best(crate::candidates::BestCandidate {
+                            sova_height: height,
+                            block_hash: best.block_hash,
+                        });
+                    }
                 }
                 Err(err) => {
                     // Local engine trouble, not the peer's fault (e.g. a

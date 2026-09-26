@@ -132,6 +132,40 @@ impl Signer {
         Ok(sealed)
     }
 
+    /// Drop the journal entry for `block`'s slot when it holds exactly
+    /// `block` and our own engine rejected that block as permanently invalid
+    /// (not a hold). SIP-6 §2.7 counts only two *valid* headers for one slot
+    /// as equivocation, and a block that failed validation for good can
+    /// never become valid, so signing a new block for the slot is honest.
+    /// Without this the signer re-published the invalid block on every retry
+    /// and the node could never seal that slot again (public testnet
+    /// 2026-09-26: a state-root mismatch at height 6225 after a Zcash reorg
+    /// flip-flop stalled the chain). The entry is moved to `invalid/` as a
+    /// record, not deleted. Returns whether an entry was dropped.
+    ///
+    /// # Errors
+    /// Journal I/O failed.
+    pub fn discard_invalid(&self, block: &SealedBlock<Block>) -> Result<bool, SignerError> {
+        let path = self.slot_path(block);
+        let Some(journaled) = self.read(&path)? else {
+            return Ok(false);
+        };
+        if journaled.hash() != block.hash() {
+            return Ok(false);
+        }
+        let io = |e: std::io::Error| SignerError::Journal(e.to_string());
+        let dir = self.journal.join("invalid");
+        fs::create_dir_all(&dir).map_err(io)?;
+        let name = path
+            .file_name()
+            .ok_or_else(|| SignerError::Journal("journal entry has no name".into()))?;
+        fs::rename(&path, dir.join(name)).map_err(io)?;
+        fs::File::open(&self.journal)
+            .and_then(|d| d.sync_all())
+            .map_err(io)?;
+        Ok(true)
+    }
+
     fn slot_path(&self, block: &SealedBlock<Block>) -> PathBuf {
         let anchor = block.header().parent_beacon_block_root.unwrap_or_default();
         self.journal.join(format!(
@@ -239,6 +273,40 @@ mod tests {
         // A new parent is a new slot.
         let other = s.seal(block(2, 100)).unwrap_or_else(|e| panic!("{e}"));
         assert_ne!(other.hash(), first.hash());
+        let _ = fs::remove_dir_all(d);
+    }
+
+    #[test]
+    fn a_permanently_invalid_journaled_block_can_be_resigned() {
+        let d = dir("invalid");
+        let s = Signer::new(B256::repeat_byte(0x42), 82_330, d.clone())
+            .unwrap_or_else(|e| panic!("{e}"));
+        let first = s.seal(block(1, 100)).unwrap_or_else(|e| panic!("{e}"));
+        // Another block for the same slot is not the journaled one: kept.
+        assert_eq!(s.discard_invalid(&block(1, 999)).ok(), Some(false));
+        assert_eq!(
+            s.seal(block(1, 101)).map(|b| b.hash()).ok(),
+            Some(first.hash())
+        );
+        // Discarding the journaled block itself frees the slot: the next
+        // build for it is signed afresh (a different block, same signer).
+        assert_eq!(s.discard_invalid(&first).ok(), Some(true));
+        let fresh = s.seal(block(1, 101)).unwrap_or_else(|e| panic!("{e}"));
+        assert_ne!(fresh.hash(), first.hash());
+        assert_eq!(
+            seal::recover(fresh.header(), 82_330).ok(),
+            Some(s.address())
+        );
+        // The discarded entry is kept aside; the fresh one is journaled.
+        assert!(
+            d.join("invalid")
+                .read_dir()
+                .is_ok_and(|mut r| r.next().is_some())
+        );
+        assert_eq!(
+            s.seal(block(1, 102)).map(|b| b.hash()).ok(),
+            Some(fresh.hash())
+        );
         let _ = fs::remove_dir_all(d);
     }
 

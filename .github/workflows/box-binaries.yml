@@ -43,6 +43,19 @@ name: Box binaries
 # Does not replace or gate anything in ci.yml: it is a separate, non-
 # required workflow with its own cache keys, so it never evicts the lint /
 # build-test caches.
+#
+# Linux portability (stranger test 2026-09-25, F4): the linux-x86_64 leg
+# builds inside Ubuntu 20.04 (glibc 2.31) with scripts/build-linux-release.sh,
+# targeting x86-64-v2, and fails if either binary needs a glibc newer than
+# 2.31. Built directly on ubuntu-latest, `sova` needed glibc 2.38 and
+# didn't start on Ubuntu 22.04, Debian 12 or RHEL 9. The smoke step then
+# runs both binaries in ubuntu:20.04, debian:12 and ubuntu:22.04.
+#
+# Version: SOVA_VERSION (the tag on a tag push) is stamped into
+# `sova --version` and `sova-miner --version` (bin/sova/build.rs).
+#
+# This workflow only runs in the public repo (github.com/sova-chain/sova):
+# a change here takes effect with the next `v*` tag pushed there.
 
 # No branch pushes: the macos-14 leg bills at 10x Actions minutes on a
 # private repo, so building on every Rust push to `release` would burn the
@@ -75,8 +88,9 @@ jobs:
     name: build (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
     # Cold reth release build is ~11 min on an M3; hosted runners are
-    # slower. Generous so a cold cache never times out.
-    timeout-minutes: 90
+    # slower, and the Linux leg builds in a container without a cache.
+    # Generous so a cold build never times out.
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -85,12 +99,20 @@ jobs:
             platform: darwin-arm64
           - runner: ubuntu-latest
             platform: linux-x86_64
+    env:
+      # The tag on a tag push (v0.1.3 -> `sova --version` prints 0.1.3);
+      # empty on a dispatch, where build.rs falls back to the commit.
+      SOVA_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # macOS: the runner's own toolchain. Linux builds in a container
+      # (below), which installs its own.
+      - if: runner.os == 'macOS'
+        uses: dtolnay/rust-toolchain@stable
       # Same conventions as ci.yml (two workspaces, cache-on-failure), with
       # a release-profile, per-platform shared key of its own.
-      - uses: Swatinem/rust-cache@v2
+      - if: runner.os == 'macOS'
+        uses: Swatinem/rust-cache@v2
         with:
           shared-key: sova-box-release-${{ matrix.platform }}
           workspaces: |
@@ -98,10 +120,56 @@ jobs:
             crates/burn-wallet -> target
           cache-on-failure: true
       - name: Build bin/sova (release)
-        run: cargo build --release -p sova
+        if: runner.os == 'macOS'
+        run: cargo build --release --locked -p sova
       # crates/burn-wallet is its own nested workspace (see ci.yml).
       - name: Build sova-miner (release)
-        run: cargo build --release -p sova-miner --manifest-path crates/burn-wallet/Cargo.toml
+        if: runner.os == 'macOS'
+        run: cargo build --release --locked -p sova-miner --manifest-path crates/burn-wallet/Cargo.toml
+      # Ubuntu 20.04 (glibc 2.31), x86-64-v2; fails above glibc 2.31.
+      - name: Build sova + sova-miner (release, glibc 2.31 container)
+        if: runner.os == 'Linux'
+        env:
+          SOVA_LINUX_TARGET: ${{ runner.temp }}/linux-target
+          SOVA_LINUX_CARGO: ${{ runner.temp }}/linux-cargo
+          CARGO_TERM_COLOR: always
+        run: scripts/build-linux-release.sh target/release-linux
+      # The binaries must start on the distributions the guide promises,
+      # not just on the build container: --version, and the testnet
+      # genesis hash (chainspec only, no node).
+      - name: Smoke-test on older distributions
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for img in ubuntu:20.04 debian:12 ubuntu:22.04; do
+            echo "== ${img}"
+            docker run --rm -v "${PWD}/target/release-linux:/b:ro" \
+              -e SOVA_CHAIN=sova-testnet -e SOVA_SIP7=1 "${img}" \
+              sh -c 'ldd --version | head -1; /b/sova --version && /b/sova-miner --version && /b/sova genesis-hash'
+          done
+      # The CPU floor: start a follow-only node on an emulated Nehalem
+      # (x86-64-v2, no AVX/BMI2/ADX). v0.1.3 died here with SIGILL in
+      # blst's mulx_mont_384 (ADX, enabled because the build runner had
+      # it) while loading the KZG setup, right after "Loaded storage
+      # settings". Discovery off: it contacts nobody.
+      - name: Smoke-test on an x86-64-v2 CPU (qemu Nehalem)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-user >/dev/null
+          datadir="$(mktemp -d)"
+          rc=0
+          SOVA_CHAIN=sova-testnet SOVA_GOSSIP=p2p SOVA_EPOCH_BASE=4388500 \
+            SOVA_EMISSION_SCHEDULE=flat SOVA_SIP6=1 SOVA_SIP7=1 SOVA_FOLLOW_ONLY=1 \
+            SOVA_DISCOVERY=off SOVA_BOOTNODES='' SOVA_DATADIR="${datadir}" \
+            timeout 120 qemu-x86_64 -cpu Nehalem-v1 target/release-linux/sova >node.log 2>&1 || rc=$?
+          tail -n 20 node.log
+          # 124: still running when the timeout stopped it, as it should be.
+          test "${rc}" -eq 124
+          grep -q 'Status connected_peers' node.log
       - name: Stage artifact
         shell: bash
         env:
@@ -110,11 +178,21 @@ jobs:
           set -euo pipefail
           out="${RUNNER_TEMP}/sova-box-bin-${PLATFORM}"
           mkdir -p "${out}"
-          cp target/release/sova "${out}/sova"
-          cp crates/burn-wallet/target/release/sova-miner "${out}/sova-miner"
+          if [[ "${RUNNER_OS}" == Linux ]]; then
+            cp target/release-linux/sova target/release-linux/sova-miner "${out}/"
+          else
+            cp target/release/sova "${out}/sova"
+            cp crates/burn-wallet/target/release/sova-miner "${out}/sova-miner"
+          fi
           # Fails the job here, not on a stranger's machine, if the
           # binary can't even start on the platform it was built for.
           "${out}/sova-miner" --version
+          "${out}/sova" --version
+          # A tag build must report its tag.
+          if [[ -n "${SOVA_VERSION}" ]]; then
+            test "$("${out}/sova" --version)" = "sova ${SOVA_VERSION#v}"
+            test "$("${out}/sova-miner" --version)" = "sova-miner ${SOVA_VERSION#v}"
+          fi
           cd "${out}"
           if command -v sha256sum >/dev/null 2>&1; then
             sha256sum sova sova-miner >SHA256SUMS
@@ -125,7 +203,12 @@ jobs:
             echo "commit=${GITHUB_SHA}"
             echo "platform=${PLATFORM}"
             echo "ref=${GITHUB_REF_NAME}"
-            echo "rustc=$(rustc --version)"
+            echo "version=$("${out}/sova" --version)"
+            if [[ "${RUNNER_OS}" == Linux ]]; then
+              echo "build=ubuntu-20.04-container glibc<=2.31 target-cpu=x86-64-v2"
+            else
+              echo "rustc=$(rustc --version)"
+            fi
             echo "run_id=${GITHUB_RUN_ID}"
           } >BUILD-INFO
           cat SHA256SUMS BUILD-INFO

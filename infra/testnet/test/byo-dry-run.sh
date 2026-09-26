@@ -28,6 +28,7 @@ FAIL=0
 ok() { PASS=$((PASS + 1)); printf 'ok    %s\n' "$*"; }
 bad() { FAIL=$((FAIL + 1)); printf 'FAIL  %s\n' "$*"; }
 has() { grep -qE -- "$1" <<<"$2"; }   # ERE text
+hasF() { grep -qF -- "$1" <<<"$2"; }  # fixed text
 lacks() { ! grep -qE -- "$1" <<<"$2"; }
 check() { # description command...
   local d="$1"
@@ -95,7 +96,76 @@ check "render: the seed has no static peers" grep -q '^SOVA_P2P_PEERS=$' "${TMP}
 check "render: no cloudflared on the keeper (not public)" test ! -e "${R}/etc/systemd/system/cloudflared.service"
 if [[ ${#VERIFY[@]} -gt 0 ]]; then
   check "systemd-analyze verify: keeper ok" grep -q 'ok   sova-keeper-1: systemd-analyze verify' <<<"${out}"
+  check "systemd-analyze verify: faucet ok (incl. sova-checkout-relayer)" \
+    grep -q 'ok   sova-faucet-1: systemd-analyze verify: .*sova-checkout-relayer.service' <<<"${out}"
 fi
+
+# ---- the checkout relayer (CHECKOUT_RELAYER=1 in the example) ------------------
+F="${TMP}/out/render/sova-faucet-1"
+FU="${F}/etc/systemd/system/sova-checkout-relayer.service"
+FE="${F}/etc/sova/checkout-relayer.env"
+check "render: faucet gets sova-checkout-relayer.service" test -f "${FU}"
+check "render: faucet gets /etc/sova/checkout-relayer.env" test -f "${FE}"
+ASHW="$(jq -r .ashwings "${KIT}/deployments/sova-testnet.json")"
+ASHW_BLOCK="$(jq -r .deployments.ashwings.block "${KIT}/deployments/sova-testnet.json")"
+for kv in HOST=127.0.0.1 PORT=18791 CORS_ORIGIN=https://sova.io TRUST_PROXY_HEADER=cf-connecting-ip \
+  SOVA_RPC_URL=https://rpc.testnet.sova.io RPC_PER_10S=30 ZCASH_RPC_URL=http://127.0.0.1:18232 ZCASH_NET=test LISTINGS=1 \
+  "ASHWINGS=${ASHW}" "START_BLOCK=${ASHW_BLOCK}" STATE_FILE=/var/lib/sova/checkout-relayer/state.json \
+  MAX_OPEN_RESERVATIONS=20 RESERVE_PER_IP_PER_HOUR=3 MIN_BALANCE_WEI=100000000000000000; do
+  check "render: checkout-relayer.env has ${kv}" grep -qxF "${kv}" "${FE}"
+done
+check "render: no RELAYER_KEY in any rendered file" lacks '^RELAYER_KEY=' "$(find "${TMP}/out/render" -type f -exec cat {} +)"
+check "render: the relayer's key file is not rendered (made on the host)" test ! -e "${F}/etc/sova/checkout-relayer.key.env"
+check "render: lint notes the key file is made on the host" has "checkout-relayer.key.env is the relayer's hot key" "${out}"
+check "render: relayer runs unprivileged (User=sova-checkout)" grep -qx 'User=sova-checkout' "${FU}"
+check "render: relayer reads its key from /etc/sova/checkout-relayer.key.env" \
+  grep -qx 'EnvironmentFile=/etc/sova/checkout-relayer.key.env' "${FU}"
+check "render: relayer runs /opt/sova-checkout-relayer with the system node" \
+  grep -qx 'ExecStart=/usr/bin/node /opt/sova-checkout-relayer/src/server.mjs' "${FU}"
+check "render: relayer can write only its state dir" grep -qx 'ReadWritePaths=/var/lib/sova/checkout-relayer' "${FU}"
+# Block-latency alerts (host/health.sh): every host's health env carries
+# the thresholds and knows SIP-6 is on (the null-run check needs it).
+for h in sova-seed-1 sova-rpc-1 sova-keeper-1 sova-faucet-1; do
+  for kv in BLOCK_AGE_ALERT_MIN=10 NULL_RUN_ALERT=20 SOVA_SIP6=1; do
+    check "render: ${h} health has ${kv}" grep -qx "${kv}" "${TMP}/out/render/${h}/etc/sova/host.env"
+  done
+done
+check "render: faucet health knows the relayer" grep -qx 'CHECKOUT_RELAYER_PORT=18791' "${F}/etc/sova/host.env"
+for h in sova-seed-1 sova-rpc-1 sova-keeper-1; do
+  check "render: no checkout relayer on ${h}" test ! -e "${TMP}/out/render/${h}/etc/systemd/system/sova-checkout-relayer.service"
+done
+out="$(cd "${KIT}" && kit ./cloudflare.sh --dry-run tunnels ratelimit 2>&1)"
+check "cloudflare.sh tunnels: checkout host on the faucet tunnel, relayer paths only" \
+  hasF '{"hostname":"checkout.testnet.sova.io","path":"^/(reserve|claim|status(/[0-9]{1,30})?)$","service":"http://127.0.0.1:18791"' "${out}"
+check "cloudflare.sh tunnels: faucet routes unchanged" \
+  hasF '{"hostname":"faucet.testnet.sova.io","path":"^/(drip|status)$","service":"http://127.0.0.1:18790"' "${out}"
+check "cloudflare.sh tunnels: proxied CNAME for the checkout host" \
+  hasF '"name":"checkout.testnet.sova.io","content":"<sova-testnet-sova-faucet-1-id>.cfargotunnel.com","proxied":true' "${out}"
+check "cloudflare.sh ratelimit: /reserve and /claim in the WAF rule" \
+  hasF 'or (http.request.uri.path eq \"/reserve\") or (http.request.uri.path eq \"/claim\")' "${out}"
+out="$(cd "${KIT}" && kit ./deploy.sh --dry-run 2>&1)"
+check "deploy.sh --dry-run: relayer code goes to the faucet host" \
+  hasF "+ rsync tools/checkout-relayer/{src,package.json,package-lock.json} -> sova-admin@sova-faucet-1:" "${out}"
+check "deploy.sh --dry-run: ... and to no other host" test "$(grep -c 'rsync tools/checkout-relayer' <<<"${out}")" == 1
+relayer_cfg() { # sed-expr -> a config with it applied
+  sed "$1" "${TMP}/config.env" >"${TMP}/relayer.env"
+  CFG="${TMP}/relayer.env"
+}
+relayer_cfg 's/^CHECKOUT_RELAYER=1$/CHECKOUT_RELAYER=0/'
+out="$(cd "${KIT}" && kit ./deploy.sh render --out "${TMP}/render-off" 2>&1)"
+check "CHECKOUT_RELAYER=0: renders no relayer" test ! -e "${TMP}/render-off/sova-faucet-1/etc/systemd/system/sova-checkout-relayer.service"
+check "CHECKOUT_RELAYER=0: no checkout host on the tunnel" lacks "checkout.testnet" "$(cd "${KIT}" && kit ./cloudflare.sh --dry-run tunnels 2>&1)"
+relayer_cfg 's|^CHECKOUT_HOST=.*|CHECKOUT_HOST="checkout.example.org"|'
+check "refuses a CHECKOUT_HOST outside the zone" has "CHECKOUT_HOST 'checkout.example.org' is not under the zone" "$(cd "${KIT}" && kit ./deploy.sh check 2>&1)"
+relayer_cfg 's|^CHECKOUT_RELAYER_CORS_ORIGIN=.*|CHECKOUT_RELAYER_CORS_ORIGIN="*"|'
+check "refuses CORS '*' for the relayer" has "CHECKOUT_RELAYER_CORS_ORIGIN must be one https origin" "$(cd "${KIT}" && kit ./deploy.sh check 2>&1)"
+relayer_cfg 's|^CHECKOUT_RELAYER_RPC_PER_10S=.*|CHECKOUT_RELAYER_RPC_PER_10S=50|'
+check "refuses an RPC budget at or over the edge's per-IP limit" has "CHECKOUT_RELAYER_RPC_PER_10S must stay under" "$(cd "${KIT}" && kit ./deploy.sh check 2>&1)"
+relayer_cfg 's|^CHECKOUT_RELAYER_PORT=.*|CHECKOUT_RELAYER_PORT=18790|'
+check "refuses a relayer port that is already used" has "CHECKOUT_RELAYER_PORT 18790 is used twice" "$(cd "${KIT}" && kit ./deploy.sh check 2>&1)"
+relayer_cfg 's|^CHECKOUT_RELAYER_ALERT_BALANCE_WEI=.*|CHECKOUT_RELAYER_ALERT_BALANCE_WEI=1|'
+check "refuses an alert floor under the refusal floor" has "ALERT_BALANCE_WEI must be above" "$(cd "${KIT}" && kit ./deploy.sh check 2>&1)"
+CFG="${TMP}/config.env"
 
 # ---- SOVA_SIP7 validation -------------------------------------------------------
 sed 's/^SOVA_SIP7=1$/SOVA_SIP7=yes/' "${TMP}/config.env" >"${TMP}/sip7-bad.env"
@@ -106,6 +176,17 @@ sed 's/^SOVA_SIP7=1$/SOVA_SIP7=0/' "${TMP}/config.env" >"${TMP}/sip7-off.env"
 CFG="${TMP}/sip7-off.env"
 out="$(cd "${KIT}" && kit ./deploy.sh check 2>&1)"
 check "deploy.sh check: SOVA_SIP7=0 is an open item, not an error" has "SOVA_SIP7=0: SIP-7 is off" "${out}"
+CFG="${TMP}/config.env"
+
+# ---- health-alert thresholds -------------------------------------------------------
+sed 's/^NULL_RUN_ALERT=20$/NULL_RUN_ALERT=500/' "${TMP}/config.env" >"${TMP}/health-bad.env"
+CFG="${TMP}/health-bad.env"
+check "deploy.sh check refuses NULL_RUN_ALERT=500" has "NULL_RUN_ALERT must be a block count from 1 to 100" "$(cd "${KIT}" && kit ./deploy.sh check 2>&1)"
+sed 's/^BLOCK_AGE_ALERT_MIN=10$/BLOCK_AGE_ALERT_MIN=0/' "${TMP}/config.env" >"${TMP}/health-bad.env"
+check "deploy.sh check refuses BLOCK_AGE_ALERT_MIN=0" has "BLOCK_AGE_ALERT_MIN must be a positive number" "$(cd "${KIT}" && kit ./deploy.sh check 2>&1)"
+grep -v '^BLOCK_AGE_ALERT_MIN=\|^NULL_RUN_ALERT=' "${TMP}/config.env" >"${TMP}/health-old.env"
+CFG="${TMP}/health-old.env"
+check "deploy.sh check: an older config without the health section still passes" grep -q '^==> config OK' <<<"$(cd "${KIT}" && kit ./deploy.sh check 2>&1)"
 CFG="${TMP}/config.env"
 
 # ---- bootnodes.sh: the genesis hash comes from the nodes, never a constant ----

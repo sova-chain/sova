@@ -66,6 +66,8 @@ pub(crate) const SOVA_TESTNET_GENESIS_TIMESTAMP: u64 = 1_788_220_800;
 pub(crate) const SOVA_TESTNET_BOOTNODES: &[&str] = &[
     // sova-seed-1 (seed-1.testnet.sova.io), from `bootnodes.sh`, 2026-09-25.
     "enode://4788bec82fa9559623dd997cd97a01d0203fc8b419712f3fcfbb186b006496c5896be5daaa9bdabb9d8adaa950b3c6e7a66278d936a30338d1497639be25c17f@2.28.138.164:30303",
+    // sova-seed-2 (Helsinki), added 2026-09-25 as a second bootnode.
+    "enode://441e2f90b85bc09efa89eaada71af17b7771a6036181038dbe228d35c1a336e0a9ba01daf082fd6f5373c68783d374e09bf63ac44971c8a2228fa19c6cb6366b@62.238.45.222:30303",
 ];
 
 /// Built-in testnet checkpoints, `(Sova height, block hash)` (audit F2

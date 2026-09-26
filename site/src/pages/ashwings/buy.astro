@@ -9,29 +9,32 @@ import { SOVA_RPC, TESTNET, CONTRACTS } from '../../data/sova';
 // constructor creates (listing #1, terms fixed at deploy), read at load from
 // Ashwings.zecCheckout() on the Ashwings in
 // infra/testnet/deployments/sova-testnet.json. /ashwings/mint links here with
-// ?rpc=&co= set. No public relayer yet, so a wallet sends; the local box
-// relayer is ?relayer=http://127.0.0.1:8787 (tools/checkout-relayer).
+// ?rpc=&co= set. With no wallet connected, reserve and claim go through the
+// project's public checkout relayer (tools/checkout-relayer, run by the
+// testnet kit on the faucet host; it pays the gas), so a buyer needs no
+// SOVA. A connected wallet sends them itself.
 // Override per visit: ?rpc=&co=&ashw=&listing=&relayer=<url|none>&net=test|main
+// (a local relayer: ?relayer=http://127.0.0.1:8787)
 const config = {
   rpc: SOVA_RPC,
   chainId: TESTNET.chainId,
   ashw: CONTRACTS.ashwings,
   checkout: '',
   listing: 1,
-  relayer: '',
+  relayer: 'https://checkout.testnet.sova.io',
   net: 'test',
 };
 ---
 <Site
   title="Buy an Ashwing with ZEC"
-  description="Pay ZEC from any Zcash wallet, get an on-chain owl on Sova. Sova verifies the payment on Zcash itself."
+  description="Pay ZEC from any Zcash wallet that can pay a t-address, and get an on-chain owl on Sova. Sova verifies the payment on Zcash itself; no SOVA needed."
   current="/ashwings"
   cmd="./buy-owl --pay zec"
   status="testnet · pay in ZEC"
 >
   <div id="buy" data-config={JSON.stringify(config)}>
     <h1>Pay ZEC. Get an owl.</h1>
-    <p class="lead">Any Zcash wallet. Sova verifies the payment on Zcash itself.</p>
+    <p class="lead">Any Zcash wallet that can pay a t-address. Sova verifies the payment on Zcash itself; you need no SOVA.</p>
 
     <ol class="track" aria-label="Progress">
       <li data-s="cur">reserve</li>
@@ -41,7 +44,7 @@ const config = {
       <li data-s="todo">owl</li>
     </ol>
 
-    <p id="status" class="status" data-k="wait" role="status" aria-live="polite"><span id="st">loading</span><span class="cur" aria-hidden="true"></span></p>
+    <p id="status" class="status" data-k="wait" role="status" aria-live="polite"><span id="st">loading</span><span class="clock" aria-hidden="true" hidden></span><span class="cur" aria-hidden="true"></span><span class="note" hidden></span></p>
 
     <figure id="owl" hidden>
       <img id="owl-img" width="192" height="192" alt="" />
@@ -106,6 +109,9 @@ const config = {
   .status[data-k='err']::before { content: '! '; }
   .cur { display: inline-block; width: 0.6em; height: 1.05em; margin-left: 4px; vertical-align: -0.18em; background: currentColor; animation: blink 1.1s steps(1) infinite; }
   .status[data-k='ok'] .cur, .status[data-k='err'] .cur { display: none; }
+  /* A sent transaction waiting for its block (chain.ts waitingForBlock). */
+  .status .note { display: block; margin-top: 4px; color: var(--g3); font-size: 12.5px; }
+  .status .note[hidden], .status .clock[hidden] { display: none; }
   @keyframes blink { 50% { opacity: 0; } }
   @media (prefers-reduced-motion: reduce) { .cur { animation: none; } }
 

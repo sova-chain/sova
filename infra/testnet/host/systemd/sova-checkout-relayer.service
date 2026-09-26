@@ -1,0 +1,38 @@
+# Ashwings ZEC checkout relayer (tools/checkout-relayer), on the faucet host
+# when CHECKOUT_RELAYER=1: reserves and claims for buyers who hold no SOVA,
+# and watches the payee t-address on this host's zebrad. Loopback only;
+# the public reaches it through cloudflared (CHECKOUT_HOST: /reserve,
+# /claim, /status). Config: /etc/sova/checkout-relayer.env. Its hot key:
+# /etc/sova/checkout-relayer.key.env (root 0600, made on this host by
+# setup-host.sh, read by systemd before it drops to sova-checkout).
+[Unit]
+Description=Sova checkout relayer (Ashwings ZEC checkout)
+Wants=network-online.target zebrad.service
+After=network-online.target zebrad.service
+ConditionPathExists=/etc/sova/checkout-relayer.key.env
+
+[Service]
+User=sova-checkout
+Group=sova-checkout
+EnvironmentFile=/etc/sova/checkout-relayer.env
+EnvironmentFile=/etc/sova/checkout-relayer.key.env
+ExecStart=/usr/bin/node /opt/sova-checkout-relayer/src/server.mjs
+Restart=always
+RestartSec=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+ReadWritePaths=/var/lib/sova/checkout-relayer
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

@@ -180,6 +180,74 @@ validate_edge_config() {
   [[ "${CF_RATELIMIT_REQUESTS_PER_10S}" =~ ^[1-9][0-9]*$ ]] || die "config: CF_RATELIMIT_REQUESTS_PER_10S must be a positive integer"
 }
 
+# The checkout relayer (config.env.example, "Checkout relayer"). Defaults
+# keep an older config.env (no such section) working, with the relayer off.
+# Also finds the Ashwings it serves in deployments/<chain>.json:
+# CHECKOUT_ASHWINGS / CHECKOUT_START_BLOCK (empty until the contracts step).
+validate_checkout_config() {
+  CHECKOUT_RELAYER="${CHECKOUT_RELAYER:-0}"
+  CHECKOUT_HOST="${CHECKOUT_HOST:-}"
+  CHECKOUT_RELAYER_PORT="${CHECKOUT_RELAYER_PORT:-18791}"
+  CHECKOUT_RELAYER_SOVA_RPC="${CHECKOUT_RELAYER_SOVA_RPC:-https://${RPC_HOST:-}}"
+  CHECKOUT_RELAYER_RPC_PER_10S="${CHECKOUT_RELAYER_RPC_PER_10S:-30}"
+  CHECKOUT_RELAYER_CORS_ORIGIN="${CHECKOUT_RELAYER_CORS_ORIGIN:-https://sova.io}"
+  CHECKOUT_RELAYER_LISTINGS="${CHECKOUT_RELAYER_LISTINGS:-1}"
+  CHECKOUT_RELAYER_CHECKOUT="${CHECKOUT_RELAYER_CHECKOUT:-}"
+  CHECKOUT_RELAYER_NODE_MAJOR="${CHECKOUT_RELAYER_NODE_MAJOR:-22}"
+  CHECKOUT_RELAYER_MAX_OPEN="${CHECKOUT_RELAYER_MAX_OPEN:-20}"
+  CHECKOUT_RELAYER_RESERVE_PER_IP_PER_HOUR="${CHECKOUT_RELAYER_RESERVE_PER_IP_PER_HOUR:-3}"
+  CHECKOUT_RELAYER_RESERVE_PER_HOUR="${CHECKOUT_RELAYER_RESERVE_PER_HOUR:-60}"
+  CHECKOUT_RELAYER_RESERVE_PER_MINUTE="${CHECKOUT_RELAYER_RESERVE_PER_MINUTE:-10}"
+  CHECKOUT_RELAYER_CLAIM_PER_IP_PER_HOUR="${CHECKOUT_RELAYER_CLAIM_PER_IP_PER_HOUR:-20}"
+  CHECKOUT_RELAYER_MIN_BALANCE_WEI="${CHECKOUT_RELAYER_MIN_BALANCE_WEI:-100000000000000000}"
+  CHECKOUT_RELAYER_ALERT_BALANCE_WEI="${CHECKOUT_RELAYER_ALERT_BALANCE_WEI:-1000000000000000000}"
+  CHECKOUT_ASHWINGS=""
+  CHECKOUT_START_BLOCK=0
+  case "${CHECKOUT_RELAYER}" in 0 | 1) ;; *) die "config: CHECKOUT_RELAYER must be 0 or 1" ;; esac
+  [[ "${CHECKOUT_RELAYER}" == 1 ]] || return 0
+  [[ -n "${CF_ZONE_NAME:-}" && "${CHECKOUT_HOST}" == *".${CF_ZONE_NAME}" ]] ||
+    die "config: CHECKOUT_HOST '${CHECKOUT_HOST}' is not under the zone ${CF_ZONE_NAME:-}"
+  local p="${CHECKOUT_RELAYER_PORT}" v
+  if ! [[ "${p}" =~ ^[0-9]+$ ]] || ((p < 1 || p > 65535)); then die "config: CHECKOUT_RELAYER_PORT '${p}' is not a port"; fi
+  [[ "${CHECKOUT_RELAYER_SOVA_RPC}" =~ ^https?://[A-Za-z0-9.:-]+(/.*)?$ ]] || die "config: CHECKOUT_RELAYER_SOVA_RPC is not an http(s) URL"
+  [[ "${CHECKOUT_RELAYER_CORS_ORIGIN}" =~ ^https://[a-z0-9.-]+$ ]] ||
+    die "config: CHECKOUT_RELAYER_CORS_ORIGIN must be one https origin (e.g. https://sova.io), not '*'"
+  [[ "${CHECKOUT_RELAYER_LISTINGS}" =~ ^[0-9]+(,[0-9]+)*$ ]] || die "config: CHECKOUT_RELAYER_LISTINGS must be listing ids (1 or 1,2)"
+  [[ -z "${CHECKOUT_RELAYER_CHECKOUT}" || "${CHECKOUT_RELAYER_CHECKOUT}" =~ ^0x[0-9a-fA-F]{40}$ ]] ||
+    die "config: CHECKOUT_RELAYER_CHECKOUT is not an address"
+  [[ "${CHECKOUT_RELAYER_NODE_MAJOR}" =~ ^(20|22|24|26)$ ]] || die "config: CHECKOUT_RELAYER_NODE_MAJOR must be an even (LTS) major, 20..26"
+  for v in CHECKOUT_RELAYER_RPC_PER_10S CHECKOUT_RELAYER_MAX_OPEN CHECKOUT_RELAYER_RESERVE_PER_IP_PER_HOUR \
+    CHECKOUT_RELAYER_RESERVE_PER_HOUR CHECKOUT_RELAYER_RESERVE_PER_MINUTE CHECKOUT_RELAYER_CLAIM_PER_IP_PER_HOUR \
+    CHECKOUT_RELAYER_MIN_BALANCE_WEI CHECKOUT_RELAYER_ALERT_BALANCE_WEI; do
+    [[ "${!v}" =~ ^[1-9][0-9]*$ ]] || die "config: ${v} must be a positive integer"
+  done
+  # Through the public RPC it shares the edge's per-IP limit with nothing
+  # else on the faucet host: stay under it (per 10 s).
+  if [[ "${CHECKOUT_RELAYER_SOVA_RPC}" == "https://${RPC_HOST:-}"* ]]; then
+    local edge10=$((${RPC_RATELIMIT_REQUESTS:-50} * 10 / ${RPC_RATELIMIT_PERIOD:-10}))
+    [[ "${RPC_RATELIMIT_AT:-worker}" == waf ]] && edge10="${CF_RATELIMIT_REQUESTS_PER_10S:-50}"
+    ((CHECKOUT_RELAYER_RPC_PER_10S < edge10)) ||
+      die "config: CHECKOUT_RELAYER_RPC_PER_10S must stay under the public RPC's per-IP limit (${edge10} / 10 s)"
+  fi
+  # Compare as decimal strings of equal width (wei overflows bash's 64 bits).
+  local a b
+  a="$(printf '%040s' "${CHECKOUT_RELAYER_ALERT_BALANCE_WEI}")"
+  b="$(printf '%040s' "${CHECKOUT_RELAYER_MIN_BALANCE_WEI}")"
+  [[ "${a}" > "${b}" ]] || die "config: CHECKOUT_RELAYER_ALERT_BALANCE_WEI must be above CHECKOUT_RELAYER_MIN_BALANCE_WEI (alert before the relayer refuses)"
+  [[ -n "$(servers_with_role faucet)" ]] || die "config: CHECKOUT_RELAYER=1 runs on the faucet host, and there is no faucet server"
+  local rec="${KIT_DIR}/deployments/${DEPLOY_CHAIN_NAME:-sova-testnet}.json"
+  if [[ -f "${rec}" ]]; then
+    need_cmd jq "to read ${rec##*/} for the checkout relayer"
+    CHECKOUT_ASHWINGS="$(jq -r '.ashwings // .deployments.ashwings.address // empty' "${rec}")"
+    CHECKOUT_START_BLOCK="$(jq -r '.deployments.ashwings.block // 0' "${rec}")"
+    [[ -z "${CHECKOUT_ASHWINGS}" || "${CHECKOUT_ASHWINGS}" =~ ^0x[0-9a-fA-F]{40}$ ]] || die "${rec}: .ashwings is not an address"
+    [[ "${CHECKOUT_START_BLOCK}" =~ ^[0-9]+$ ]] || die "${rec}: .deployments.ashwings.block is not a number"
+  fi
+  [[ -n "${CHECKOUT_ASHWINGS}" ]] ||
+    cfg_warn "no Ashwings in deployments/${DEPLOY_CHAIN_NAME:-sova-testnet}.json yet: the checkout relayer is installed but not started until the contracts step"
+  return 0
+}
+
 # SIP-6 sealer signatures (config.env.example, "Consensus parameters"). A
 # consensus switch: every node must agree, so only 0 or 1, default on.
 validate_sip6() {
@@ -200,10 +268,24 @@ validate_sip7() {
   [[ "${SOVA_SIP7}" == 1 ]] || cfg_warn "SOVA_SIP7=0: SIP-7 is off (debug only; the public testnet runs with it on from genesis, and it changes the genesis hash)"
 }
 
+# Health-alert thresholds (config.env.example, "Health alerts"), rendered
+# into every host's /etc/sova/host.env for host/health.sh. Defaults keep an
+# older config.env (no such section) working.
+validate_health_config() {
+  BLOCK_AGE_ALERT_MIN="${BLOCK_AGE_ALERT_MIN:-10}"
+  NULL_RUN_ALERT="${NULL_RUN_ALERT:-20}"
+  [[ "${BLOCK_AGE_ALERT_MIN}" =~ ^[1-9][0-9]*$ ]] || die "config: BLOCK_AGE_ALERT_MIN must be a positive number of minutes"
+  if ! [[ "${NULL_RUN_ALERT}" =~ ^[1-9][0-9]*$ ]] || ((NULL_RUN_ALERT > 100)); then
+    die "config: NULL_RUN_ALERT must be a block count from 1 to 100"
+  fi
+}
+
 validate_config() {
   validate_servers
   validate_edge_config
   validate_sip6
+  validate_checkout_config
+  validate_health_config
   local v h p ports=" " n s
   [[ "${SOVA_RELEASE_TAG:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] ||
     die "config: SOVA_RELEASE_TAG '${SOVA_RELEASE_TAG:-}' is not a vX.Y.Z tag"
@@ -229,6 +311,9 @@ validate_config() {
     [[ "${ports}" != *" ${p} "* ]] || die "config: ${v} ${p} is used twice"
     ports+="${p} "
   done
+  if [[ "${CHECKOUT_RELAYER}" == 1 && "${ports}" == *" ${CHECKOUT_RELAYER_PORT} "* ]]; then
+    die "config: CHECKOUT_RELAYER_PORT ${CHECKOUT_RELAYER_PORT} is used twice"
+  fi
   if [[ -z "${ADMIN_CIDRS:-}" ]]; then
     cfg_warn "ADMIN_CIDRS is empty (provision.sh up --my-ip fills it)"
   elif [[ ",${ADMIN_CIDRS}," == *",0.0.0.0/0,"* && "${SOVA_ALLOW_SSH_FROM_ANYWHERE:-0}" != 1 ]]; then

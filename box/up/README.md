@@ -244,9 +244,12 @@ checksum, a wrong platform (in either `BUILD-INFO`), a foreign commit or a
 missing tarball are each rejected and fall through to the next source.
 
 Binaries already present in the target dir are reused as before and never
-replaced by a download. Linux binaries are built on `ubuntu-latest`, so
-they need a glibc at least as new as that runner's; on an older distro the
-`--version` check fails and the script builds from source.
+replaced by a download. Linux binaries are built in an Ubuntu 20.04 container
+(`scripts/build-linux-release.sh`: glibc 2.31, x86-64-v2), so they run on
+Ubuntu 20.04+, Debian 11+, RHEL 9 and Amazon Linux 2023. Releases up to
+v0.1.3 were built on `ubuntu-latest` and need glibc 2.38. On a distro older
+than the binary's floor the `--version` check fails and the script builds
+from source.
 
 ## What you're seeing
 

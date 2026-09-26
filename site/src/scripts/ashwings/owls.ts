@@ -6,7 +6,9 @@
 // Config: the page's data-config, overridden by ?rpc=&ashw=&market=&relayer=
 // (defaults: the public testnet, contracts from
 // infra/testnet/deployments/sova-testnet.json).
-import { RpcError, rpc, useChain, u256, addrWord, calldata, words, num, asAddr, dynBytes, utf8 } from '../checkout/chain';
+import {
+  RpcError, rpc, useChain, u256, addrWord, calldata, words, num, asAddr, dynBytes, utf8, waitingForBlock, stopWaiting,
+} from '../checkout/chain';
 
 export type Cfg = { rpc: string; chainId?: number; ashw: string; market: string; relayer: string };
 export type Owl = { id: bigint; name: string; image: string; traits: string; owner: string };
@@ -167,12 +169,17 @@ export async function connect(c: Cfg): Promise<string> {
   return a;
 }
 
-/** Dry-run, send from the wallet, wait for the receipt. */
-export async function send(c: Cfg, from: string, to: string, data: string, value = 0n) {
+/**
+ * Dry-run, send from the wallet, wait for the receipt. `onSent` runs once
+ * the wallet has sent it (show the waiting state there). A Sova block
+ * follows each Zcash block, so this waits up to 10 min.
+ */
+export async function send(c: Cfg, from: string, to: string, data: string, value = 0n, onSent?: () => void) {
   const tx = { from, to, data, value: '0x' + value.toString(16) };
   await rpc(c.rpc, 'eth_call', [tx, 'latest']); // a revert surfaces here, with its reason
-  const hash = await eth!.request({ method: 'eth_sendTransaction', params: [tx] });
-  for (let i = 0; i < 120; i++) {
+  const hash: string = await eth!.request({ method: 'eth_sendTransaction', params: [tx] });
+  onSent?.();
+  for (let i = 0; i < 400; i++) {
     const r = await rpc<any>(c.rpc, 'eth_getTransactionReceipt', [hash]);
     if (r) {
       if (r.status !== '0x1') throw new Error('transaction reverted');
@@ -180,8 +187,12 @@ export async function send(c: Cfg, from: string, to: string, data: string, value
     }
     await new Promise((ok) => setTimeout(ok, 1500));
   }
-  throw new Error('no receipt after 3 min');
+  throw new Error(`not in a block after 10 min · tx ${hash.slice(0, 10)}… may still land: reload later`);
 }
+
+/** `onSent` for `send`: "<label> · sent, waiting for a block", with the clock and note. */
+export const sentFor = (el: HTMLElement, label: string) => () =>
+  waitingForBlock(el, el.querySelector<HTMLElement>('.st')!, `${label} · sent, waiting for a block`);
 
 // ---- formatting -------------------------------------------------------------
 
@@ -222,6 +233,7 @@ export function card(o: Owl, me: string, extra?: HTMLElement): HTMLElement {
 }
 
 export function setStatus(el: HTMLElement, kind: 'wait' | 'ok' | 'err', text: string) {
+  stopWaiting(el);
   el.dataset.k = kind;
   el.querySelector('.st')!.textContent = text;
 }

@@ -14,10 +14,18 @@
 #                          engine/personal/sign/filters); batch cap; the
 #                          per-IP limit answers a burst with a 429 a
 #                          browser can read (CORS + Retry-After); faucet
-#                          /status up and other faucet paths 404; seed P2P
-#                          ports open; P2P closed on every non-seed host
-#                          (incl. byo ones); every private port (authrpc,
-#                          RPC, zebrad RPC, faucet) closed on every host
+#                          /status up and other faucet paths 404; with
+#                          CHECKOUT_RELAYER=1, the checkout relayer's
+#                          /status through CHECKOUT_HOST (chain, listings,
+#                          accepting, balance above
+#                          CHECKOUT_RELAYER_ALERT_BALANCE_WEI, the recorded
+#                          address, CORS for the page only, no secrets),
+#                          its routing (a bad /reserve is a 400 from the
+#                          relayer, spending nothing) and its other paths
+#                          404; seed P2P ports open; P2P closed on every
+#                          non-seed host (incl. byo ones); every private
+#                          port (authrpc, RPC, zebrad RPC, faucet, checkout
+#                          relayer) closed on every host
 #   ./smoke.sh hosts       over SSH: services active, "enforcing
 #                          settlements" logged, SIP-7 feed logged (with
 #                          SOVA_SIP7=1), zebrad synced, epoch lag,
@@ -41,6 +49,7 @@ load_config
 validate_servers
 validate_edge_config
 validate_sip6
+validate_checkout_config
 need_cmd jq
 need_cmd curl
 PASS=0
@@ -141,6 +150,7 @@ cmd_edge() {
   fi
   r="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "https://${FAUCET_HOST}/admin")"
   [[ "${r}" == 404 ]] && ok "faucet: other paths 404" || bad "faucet: /admin gave HTTP ${r}"
+  check_checkout
 
   local s name role ip port
   for s in "${SERVERS[@]}"; do
@@ -158,10 +168,69 @@ cmd_edge() {
         port_open "${ip}" "${port}" && bad "${name}: tcp/${port} open on a no-inbound host" || ok "${name}: tcp/${port} closed (no inbound P2P)"
       done
     fi
-    for port in "${SOVA_AUTH_PORT}" "${SOVA_HTTP_PORT}" "${ZEBRA_RPC_PORT}" "${FAUCET_PORT}"; do
+    for port in "${SOVA_AUTH_PORT}" "${SOVA_HTTP_PORT}" "${ZEBRA_RPC_PORT}" "${FAUCET_PORT}" \
+      $([[ "${CHECKOUT_RELAYER}" == 1 ]] && echo "${CHECKOUT_RELAYER_PORT}"); do
       port_open "${ip}" "${port}" && bad "${name}: tcp/${port} is reachable from the internet" || ok "${name}: tcp/${port} closed"
     done
   done
+}
+
+# The checkout relayer, as the page and a stranger see it (CHECKOUT_HOST).
+# Spends nothing: /status is read-only and the one POST is refused by the
+# relayer's own validation before any limit or transaction.
+check_checkout() {
+  if [[ "${CHECKOUT_RELAYER}" != 1 ]]; then
+    ok "checkout: relayer off (CHECKOUT_RELAYER=0)"
+    return 0
+  fi
+  local url="https://${CHECKOUT_HOST}" hdr r code want="" faucet
+  hdr="$(mktemp)"
+  r="$(curl -fsS --max-time 20 -D "${hdr}" -H "Origin: ${CHECKOUT_RELAYER_CORS_ORIGIN}" "${url}/status")" || r=""
+  if [[ "$(jq -r '.ok' <<<"${r}" 2>/dev/null)" != true ]]; then
+    bad "checkout: ${url}/status gave '${r:0:160}'"
+    rm -f "${hdr}"
+    return 0
+  fi
+  local addr bal chain listings accepting
+  addr="$(jq -r .relayer <<<"${r}")"
+  bal="$(jq -r .balanceSova <<<"${r}")"
+  chain="$(jq -r .chainId <<<"${r}")"
+  listings="$(jq -r '.listings | if type == "array" then join(",") else . end' <<<"${r}")"
+  accepting="$(jq -r .accepting <<<"${r}")"
+  ok "checkout: /status up (relayer ${addr}, ${bal} SOVA, $(jq -r .openReservations <<<"${r}")/$(jq -r .maxOpenReservations <<<"${r}") open, watcher $(jq -r .watching <<<"${r}"))"
+  [[ "${chain}" == 82330 ]] && ok "checkout: chain 82330" || bad "checkout: relayer is on chain ${chain}"
+  [[ "${listings}" == "${CHECKOUT_RELAYER_LISTINGS}" ]] && ok "checkout: serves listing(s) ${listings}" ||
+    bad "checkout: serves listings '${listings}', config says ${CHECKOUT_RELAYER_LISTINGS}"
+  faucet="$(servers_with_role faucet | sed -n 1p)"
+  [[ -s "${OUT_DIR}/servers/${faucet}.checkout_relayer_address" ]] && want="$(cat "${OUT_DIR}/servers/${faucet}.checkout_relayer_address")"
+  if [[ -z "${want}" ]]; then
+    ok "checkout: no recorded address to compare (out/servers/${faucet}.checkout_relayer_address; deploy.sh writes it)"
+  elif [[ "$(tr 'A-F' 'a-f' <<<"${want}")" == "$(tr 'A-F' 'a-f' <<<"${addr}")" ]]; then
+    ok "checkout: relayer address = the one deploy.sh recorded"
+  else
+    bad "checkout: relayer is ${addr}, deploy.sh recorded ${want}"
+  fi
+  if [[ "$(jq -r --arg f "${CHECKOUT_RELAYER_ALERT_BALANCE_WEI}" '(.balanceWei | tonumber) >= ($f | tonumber)' <<<"${r}")" == true ]]; then
+    ok "checkout: balance ${bal} SOVA >= the alert floor $(jq -rn --arg f "${CHECKOUT_RELAYER_ALERT_BALANCE_WEI}" '$f | tonumber / 1e18')"
+  else
+    bad "checkout: balance ${bal} SOVA is below the alert floor $(jq -rn --arg f "${CHECKOUT_RELAYER_ALERT_BALANCE_WEI}" '$f | tonumber / 1e18') (it refuses new orders below $(jq -r '.minBalanceWei | tonumber / 1e18' <<<"${r}")): fund ${addr}"
+  fi
+  [[ "${accepting}" == true ]] && ok "checkout: accepting new orders" || bad "checkout: refusing new orders ($(jq -r .reason <<<"${r}"))"
+  grep -qi "^access-control-allow-origin: ${CHECKOUT_RELAYER_CORS_ORIGIN}"$'\r'"\?$" "${hdr}" &&
+    ok "checkout: CORS grants ${CHECKOUT_RELAYER_CORS_ORIGIN}" || bad "checkout: no CORS grant for ${CHECKOUT_RELAYER_CORS_ORIGIN}"
+  code="$(curl -sS -o /dev/null -D - --max-time 15 -H 'Origin: https://example.com' "${url}/status" | grep -ci '^access-control-allow-origin' || true)"
+  [[ "${code}" == 0 ]] && ok "checkout: no CORS grant for other origins" || bad "checkout: CORS granted to https://example.com"
+  # No key or other 32-byte secret in what it serves (it serves no hashes at all).
+  grep -Eqi '[0-9a-f]{64}' <<<"${r}" && bad "checkout: /status contains a 64-hex string" || ok "checkout: /status carries no 32-byte hex (no key)"
+  r="$(curl -sS --max-time 15 -H 'Content-Type: application/json' -H "Origin: ${CHECKOUT_RELAYER_CORS_ORIGIN}" \
+    --data '{"listingId":1,"recipient":"0x0000000000000000000000000000000000000000"}' -w '\n%{http_code}' "${url}/reserve")"
+  [[ "${r##*$'\n'}" == 400 && "$(jq -r '.error // empty' <<<"${r%$'\n'*}" 2>/dev/null)" == *recipient* ]] &&
+    ok "checkout: /reserve routed to the relayer (bad recipient: 400, nothing sent)" || bad "checkout: /reserve with a zero recipient gave '${r:0:160}'"
+  for code in /health /admin /; do
+    r="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "${url}${code}")"
+    [[ "${r}" == 404 ]] && ok "checkout: ${code} is 404 at the edge" || bad "checkout: ${code} gave HTTP ${r}"
+  done
+  rm -f "${hdr}"
 }
 
 # SIP-6 §2.1: a sealed block's extraData is exactly 97 bytes (vanity +
@@ -286,7 +355,7 @@ cmd_hosts() {
     role="$(srv_role "${s}")"
     # shellcheck disable=SC2016 # expanded on the host
     out="$(kit_ssh "${name}" '
-      for u in zebrad sova-node sova-faucet cloudflared sova-health.timer; do
+      for u in zebrad sova-node sova-faucet sova-checkout-relayer cloudflared sova-health.timer; do
         systemctl is-enabled --quiet $u 2>/dev/null && echo "svc $u $(systemctl is-active $u)"
       done
       # The keeper burner is started by hand (not enabled) and stops itself at
@@ -350,7 +419,10 @@ cmd_balance() {
 }
 
 cmd_contracts() {
-  if "${KIT_DIR}/deploy-contracts.sh" verify --rpc "https://${RPC_HOST}"; then
+  # verify makes a few dozen calls; the public RPC's WAF limit (50 per 10 s
+  # per IP) can refuse some of them, so one retry after the window passes.
+  if "${KIT_DIR}/deploy-contracts.sh" verify --rpc "https://${RPC_HOST}" ||
+    { sleep 11 && "${KIT_DIR}/deploy-contracts.sh" verify --rpc "https://${RPC_HOST}"; }; then
     ok "contracts: every recorded day-one contract verified via https://${RPC_HOST}"
   else
     bad "contracts: deploy-contracts.sh verify failed (output above)"

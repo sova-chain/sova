@@ -90,6 +90,49 @@ export async function useChain(eth: Eth, rpcUrl: string, testnetChainId?: number
   }
 }
 
+// ---- waiting for a block ----------------------------------------------------
+
+/** The one line shown while a sent transaction waits for its block. */
+export const BLOCK_NOTE = 'Sova makes one block per Zcash block: about a minute, sometimes several.';
+
+const ticking = new WeakMap<HTMLElement, number>();
+
+/**
+ * A sent transaction is waiting for its block: `st` (the status text) says
+ * so once, a clock counts up the elapsed time, and the note says why it
+ * can take minutes. The clock is aria-hidden so screen readers hear the
+ * status once, not every second. The status element holds `.clock` and
+ * `.note` spans (the page's markup); any later status update calls
+ * `stopWaiting`.
+ */
+export function waitingForBlock(status: HTMLElement, st: HTMLElement, text: string): void {
+  stopWaiting(status);
+  status.dataset.k = 'wait';
+  st.textContent = text;
+  const clock = status.querySelector<HTMLElement>('.clock');
+  const note = status.querySelector<HTMLElement>('.note');
+  const t0 = Date.now();
+  const draw = () => {
+    const s = Math.floor((Date.now() - t0) / 1000);
+    if (clock) clock.textContent = ` · ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  };
+  draw();
+  if (clock) clock.hidden = false;
+  if (note) {
+    note.textContent = BLOCK_NOTE;
+    note.hidden = false;
+  }
+  ticking.set(status, window.setInterval(draw, 1000));
+}
+
+/** End the waiting state: stop the clock, hide it and the note. */
+export function stopWaiting(status: HTMLElement): void {
+  const t = ticking.get(status);
+  if (t !== undefined) window.clearInterval(t);
+  ticking.delete(status);
+  status.querySelectorAll<HTMLElement>('.clock, .note').forEach((el) => (el.hidden = true));
+}
+
 /** Readable reason for a revert (custom error selector), else the raw message. */
 export function reason(e: unknown): string {
   const data = e instanceof RpcError ? e.data : undefined;

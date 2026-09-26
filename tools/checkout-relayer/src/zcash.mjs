@@ -25,19 +25,24 @@ export const payeeScript = (hash, p2sh) => {
   return p2sh ? `a914${h}87` : `76a914${h}88ac`;
 };
 
+/** The only zebrad methods the watcher calls: all read-only. */
+export const ZEBRAD_METHODS = new Set(['getblockcount', 'getaddresstxids', 'getrawtransaction']);
+
 /**
- * zebrad JSON-RPC. Auth: ZCASH_RPC_USER/ZCASH_RPC_PASSWORD, or
- * ZCASH_RPC_COOKIE (zebrad's cookie file, re-read on every call because
- * zebrad rewrites it on restart).
+ * zebrad JSON-RPC, read-only (ZEBRAD_METHODS). Auth, if zebrad wants it:
+ * ZCASH_RPC_USER/ZCASH_RPC_PASSWORD, or ZCASH_RPC_COOKIE (zebrad's cookie
+ * file, re-read on every call because zebrad rewrites it on restart).
  */
 export function zebrad({ url, user, password, cookieFile }) {
   let seq = 0;
   return async function call(method, params = []) {
+    if (!ZEBRAD_METHODS.has(method)) throw new Error(`zebrad ${method}: not a method this relayer uses`);
     const headers = { 'content-type': 'application/json' };
     const cred = cookieFile ? readFileSync(cookieFile, 'utf8').trim() : user ? `${user}:${password ?? ''}` : '';
     if (cred) headers.authorization = 'Basic ' + Buffer.from(cred).toString('base64');
     const res = await fetch(url, {
       method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id: ++seq, method, params }),
+      signal: AbortSignal.timeout(20_000),
     });
     const j = await res.json();
     if (j.error) throw new Error(`zebrad ${method}: ${j.error.message}`);

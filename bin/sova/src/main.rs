@@ -65,11 +65,12 @@
 //! bootnodes pinned — `SOVA_BOOTNODES` or none — never reth's mainnet
 //! fallback). Orthogonal to the three modes above.
 //!
-//! `sova genesis-hash` (the binary's one argument) prints the genesis hash
+//! `sova genesis-hash` (the binary's one subcommand) prints the genesis hash
 //! a node with this env would boot — `SOVA_CHAIN` and `SOVA_SIP7` (SIP-7's
 //! predeploy is in the genesis state; SIP-6 is not) — and exits without
 //! starting anything. The testnet kit publishes it from there instead of
 //! hard-coding it (`infra/testnet/bootnodes.sh`).
+//! `sova --version` prints the release it was built from (`build.rs`).
 //!
 //! Gossip transport (`SOVA_GOSSIP`, see [`gossip`]): `relay` (default —
 //! gossip v1's authrpc relay above, unchanged) or `p2p` (the `sova/1` RLPx
@@ -114,8 +115,10 @@
 mod chain;
 mod discovery;
 mod gossip;
+mod log_filter;
 mod pending_rpc;
 mod rpc;
+mod send_sync;
 mod tx_gossip;
 mod zcash_feed;
 
@@ -149,18 +152,32 @@ enum Command {
     Node,
     /// `genesis-hash`: print the chainspec's genesis hash and exit.
     GenesisHash,
+    /// `--version` / `-V` / `version`: print [`VERSION`] and exit.
+    Version,
+    /// `--help` / `-h` / `help`: print [`USAGE`] and exit.
+    Help,
 }
 
-/// Parse the arguments after the program name. Anything but none or
-/// `genesis-hash` is refused, so a typo never starts a node.
+/// The release this binary was built from: the tag the release workflow
+/// passes in `SOVA_VERSION` (`0.1.3` for `v0.1.3`), else `git describe`, else
+/// the crate version plus the commit (see `build.rs`).
+const VERSION: &str = env!("SOVA_BUILD_VERSION");
+
+const USAGE: &str = "usage: sova               (run the node; configured by SOVA_* env vars)
+       sova genesis-hash  (print the genesis hash for SOVA_CHAIN / SOVA_SIP7, and exit)
+       sova --version     (print the version, and exit)";
+
+/// Parse the arguments after the program name. Anything but none,
+/// `genesis-hash`, a version flag or a help flag is refused, so a typo
+/// never starts a node.
 fn parse_command<I: IntoIterator<Item = String>>(args: I) -> eyre::Result<Command> {
     let args: Vec<String> = args.into_iter().collect();
     match args.as_slice() {
         [] => Ok(Command::Node),
         [cmd] if cmd == "genesis-hash" => Ok(Command::GenesisHash),
-        _ => Err(eyre::eyre!(
-            "usage: sova            (run the node; configured by SOVA_* env vars)\n       sova genesis-hash  (print the genesis hash for SOVA_CHAIN / SOVA_SIP7, and exit)\ngot: {args:?}"
-        )),
+        [cmd] if matches!(cmd.as_str(), "--version" | "-V" | "version") => Ok(Command::Version),
+        [cmd] if matches!(cmd.as_str(), "--help" | "-h" | "help") => Ok(Command::Help),
+        _ => Err(eyre::eyre!("{USAGE}\ngot: {args:?}")),
     }
 }
 
@@ -185,16 +202,30 @@ fn main() -> eyre::Result<()> {
 }
 
 async fn run() -> eyre::Result<()> {
-    if parse_command(std::env::args().skip(1))? == Command::GenesisHash {
-        // The chainspec only: no tracing, datadir, network or zebrad.
-        let profile = chain::ChainProfile::from_env()?;
-        println!("{}", profile.genesis_hash(env_flag("SOVA_SIP7")));
-        return Ok(());
+    match parse_command(std::env::args().skip(1))? {
+        Command::Node => {}
+        Command::GenesisHash => {
+            // The chainspec only: no tracing, datadir, network or zebrad.
+            let profile = chain::ChainProfile::from_env()?;
+            println!("{}", profile.genesis_hash(env_flag("SOVA_SIP7")));
+            return Ok(());
+        }
+        Command::Version => {
+            println!("sova {VERSION}");
+            return Ok(());
+        }
+        Command::Help => {
+            println!("sova {VERSION}\n{USAGE}");
+            return Ok(());
+        }
     }
     // Without an installed subscriber, reth's internal `tracing` calls
     // (RPC server bind confirmation, block production, etc.) go nowhere.
-    // Keep the guard alive for the process lifetime.
-    let _tracing_guard = RethTracer::new().init()?;
+    // Keep the guard alive for the process lifetime. `log_filter` drops
+    // reth's beacon-client warning, which never applies to Sova.
+    let mut layers = reth_tracing::Layers::new();
+    layers.add_layer(log_filter::layer());
+    let _tracing_guard = RethTracer::new().init_with_layers(layers)?;
 
     let runtime = Runtime::test();
     // Kept for the SIGTERM/SIGINT path (see `shut_down`).
@@ -202,6 +233,7 @@ async fn run() -> eyre::Result<()> {
     let chain_profile = chain::ChainProfile::from_env()?;
     let rpc_profile = rpc::RpcProfile::from_env()?;
     let rpc_cors = rpc::RpcCors::from_env()?;
+    let send_sync_timeout = send_sync::from_env()?;
     let follow_only = env_flag("SOVA_FOLLOW_ONLY");
     let gossip = gossip::Gossip::from_env()?;
     let p2p_peers = match gossip {
@@ -282,6 +314,7 @@ async fn run() -> eyre::Result<()> {
     rpc::apply_ws(&mut node_config.rpc, ws_port);
     rpc_profile.apply(&mut node_config.rpc);
     rpc_cors.apply(&mut node_config.rpc);
+    send_sync::apply(&mut node_config.rpc, send_sync_timeout);
     let jwt = apply_shared_jwt(&mut node_config)?;
     // Transaction gossip without a CL: the network leaves reth's "initially
     // syncing" state when the engine starts, not at the first new block
@@ -347,9 +380,10 @@ async fn run() -> eyre::Result<()> {
         .with_components(sova_node.components_builder().network(network_builder))
         // Every RPC server reth starts (HTTP, WS), in every profile:
         // `pending` → `latest` for the three call-simulation methods.
+        // `SovaNode::add_ons()` with the sync-send timeout applied (see
+        // `send_sync`: reth v2.6.0 ignores its own flag).
         .with_add_ons(
-            sova_node
-                .add_ons()
+            send_sync::add_ons(send_sync_timeout)
                 .layer_rpc_middleware(pending_rpc::PendingAsLatestLayer),
         )
         .extend_rpc_modules(move |ctx| {
@@ -391,10 +425,7 @@ async fn run() -> eyre::Result<()> {
         .launch_with_debug_capabilities()
         .await?;
 
-    println!(
-        "sova {} (pre-release, under construction)",
-        env!("CARGO_PKG_VERSION")
-    );
+    println!("sova {VERSION} (pre-release, under construction)");
     println!("{datadir_line}");
     println!("{}", rpc_cors.describe());
     // Branch rule (audit 2026-09-23 F1): fork choice only considers
@@ -1046,9 +1077,27 @@ mod tests {
             &["genesis-hash", "x"],
             &["--genesis-hash"],
             &["node"],
+            &["--version", "x"],
+            &["--Version"],
         ] {
             assert!(parse_command(args(bad)).is_err(), "{bad:?}");
         }
+        for v in ["--version", "-V", "version"] {
+            assert_eq!(parse_command(args(&[v])).unwrap(), Command::Version);
+        }
+        for h in ["--help", "-h", "help"] {
+            assert_eq!(parse_command(args(&[h])).unwrap(), Command::Help);
+        }
+    }
+
+    /// `--version` never prints an empty or placeholder version.
+    #[test]
+    fn version_is_stamped() {
+        assert!(!VERSION.is_empty());
+        assert!(
+            VERSION.starts_with(|c: char| c.is_ascii_digit()),
+            "{VERSION}"
+        );
     }
 
     /// What the subcommand prints: the full 0x-prefixed lowercase hash,

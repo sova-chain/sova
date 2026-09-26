@@ -407,6 +407,29 @@ impl CandidateTracker {
             .and_then(|b| b.blocks.first().map(|&(_, c)| c))
     }
 
+    /// Forget a candidate our own engine rejected as permanently invalid (an
+    /// `Invalid` that is not a hold, `crate::consensus::HOLD_MARKER`). It is
+    /// observed before execution, so a block that then fails execution (a
+    /// state-root mismatch, say) would otherwise stay preferred and the
+    /// arbiter would retry its forkchoice update forever (public testnet
+    /// 2026-09-26, height 6225). Returns the epoch's new best when it
+    /// changed, for the arbiter to adopt.
+    pub fn forget_invalid(&self, sova_height: u64, block_hash: [u8; 32]) -> Option<Candidate> {
+        let before = self.best(sova_height);
+        if let Ok(mut unranked) = self.unranked.lock()
+            && let Some(entry) = unranked.get_mut(&sova_height)
+        {
+            entry.retain(|(hash, _)| *hash != block_hash);
+        }
+        if let Ok(mut seen) = self.seen.lock()
+            && let Some(entry) = seen.get_mut(&sova_height)
+        {
+            entry.retain(|s| s.candidate.block_hash != block_hash);
+        }
+        let after = self.best(sova_height)?;
+        (before.map(|b| b.block_hash) != Some(after.block_hash)).then_some(after)
+    }
+
     /// Drop candidates above `sova_height` (Zcash reorg unwinding).
     pub fn unwind_above(&self, sova_height: u64) {
         if let Ok(mut seen) = self.seen.lock() {
@@ -893,6 +916,28 @@ mod tests {
         let t = CandidateTracker::default();
         assert_eq!(t.observe(7, cand(3, 0xAA), [0; 32]), Observation::NewBest);
         assert_eq!(t.best(7), Some(cand(3, 0xAA)));
+    }
+
+    #[test]
+    fn a_permanently_invalid_candidate_is_forgotten() {
+        let t = CandidateTracker::default();
+        // The invalid block is the preferred one (lower hash at equal rank:
+        // the 6225 shape).
+        let _ = t.observe(7, cand(0, 0x10), [0; 32]);
+        let _ = t.observe(7, cand(0, 0x20), [0; 32]);
+        assert_eq!(t.best(7), Some(cand(0, 0x10)));
+        // Forgetting it hands the epoch to the next candidate.
+        assert_eq!(t.forget_invalid(7, [0x10; 32]), Some(cand(0, 0x20)));
+        assert_eq!(t.best(7), Some(cand(0, 0x20)));
+        // Forgetting a non-best or unknown block changes nothing.
+        assert_eq!(t.forget_invalid(7, [0x99; 32]), None);
+        assert_eq!(t.best(7), Some(cand(0, 0x20)));
+        // Forgetting the last one leaves no best, so the arbiter's retry
+        // (which checks `best`) stops.
+        assert_eq!(t.forget_invalid(7, [0x20; 32]), None);
+        assert_eq!(t.best(7), None);
+        // A re-sealed block for the epoch is then accepted as best.
+        assert_eq!(t.observe(7, cand(0, 0x30), [0; 32]), Observation::NewBest);
     }
 
     #[test]

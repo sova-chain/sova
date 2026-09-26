@@ -161,7 +161,11 @@ server auction; both can be cheaper while supply lasts.
     - State and calls: `eth_getBalance`, `eth_getCode`,
       `eth_getStorageAt`, `eth_call`, `eth_estimateGas`, `eth_getLogs`
       (range-capped).
-    - Broadcast: `eth_sendRawTransaction`.
+    - Broadcast: `eth_sendRawTransaction`, and
+      `eth_sendRawTransactionSync` (EIP-7966) with its `timeout_ms`
+      capped at 90 s by the Worker, under Cloudflare's ~100 s origin
+      timeout (the node's own cap is `SOVA_SEND_SYNC_TIMEOUT_SECS`, 300 s
+      by default; added 2026-09-25, `docs/design/faster-blocks.md` §4).
     - SIP-7 feed: `sova_getZcashBlocks` (read-only, capped at 1,000
       heights per call by the node; exists only with `SOVA_SIP7=1`).
   - *Denied:* `admin_*`, `debug_*`, `trace_*`, `txpool_*`, `engine_*`,

@@ -1,7 +1,7 @@
 // /ashwings/mint: supply, mint for SOVA with an injected wallet, hand off
 // to /ashwings/buy for ZEC, and the gallery of minted owls (newest first).
 import {
-  type Owl, SEL, config, collection, owls, sales, eth, connect, send, why, sova, zecOf, card, setStatus,
+  type Owl, SEL, config, collection, owls, sales, eth, connect, send, sentFor, why, sova, zecOf, card, setStatus,
 } from './owls';
 
 const PAGE = 12;
@@ -78,7 +78,7 @@ async function mintSova() {
   try {
     if (!S.wallet) S.wallet = await connect(cfg);
     setStatus(status, 'wait', `minting · confirm ${sova(S.price)} SOVA in your wallet`);
-    const rc = await send(cfg, S.wallet, cfg.ashw, '0x' + SEL.mint, S.price);
+    const rc = await send(cfg, S.wallet, cfg.ashw, '0x' + SEL.mint, S.price, sentFor(status, 'minting'));
     const log = rc.logs.find((l: any) => l.address.toLowerCase() === cfg.ashw.toLowerCase());
     const id = BigInt(log.topics[3]);
     const [o] = await owls(cfg, [id]);

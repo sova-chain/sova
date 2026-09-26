@@ -14,9 +14,16 @@ import { CHECKOUT_ABI, describe, errorName } from './sova.mjs';
 import { payeeScript, tAddr, zebrad } from './zcash.mjs';
 
 const WAIT = new Set(['ZcashTxNotFound', 'ZcashNotYet', 'ZcashInsufficientConfirmations']);
-const CHUNK = 5000n;
 
-export function startWatcher(cfg, sova, log) {
+/**
+ * `claim(id, txid, vout)` sends a claim and resolves once it is mined (the
+ * server's, which shares one in-flight claim per order with POST /claim);
+ * default: a plain send.
+ */
+export function startWatcher(cfg, sova, log, { claim } = {}) {
+  const sendClaim = claim ?? ((id, txid, vout) => sova.send('claim', [id, txid, vout]));
+  // The public RPC caps eth_getLogs at 1,000 blocks (worker/rpc-firewall.mjs).
+  const CHUNK = BigInt(cfg.logChunk ?? 1000);
   const z = zebrad(cfg.zcash);
   const open = new Map(); // id -> order
   const detected = new Map(); // id -> { txid, vout, height }
@@ -29,18 +36,21 @@ export function startWatcher(cfg, sova, log) {
     const latest = await sova.pub.getBlockNumber();
     while (from <= latest) {
       const to = from + CHUNK - 1n < latest ? from + CHUNK - 1n : latest;
-      const q = { address: cfg.checkout, abi: CHECKOUT_ABI, fromBlock: from, toBlock: to };
-      for (const l of await sova.pub.getContractEvents({ ...q, eventName: 'Reserved' })) {
+      // One eth_getLogs per chunk for both events (the RPC budget is shared).
+      const logs = await sova.pub.getContractEvents({ address: sova.checkout, abi: CHECKOUT_ABI, fromBlock: from, toBlock: to });
+      for (const l of logs) {
         const a = l.args;
-        if (cfg.listings && !cfg.listings.has(a.listingId)) continue;
-        open.set(a.reservationId, {
-          id: a.reservationId, quote: a.quoteZat, reservedAt: a.reservedAt, deadline: a.deadline,
-          script: payeeScript(a.payeeHash, a.payeeP2sh), addr: tAddr(a.payeeHash, a.payeeP2sh, cfg.zcashNet),
-        });
-      }
-      for (const l of await sova.pub.getContractEvents({ ...q, eventName: 'Claimed' })) {
-        const id = l.args.reservationId;
-        if (open.delete(id)) claims.set(id, { state: 'claimed', txHash: l.transactionHash });
+        if (l.eventName === 'Reserved') {
+          if (cfg.listings && !cfg.listings.has(a.listingId)) continue;
+          open.set(a.reservationId, {
+            id: a.reservationId, quote: a.quoteZat, reservedAt: a.reservedAt, deadline: a.deadline,
+            script: payeeScript(a.payeeHash, a.payeeP2sh), addr: tAddr(a.payeeHash, a.payeeP2sh, cfg.zcashNet),
+          });
+        } else if (l.eventName === 'Claimed') {
+          open.delete(a.reservationId);
+          claims.set(a.reservationId, { state: 'claimed', txHash: l.transactionHash });
+          onClaimed?.(a.reservationId);
+        }
       }
       from = to + 1n;
     }
@@ -109,7 +119,7 @@ export function startWatcher(cfg, sova, log) {
       }
       claims.set(id, { state: 'sending' });
       try {
-        const { hash } = await sova.send('claim', [id, txid, d.vout]);
+        const { hash } = await sendClaim(id, txid, d.vout);
         open.delete(id);
         claims.set(id, { state: 'claimed', txHash: hash });
         log(`order ${id}: claimed in ${hash}`);
@@ -133,10 +143,15 @@ export function startWatcher(cfg, sova, log) {
     }
   }
 
+  let onClaimed = null;
   const timer = setInterval(tick, cfg.pollMs);
   tick();
   return {
     stop: () => clearInterval(timer),
+    /** Called with each reservation id seen claimed on Sova (by anyone). */
+    onClaimed: (fn) => {
+      onClaimed = fn;
+    },
     status(id) {
       const d = detected.get(id);
       return {

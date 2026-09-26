@@ -12,3 +12,8 @@ libs = ["lib"]
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
 
 fs_permissions = [{ access = "read-write", path = "./" }]
+
+# WzecBridge (wz.cash, a Sova Labs product) is called rarely and sits near
+# the EIP-170 size limit at 999999 runs; it is built at 1000 runs instead.
+additional_compiler_profiles = [{ name = "size", optimizer_runs = 1000 }]
+compilation_restrictions = [{ paths = "src/wzcash/WzecBridge.sol", optimizer_runs = 1000 }]

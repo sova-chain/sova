@@ -37,7 +37,7 @@ use crate::state::MinerState;
 /// Sova miner CLI: budget-capped per-epoch SIP-1 burn mining against a
 /// zebrad node.
 #[derive(Debug, Parser)]
-#[command(name = "sova-miner", version, about)]
+#[command(name = "sova-miner", version = env!("SOVA_BUILD_VERSION"), about)]
 struct Cli {
     /// Directory holding this miner's keystore and state sidecar
     /// (`keystore.json`, `state.json`). Created by `init` if missing.

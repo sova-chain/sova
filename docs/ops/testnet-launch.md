@@ -218,14 +218,19 @@ e. **Snapshot.** Run `./publish.sh snapshot`. Post the height, hash and
    SHA-256 outside the bucket too (`docs/ops/snapshots.md`).
 
 f. **Stranger guide.** Fill every `<<…>>` placeholder in
-   `docs/guides/testnet.md` (its "Filled at launch" table names the
-   script behind each), then wire the `data-placeholder="testnet"` spans
+   `docs/guides/testnet.md` (a maintainer comment at its top, hidden
+   when rendered, names the script behind each), then wire the `data-placeholder="testnet"` spans
    in `site/src/pages/mine.astro` and `site/src/pages/node.astro` to it.
    Point the live pages at the network: `SOVA_RPC` in
    `site/src/data/sova.ts` becomes `https://rpc.testnet.sova.io` (`/pulse`
    needs nothing else; `ZcashBlocks` is the fixed predeploy), and the
    `/ashwings/*` pages' contract addresses come from
    `deployments/sova-testnet.json`. Deploy the site.
+
+g. **Checkout relayer.** Fund the address in
+   `out/servers/sova-faucet-1.checkout_relayer_address` with a few SOVA
+   (see "Checkout relayer" below), then `./smoke.sh edge` shows its
+   balance above the floor.
 
 Commit `out/seeds.json`, `out/testnet.env`, `out/epoch-base.json` and
 `deployments/sova-testnet.json`, so the canonical copies aren't only in
@@ -242,12 +247,14 @@ R2 only makes sure the names are free.
 | `rpc.testnet.sova.io` | CNAME | `<tunnel-id>.cfargotunnel.com` | proxied | `cloudflare.sh tunnels` |
 | `rpc.testnet.sova.io/*` | Worker route | `sova-testnet-rpc-firewall` | — | `cloudflare.sh worker` |
 | `faucet.testnet.sova.io` | CNAME | `<tunnel-id>.cfargotunnel.com` | proxied | `cloudflare.sh tunnels` |
+| `checkout.testnet.sova.io` | CNAME | the faucet host's `<tunnel-id>.cfargotunnel.com` | proxied | `cloudflare.sh tunnels` (with `CHECKOUT_RELAYER=1`) |
 | `dl.testnet.sova.io` | R2 custom domain (Cloudflare manages the record) | bucket `sova-testnet-dl` | proxied | `cloudflare.sh r2` |
 
 More seeds get `seed-2.`, `seed-3.` and so on. The HTTP RPC (8545),
-authrpc (8551), zebrad RPC (18232) and faucet (18790) bind to 127.0.0.1
-on every host. They're open in no firewall. The RPC and the faucet
-reach the internet only through the outbound tunnel. `smoke.sh edge`
+authrpc (8551), zebrad RPC (18232), faucet (18790) and checkout relayer
+(18791) bind to 127.0.0.1 on every host. They're open in no firewall.
+The RPC, the faucet and the checkout relayer reach the internet only
+through the outbound tunnel. `smoke.sh edge`
 checks this from outside.
 
 ### 9. Done: the proof
@@ -302,7 +309,7 @@ the gitleaks CI scan.
 | --- | --- | --- | --- |
 | `sova-seed-1` | Hetzner CX33, fsn1, 60 GB volume | zebrad, sova (follow-only, C5-enforcing) | SSH (admin IPs), Sova P2P 30303 tcp+udp, Zcash P2P 18233 |
 | `sova-rpc-1` | Hetzner CX23, nbg1, 40 GB volume | zebrad, sova (follow-only, `SOVA_RPC_PROFILE=public`), cloudflared → `rpc.testnet.sova.io` | SSH only |
-| `sova-faucet-1` | Hetzner CX23, hel1, 40 GB volume | zebrad, `sova-faucet` (its own hot key, D5), cloudflared → `faucet.testnet.sova.io` | SSH only |
+| `sova-faucet-1` | Hetzner CX23, hel1, 40 GB volume | zebrad, `sova-faucet` (its own hot key, D5), `sova-checkout-relayer` (its own hot key; Node LTS), cloudflared → `faucet.testnet.sova.io`, `checkout.testnet.sova.io` | SSH only |
 | `sova-keeper-1` | Hetzner CX23, fsn1, 40 GB volume | zebrad, sova in **mine** mode (SIP-6: signs with the keeper's miner key), `sova-keeper` (disclosed, D8) | SSH only |
 
 | Script | What it does |
@@ -313,7 +320,7 @@ the gitleaks CI scan.
 | `host/byo-bootstrap.py` | Applies that same `cloud-init.yaml` over SSH to a byo host, so it matches a Hetzner one |
 | `test/byo-dry-run.sh` | Offline proof that the optional byo path works (a byo keeper validates, renders and appears in every launch stage) and that the default example is all-Hetzner |
 | `deploy.sh` → `host/setup-host.sh` | Per-role setup over SSH. `deploy.sh check` validates the config, `deploy.sh render` writes and lints every host's files locally |
-| `cloudflare.sh` | DNS, tunnels, the RPC firewall Worker (with the RPC rate limit), the faucet's WAF rate-limit rule, R2 bucket + domain, teardown |
+| `cloudflare.sh` | DNS, tunnels (incl. the checkout relayer's host on the faucet tunnel), the RPC firewall Worker (with the RPC rate limit), the WAF rate-limit rule (faucet `/drip`, relayer `/reserve` + `/claim`), R2 bucket + domain, teardown |
 | `epoch-base.sh` | Proposes, pins and records the epoch base B |
 | `bootnodes.sh` | The final bootnode list, `testnet.env`, `seeds.json` (with the genesis hash the node hosts printed), the `chain.rs` constant, `--verify` |
 | `deploy-contracts.sh` | The day-one contracts: `keygen`, `plan`, `deploy`, `verify` (runs `contracts/script/deploy-kit.sh`, the same code as `box/deploy-dapps.sh`) |
@@ -343,8 +350,76 @@ alert.
 | `zebrad_down`, `zebrad_lag` | RPC dead, or more than 20 blocks behind `estimatedheight` | Our Zcash view is stale, so C5 stalls |
 | `sova_down` | Unit or RPC down | |
 | `epoch_lag` | (zebrad tip − B + 1) − sova head > 10 epochs (~12 min) | **"WE LAG (infra)"**: the reference node (public RPC) is ahead of us, so it's our problem. **"NETWORK STALLED (miner matter)"**: the reference is stuck too, and nobody is sealing. That's not an infra failure; check the keeper. On `rpc-1` itself there is no reference, so the alert says it can't tell. |
+| `block_age` | The newest Sova block is older than `BLOCK_AGE_ALERT_MIN` (10 min) | A block's time is its Zcash block's. The alert says whether zebrad's tip is old too (**Zcash is slow**; Sova waits for it, nothing to fix) or not (**SOVA STUCK**: look at the keeper and `epoch_lag`). A 5-minute gap is normal. |
+| `null_run` | The last `NULL_RUN_ALERT` (20) blocks are all SIP-6 null blocks | Heights advance but nobody is burning, so no transaction can be mined. Check `sova-keeper` (a spent per-run budget, `KEEPER_BUDGET_ZAT`, stopped it on 2026-09-25) and restart it. |
 | `c5_reject` | Any `settlement mismatch` in the last 3 minutes | A peer offered a block that contradicts our zebrad. Investigate: a doctored snapshot, a Zcash fork, or a bad sealer. |
 | `faucet_down`, `faucet_dry`, `faucet_over` | `/status` dead, not accepting drips, or the hot wallet is over its limit | Top up (plain transfer), or stop topping up |
+| `checkout_down`, `checkout_low`, `checkout_refusing` | The checkout relayer's `/status` is dead; its SOVA is under `CHECKOUT_RELAYER_ALERT_BALANCE_WEI` (1 SOVA); or it refuses new orders (under the 0.1 SOVA floor, or at its open-order cap) | Top it up (below); a cap that stays full for an hour is someone holding orders open: see "Checkout relayer" |
+
+### Checkout relayer (`checkout.testnet.sova.io`)
+
+`tools/checkout-relayer` on the faucet host (`CHECKOUT_RELAYER=1`, the
+"Checkout relayer" block of `config.env`): it sends `reserve` and `claim`
+on `AshwingsZecCheckout` for `/ashwings/buy` visitors with no wallet, and
+watches the payee t-address on the host's zebrad (127.0.0.1:18232,
+read-only calls) to claim paid orders by itself. It can't take anything:
+the owl always goes to the order's recipient. What it spends is its own
+SOVA for gas. It runs as `sova-checkout` from `/opt/sova-checkout-relayer`
+(Node from NodeSource, `CHECKOUT_RELAYER_NODE_MAJOR`), on 127.0.0.1:18791.
+The tunnel routes only `/reserve`, `/claim`, `/status` and
+`/status/<order>`. It talks to Sova through the public RPC (the faucet
+host runs no node, and the hosts share no private network). It throttles
+itself to 30 requests per 10 s, under the edge's 50 per IP.
+
+- **Key.** `deploy.sh` makes it on the host (`keygen.mjs`) in
+  `/etc/sova/checkout-relayer.key.env`: root 0600, read by systemd before
+  it drops privileges, never copied, never rendered. It records only the
+  address, in `out/servers/sova-faucet-1.checkout_relayer_address`.
+- **Fund.** Send SOVA from any funded wallet, for example the deployer:
+  `cast send --keystore ~/.config/sova-testnet/deployer/keystore.json
+  --password-file ~/.config/sova-testnet/deployer/password --rpc-url
+  https://rpc.testnet.sova.io <relayer address> --value 5ether`. A
+  reserve and a claim together take about 282k gas, which is about 2e-12
+  SOVA at the 7-wei base fee, so a few SOVA lasts for good. What matters
+  is staying above the floor.
+- **The floor.** Below `CHECKOUT_RELAYER_MIN_BALANCE_WEI` (0.1 SOVA) it
+  takes no new orders. The page gets a 503 that says "use a wallet". It
+  still claims orders that were already paid, since the floor exists to
+  keep gas for those. `checkout_low` (health) and `smoke.sh edge` fire
+  earlier, at 1 SOVA.
+- **Rotate.** Sweep the old key's SOVA to a safe address first:
+  `sudo node --env-file=/etc/sova/checkout-relayer.env
+  --env-file=/etc/sova/checkout-relayer.key.env
+  /opt/sova-checkout-relayer/src/sweep.mjs 0x<to>`. Then delete the key
+  file (`sudo rm /etc/sova/checkout-relayer.key.env`), run
+  `./deploy.sh --only sova-faucet-1` (a new key, a new recorded address,
+  a restart), and fund the new address. Orders that are already open
+  aren't affected: claims can come from anyone.
+- **Limits** (config, per relayer): 3 reserves per client IP per hour
+  (IPv6 per /64, from `CF-Connecting-IP`), 10 a minute and 60 an hour
+  from everyone, 20 claims per IP per hour, 1 KB bodies, CORS for
+  `https://sova.io` only. The same address gets its open order back
+  instead of a new one. At most 20 of its own orders can be open (unpaid
+  and inside their 40-block payment window). That bounds both the gas
+  it spends and the owls it holds, whatever the number of IPs. The count
+  is kept in `/var/lib/sova/checkout-relayer/state.json`, so it survives
+  restarts. POSTs answer once the transaction is mined, or with 202 and a
+  tx hash after 25 s (a proxy won't hold a request through a slow Sova
+  block). The page then waits for the receipt itself.
+- **Smoke** (`smoke.sh edge`): `/status` through `checkout.testnet.sova.io`
+  answers on chain 82330 for listing 1. The address is the recorded one,
+  the balance is at or above the 1 SOVA alert floor, it is accepting, and
+  CORS grants `https://sova.io` and no other origin. `/status` carries no
+  32-byte hex. A `/reserve` with a zero recipient is a 400 from the
+  relayer (proves the route, spends nothing). `/health`, `/admin` and `/`
+  are 404 at the edge. Port 18791 is closed on every host from outside.
+  `smoke.sh hosts` checks that `sova-checkout-relayer` is active.
+- **First deploy on a live testnet:** `./deploy.sh --only sova-faucet-1`,
+  then `./cloudflare.sh tunnels ratelimit`. The tunnels step re-sends
+  both tunnels' tokens and restarts cloudflared on the rpc and faucet
+  hosts, a few seconds' blip. Then fund the key, run `./smoke.sh edge`,
+  and deploy the site (`/ashwings/buy` defaults to this relayer;
+  `?relayer=none` turns it off for a visit).
 
 ### Rollback and teardown
 

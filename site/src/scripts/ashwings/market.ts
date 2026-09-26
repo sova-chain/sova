@@ -2,7 +2,7 @@
 // (list: approve this owl for the market, then list; cancel).
 // Listings are found from the market's Listed logs and checked live.
 import {
-  type Owl, type Sale, SEL, config, owls, sales, listedIds, ownedBy, eth, connect, send, why, sova, parseSova,
+  type Owl, type Sale, SEL, config, owls, sales, listedIds, ownedBy, eth, connect, send, sentFor, why, sova, parseSova,
   card, setStatus, one,
 } from './owls';
 import { u256, addrWord, calldata, words, asAddr } from '../checkout/chain';
@@ -35,9 +35,11 @@ async function act(label: string, fn: () => Promise<unknown>) {
 }
 
 const buy = (s: Sale) =>
-  act(`buying #${s.id} for ${sova(s.price)} SOVA`, () => send(cfg, S.wallet, cfg.market, calldata(SEL.buy, u256(s.id)), s.price));
+  act(`buying #${s.id} for ${sova(s.price)} SOVA`, () =>
+    send(cfg, S.wallet, cfg.market, calldata(SEL.buy, u256(s.id)), s.price, sentFor(status, `buying #${s.id}`)));
 
-const cancel = (id: bigint) => act(`canceling #${id}`, () => send(cfg, S.wallet, cfg.market, calldata(SEL.cancel, u256(id))));
+const cancel = (id: bigint) =>
+  act(`canceling #${id}`, () => send(cfg, S.wallet, cfg.market, calldata(SEL.cancel, u256(id)), 0n, sentFor(status, `canceling #${id}`)));
 
 function list(id: bigint, input: HTMLInputElement) {
   const price = parseSova(input.value);
@@ -46,10 +48,10 @@ function list(id: bigint, input: HTMLInputElement) {
     const approved = asAddr(words(await one(cfg.rpc, cfg.ashw, calldata(SEL.getApproved, u256(id))))[0]);
     if (approved.toLowerCase() !== cfg.market.toLowerCase()) {
       setStatus(status, 'wait', `1/2 approve the market for #${id} · confirm in your wallet`);
-      await send(cfg, S.wallet, cfg.ashw, calldata(SEL.approve, addrWord(cfg.market), u256(id)));
+      await send(cfg, S.wallet, cfg.ashw, calldata(SEL.approve, addrWord(cfg.market), u256(id)), 0n, sentFor(status, `1/2 approving #${id}`));
       setStatus(status, 'wait', `2/2 list #${id} · confirm in your wallet`);
     }
-    await send(cfg, S.wallet, cfg.market, calldata(SEL.list, u256(id), u256(price)));
+    await send(cfg, S.wallet, cfg.market, calldata(SEL.list, u256(id), u256(price)), 0n, sentFor(status, `listing #${id}`));
   });
 }
 

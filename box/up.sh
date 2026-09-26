@@ -605,8 +605,9 @@ try_prebuilt_source() {
   esac
   verify_prebuilt "${staging}" "${platform}" || return 1
   # Last line of defence against a binary this host can't load (e.g. a
-  # glibc older than the CI runner's): sova-miner shares the toolchain
-  # and libc with sova and, unlike sova, has a harmless --version.
+  # glibc older than the release build's, 2.31 since the stranger test's
+  # F4): sova-miner shares the toolchain and libc with sova, and its
+  # --version is harmless (sova's is too, from builds after v0.1.3).
   chmod 0755 "${staging}/sova-miner"
   if ! "${staging}/sova-miner" --version >/dev/null 2>&1; then
     echo "prebuilt: sova-miner from ${PREBUILT_ORIGIN} does not run on this host"

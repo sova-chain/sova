@@ -62,6 +62,12 @@ reth-rpc-layer = { git = "https://github.com/paradigmxyz/reth", tag = "v2.6.0" }
 # (`SOVA_P2P_PEERS`, bin/sova) -- reth's facade does not re-export
 # `reth-network-peers`. Same v2.6.0 tag, one resolved graph.
 reth-network-peers = { git = "https://github.com/paradigmxyz/reth", tag = "v2.6.0" }
+# `RpcConvert`, `BuildPendingEnv` and `SignableTxRequest`, the bounds of
+# bin/sova's `SovaEthApiBuilder` (reth's `EthereumEthApiBuilder` plus the
+# `eth_sendRawTransactionSync` timeout, which reth v2.6.0 never wires
+# through from its own flag); the facade does not re-export them. Same
+# v2.6.0 tag, one resolved graph.
+reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", tag = "v2.6.0" }
 # jsonrpsee/tower for bin/sova's RPC middleware (`pending_rpc.rs`: block
 # tag "pending" answered as "latest" for eth_call/estimateGas/
 # createAccessList), installed through reth's `layer_rpc_middleware`.
@@ -77,6 +83,7 @@ alloy-primitives = { version = "1.6.1", default-features = false }
 alloy-genesis = { version = "2.4.2", default-features = false }
 alloy-rpc-types = { version = "2.4.2", default-features = false }
 alloy-rpc-types-eth = { version = "2.4.2", default-features = false }
+alloy-network = { version = "2.4.2", default-features = false }
 serde = { version = "1.0", default-features = false }
 serde_json = { version = "1.0", default-features = false, features = ["std"] }
 thiserror = { version = "2.0.0", default-features = false, features = ["std"] }

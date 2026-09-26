@@ -5,15 +5,18 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import worker, { ALLOWED, CORS, MAX_BATCH } from "./rpc-firewall.mjs";
+import worker, { ALLOWED, CORS, MAX_BATCH, SYNC_TIMEOUT_MS } from "./rpc-firewall.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 let upstreamCalls = 0;
 // How the fake origin behaves: "ok", "throw" (unreachable), "500", or
 // "cors" (the origin sends CORS headers of its own).
 let upstreamMode = "ok";
+// The last body the fake origin received (what the edge forwarded).
+let upstreamBody = "";
 globalThis.fetch = async (_url, init) => {
   upstreamCalls += 1;
+  upstreamBody = init.body;
   if (upstreamMode === "throw") throw new TypeError("connection refused");
   const body = JSON.parse(init.body);
   const answer = (c) => ({ jsonrpc: "2.0", id: c.id, result: "0x1" });
@@ -116,6 +119,37 @@ await t("forwards an allowed call (with CORS)", async () => {
   const r = await postJson(call("eth_blockNumber"));
   assert.equal(r.result, "0x1");
   assert.equal(upstreamCalls, before + 1);
+});
+// eth_sendRawTransactionSync: allowed, with its timeout capped under
+// Cloudflare's ~100 s origin cut.
+const RAW = "0x02f86b8301419a808084773594008252089400000000000000000000000000000000000000008080c0";
+const sent = () => JSON.parse(upstreamBody);
+await t("forwards eth_sendRawTransactionSync with timeout_ms capped at 90 s when absent", async () => {
+  assert.equal(SYNC_TIMEOUT_MS, 90000);
+  const r = await postJson(call("eth_sendRawTransactionSync", [RAW]));
+  assert.equal(r.result, "0x1");
+  assert.deepEqual(sent().params, [RAW, 90000]);
+});
+await t("sync: a longer, null or 0 timeout_ms becomes 90 s; a shorter one is kept", async () => {
+  for (const [given, want] of [[300000, 90000], [null, 90000], [0, 90000], [5000, 5000], [90000, 90000]]) {
+    await postJson(call("eth_sendRawTransactionSync", [RAW, given]));
+    assert.deepEqual(sent().params, [RAW, want], `given ${given}`);
+  }
+});
+await t("sync: named params are capped too", async () => {
+  await postJson(call("eth_sendRawTransactionSync", { bytes: RAW }));
+  assert.deepEqual(sent().params, { bytes: RAW, timeout_ms: 90000 });
+  await postJson(call("eth_sendRawTransactionSync", { bytes: RAW, timeout_ms: 1000 }));
+  assert.deepEqual(sent().params, { bytes: RAW, timeout_ms: 1000 });
+});
+await t("sync in a batch: only the sync call changes", async () => {
+  await postJson([call("eth_blockNumber", [], 1), call("eth_sendRawTransactionSync", [RAW, 600000], 2)]);
+  assert.deepEqual(sent(), [call("eth_blockNumber", [], 1), call("eth_sendRawTransactionSync", [RAW, 90000], 2)]);
+});
+await t("other calls are forwarded byte for byte", async () => {
+  const body = '{"jsonrpc":"2.0",  "id":7,"method":"eth_blockNumber","params":[]}';
+  await cors(await post(body));
+  assert.equal(upstreamBody, body);
 });
 await t("answers eth_chainId at the edge (82330, with CORS)", async () => {
   const before = upstreamCalls;

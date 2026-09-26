@@ -186,6 +186,7 @@ async function main() {
     env: {
       ...process.env, SOVA_RPC_URL: RPC, CHECKOUT: coAddr, RELAYER_KEY: toHex(relayer.getHdKey().privateKey),
       PORT: String(relPort), ZCASH_RPC_URL: `http://127.0.0.1:${zPort}`, ZCASH_NET: 'test', POLL_MS: '1000',
+      RPC_POLL_MS: '250', RPC_PER_10S: '1000', // anvil has no per-IP limit
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -329,7 +330,9 @@ async function main() {
   await statusHas(c, 'no output of exactly');
   await shot(c, '09-mobile-wrong-amount');
 
-  const bad = await fetch(`${RELAYER}/reserve`, { method: 'POST', body: JSON.stringify({ listingId: 1, recipient: '0x' + '0'.repeat(40) }) });
+  const bad = await fetch(`${RELAYER}/reserve`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ listingId: 1, recipient: '0x' + '0'.repeat(40) }),
+  });
   assert(bad.status === 400, 'relayer rejects a zero recipient');
 
   // ---- Flow D ------------------------------------------------------------

@@ -79,6 +79,10 @@ pub(crate) const PUBLIC_RPC_METHODS: &[&str] = &[
     "eth_getLogs",
     // Broadcast.
     "eth_sendRawTransaction",
+    // Broadcast and wait for the receipt (EIP-7966), up to the node's
+    // `SOVA_SEND_SYNC_TIMEOUT_SECS` (see `send_sync`; the edge clamps it
+    // to 90 s, under Cloudflare's ~100 s cut).
+    "eth_sendRawTransactionSync",
     // SIP-7 Zcash block feed (read-only, at most 1,000 heights per call);
     // registered only when SIP-7 is active, see `SIP7_METHODS`.
     "sova_getZcashBlocks",
@@ -333,6 +337,8 @@ mod tests {
             assert!(!allow.contains(&denied), "{denied}");
         }
         assert!(allow.contains(&"eth_sendRawTransaction"));
+        // Sync send: a raw (already signed) transaction, like the above.
+        assert!(allow.contains(&"eth_sendRawTransactionSync"));
         let unique: HashSet<_> = allow.iter().collect();
         assert_eq!(unique.len(), allow.len(), "no duplicates");
         // SIP-7: the bounded feed read is public, the subscription is not

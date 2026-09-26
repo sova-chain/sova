@@ -9,15 +9,17 @@
 #     dns        grey-cloud A/AAAA for each seed (seed-N.<suffix>): P2P
 #                can't be proxied
 #     tunnels    one remotely-managed tunnel per rpc/faucet host; ingress
-#                rules; proxied CNAMEs rpc./faucet. -> the tunnel; the
-#                tunnel token goes to the host over SSH stdin
+#                rules; proxied CNAMEs rpc./faucet. (and checkout. when
+#                CHECKOUT_RELAYER=1, on the faucet host's tunnel) -> the
+#                tunnel; the tunnel token goes to the host over SSH stdin
 #                (/etc/sova/cloudflared.env, root 0600) and cloudflared
 #                is restarted
 #     worker     the RPC firewall Worker (worker/rpc-firewall.mjs) on
 #                the route <RPC_HOST>/*, with the per-IP RPC rate limit
 #                (a Workers Rate Limiting binding)
 #     ratelimit  the zone's one free-plan WAF rate-limit rule: the
-#                faucet's /drip (and "/" too if RPC_RATELIMIT_AT=waf)
+#                faucet's /drip (and "/" too if RPC_RATELIMIT_AT=waf, and
+#                the checkout relayer's /reserve and /claim)
 #     r2         bucket R2_BUCKET + custom domain DL_HOST
 #     all        dns tunnels worker ratelimit r2
 #     teardown   delete this kit's DNS records, tunnels, Worker + route and
@@ -30,7 +32,7 @@ set -euo pipefail
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-usage() { sed -n '2,28p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "${BASH_SOURCE[0]}"; }
 
 STEPS=()
 while [[ $# -gt 0 ]]; do
@@ -61,6 +63,7 @@ RL_DESCRIPTION="${HC_PROJECT_LABEL}: per-IP edge rate limit (infra/testnet)"
 # Where the public RPC's per-IP limit lives: RPC_RATELIMIT_AT, see
 # validate_edge_config in lib.sh and config.env.example, "Edge".
 validate_edge_config
+validate_checkout_config
 # Free plan WAF: ONE rate-limit rule, path fields only (no host), 10 s
 # period, 10 s mitigation, characteristics colo + IP. It runs before the
 # Worker. "/drip" is the faucet's path: the faucet is called by curl and
@@ -69,11 +72,13 @@ validate_edge_config
 # can't also hold a higher safety-net limit on "/": every matched path
 # shares one counter and one threshold. On Pro+ (2 rules, host field),
 # add that safety net as a second rule on the RPC host.
-if [[ "${RPC_RATELIMIT_AT}" == waf ]]; then
-  CF_RATELIMIT_EXPRESSION="${CF_RATELIMIT_EXPRESSION:-(http.request.uri.path eq \"/\") or (http.request.uri.path eq \"/drip\")}"
-else
-  CF_RATELIMIT_EXPRESSION="${CF_RATELIMIT_EXPRESSION:-(http.request.uri.path eq \"/drip\")}"
-fi
+# The checkout relayer's POST paths share the rule (a burst guard in front
+# of its own hourly limits; a buyer sends one of each).
+rl_default="(http.request.uri.path eq \"/drip\")"
+[[ "${RPC_RATELIMIT_AT}" == waf ]] && rl_default="(http.request.uri.path eq \"/\") or ${rl_default}"
+[[ "${CHECKOUT_RELAYER}" == 1 ]] &&
+  rl_default="${rl_default} or (http.request.uri.path eq \"/reserve\") or (http.request.uri.path eq \"/claim\")"
+CF_RATELIMIT_EXPRESSION="${CF_RATELIMIT_EXPRESSION:-${rl_default}}"
 
 # cf METHOD PATH [JSON-BODY-FILE] -> response JSON on stdout; dies on
 # success=false. Dry run: prints the call, returns an empty success.
@@ -141,10 +146,11 @@ step_dns() {
   done < <(servers_with_role seed)
 }
 
-# Tunnel for the first server of role $1, serving hostname $2 -> $3, with
-# ingress path regex $4.
+# Tunnel for the first server of role $1, serving one or more routes, each
+# three arguments: hostname service path-regex. Anything else is a 404.
 tunnel_for_role() {
-  local role="$1" hostname="$2" service="$3" path="$4" server tname tid body token
+  local role="$1" server tname tid body token rules='[]' h
+  shift
   # sed -n 1p, not head -1: it reads to EOF, so no SIGPIPE (and no set -e
   # abort under pipefail) once a role has two or more servers.
   server="$(servers_with_role "${role}" | sed -n 1p)"
@@ -160,10 +166,17 @@ tunnel_for_role() {
     log "tunnel ${tname} exists (${tid})"
   fi
   [[ -n "${tid}" ]] || tid="<${tname}-id>"
-  body="$(jfile "ingress-${server}" "$(jq -nc --arg h "${hostname}" --arg s "${service}" --arg p "${path}" \
-    '{config:{ingress:[{hostname:$h,path:$p,service:$s,originRequest:{}},{service:"http_status:404"}]}}')")"
+  local hosts=()
+  while [[ $# -ge 3 ]]; do
+    rules="$(jq -c --arg h "$1" --arg s "$2" --arg p "$3" '. + [{hostname:$h,path:$p,service:$s,originRequest:{}}]' <<<"${rules}")"
+    hosts+=("$1")
+    shift 3
+  done
+  body="$(jfile "ingress-${server}" "$(jq -nc --argjson r "${rules}" '{config:{ingress:($r + [{service:"http_status:404"}])}}')")"
   cf PUT "/accounts/${ACCT}/cfd_tunnel/${tid}/configurations" "${body}" >/dev/null
-  dns_upsert CNAME "${hostname}" "${tid}.cfargotunnel.com" true
+  for h in "${hosts[@]}"; do
+    dns_upsert CNAME "${h}" "${tid}.cfargotunnel.com" true
+  done
   if [[ "${DRY_RUN}" == 1 ]]; then
     echo "+ curl ${API}/accounts/${ACCT}/cfd_tunnel/${tid}/token | ssh sova-admin@${server} (TUNNEL_TOKEN -> /etc/sova/cloudflared.env, restart cloudflared)" >&2
     return 0
@@ -175,9 +188,16 @@ tunnel_for_role() {
   log "${server}: cloudflared has its token and is running"
 }
 
+# Checkout relayer paths: /reserve, /claim, /status and /status/<order>.
+# Its /health and anything else stay loopback-only.
+CHECKOUT_PATHS='^/(reserve|claim|status(/[0-9]{1,30})?)$'
+
 step_tunnels() {
   tunnel_for_role rpc "${RPC_HOST}" "http://127.0.0.1:${SOVA_HTTP_PORT}" '^/$'
-  tunnel_for_role faucet "${FAUCET_HOST}" "http://127.0.0.1:${FAUCET_PORT}" '^/(drip|status)$'
+  local faucet=("${FAUCET_HOST}" "http://127.0.0.1:${FAUCET_PORT}" '^/(drip|status)$')
+  [[ "${CHECKOUT_RELAYER}" == 1 ]] &&
+    faucet+=("${CHECKOUT_HOST}" "http://127.0.0.1:${CHECKOUT_RELAYER_PORT}" "${CHECKOUT_PATHS}")
+  tunnel_for_role faucet "${faucet[@]}"
 }
 
 step_worker() {
@@ -273,7 +293,7 @@ step_teardown() {
     read -r answer
     [[ "${answer}" == "${HC_PROJECT_LABEL}" ]] || die "not confirmed; nothing deleted"
   fi
-  for host in "${RPC_HOST}" "${FAUCET_HOST}" $(cat "${OUT_DIR}"/servers/*.dns 2>/dev/null); do
+  for host in "${RPC_HOST}" "${FAUCET_HOST}" ${CHECKOUT_HOST:+"${CHECKOUT_HOST}"} $(cat "${OUT_DIR}"/servers/*.dns 2>/dev/null); do
     for id in $(cf GET "/zones/${ZONE}/dns_records?name=${host}" | jq -r '.result // [] | .[].id'); do
       cf DELETE "/zones/${ZONE}/dns_records/${id}" >/dev/null && log "DNS ${host} deleted"
     done

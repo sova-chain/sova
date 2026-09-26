@@ -263,6 +263,9 @@ where
         // SIP-6: seal (or re-publish the journaled block for this slot)
         // before the block leaves the builder; its hash changes, so every
         // step below uses the sealed header.
+        // The signed block, kept to clear its journal entry if our own engine
+        // rejects it for good (below).
+        let mut signed = None;
         let (header, data) = match &self.signer {
             // SIP-6 null block: unsigned, empty extra data (the builder's
             // client string would make it a different block on every
@@ -277,12 +280,44 @@ where
             Some(signer) => {
                 let sealed = signer.seal(payload.block().clone())?;
                 let header = sealed.sealed_header().clone();
+                signed = Some(sealed.clone());
                 (header, T::block_to_payload(sealed, None))
             }
             None => (payload.block().sealed_header().clone(), payload.into()),
         };
         let res = self.to_engine.new_payload(data).await?;
         if !res.is_valid() {
+            // Rejected for good (not a hold): the block can never become
+            // valid, so it must not stay journaled (the signer would
+            // re-publish it on every retry) nor stay a preferred candidate
+            // (the arbiter would retry adopting it forever). Public testnet
+            // 2026-09-26: a state-root mismatch at 6225 stalled the chain.
+            if let alloy_rpc_types::engine::PayloadStatusEnum::Invalid { validation_error } =
+                &res.status
+                && !validation_error.contains(crate::consensus::HOLD_MARKER)
+            {
+                if let (Some(signer), Some(block)) = (&self.signer, &signed) {
+                    match signer.discard_invalid(block) {
+                        Ok(true) => tracing::warn!(
+                            height = header.number(),
+                            hash = %header.hash(),
+                            "seal journal: our own block is invalid; slot freed for a new seal"
+                        ),
+                        Ok(false) => {}
+                        Err(err) => {
+                            tracing::error!(%err, "seal journal: could not drop an invalid block")
+                        }
+                    }
+                }
+                if let Some(best) =
+                    crate::candidates::global().forget_invalid(header.number(), header.hash().0)
+                {
+                    crate::candidates::notify_best(crate::candidates::BestCandidate {
+                        sova_height: header.number(),
+                        block_hash: best.block_hash,
+                    });
+                }
+            }
             eyre::bail!("built payload rejected: {res:?}");
         }
 
