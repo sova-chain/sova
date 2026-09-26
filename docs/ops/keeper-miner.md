@@ -215,7 +215,7 @@ sova-miner --network test --data-dir /var/lib/sova-keeper \
   --rpc http://127.0.0.1:18232 \
   --per-epoch-zat 10000 \
   --budget-zat 35000000 \
-  --lifetime-budget-zat 1000000000   # 10 TAZ for the whole testnet phase
+  --lifetime-budget-zat 3000000000   # 30 TAZ for the whole testnet phase (Rob, 2026-09-26)
 ```
 
 `sova-miner --network test --data-dir /var/lib/sova-keeper

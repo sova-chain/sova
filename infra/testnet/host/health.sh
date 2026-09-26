@@ -6,18 +6,28 @@
 # optionally TELEGRAM_THREAD_ID, a topic in a forum group). The
 # same alert is re-sent at most once an hour.
 #
+# Findings about the whole network (a stall, all-null blocks, an old
+# newest block) look the same from every host, so only one host sends
+# them: HEALTH_NETWORK_ALERTS=1, by default the rpc host. The others only
+# log them. Findings about the host itself (disk, zebrad, sova-node, "we
+# lag") come from every host.
+#
 # Checks (infra-m1 §2 "Monitoring and alerting"):
 #   disk         / and /var/lib/sova >= DISK_ALERT_PCT (default 80)
 #   zebrad lag   estimatedheight - blocks > ZEBRA_LAG_ALERT (default 20)
 #   epoch lag    (zebrad tip - B + 1) - sova head > EPOCH_LAG_ALERT
-#                (default 10 epochs, ~12 min). Split into "WE LAG" (a
+#                (default 10 epochs) for EPOCH_LAG_PERSIST_MIN (default
+#                10) minutes in a row: Zcash testnet mines in bursts and
+#                Sova is a dozen blocks behind for a few minutes after
+#                one, which is not a fault. Split into "WE LAG" (a
 #                reference node is ahead of us: our problem) and "NETWORK
-#                STALLED" (the reference is stuck too: nobody is sealing,
-#                a miner matter, not an infra failure).
+#                BEHIND ZCASH" (the reference is behind too: the network
+#                isn't keeping up, a network alert).
 #   block age    the newest Sova block is older than BLOCK_AGE_ALERT_MIN
 #                (default 10 min). A block's time is its Zcash block's, so
-#                the alert says whether zebrad's tip is old too (Zcash is
-#                slow: Sova waits for it) or not (Sova is stuck).
+#                when zebrad's tip is old too, Zcash is slow and Sova is
+#                waiting for it: that is only logged. Otherwise Sova is
+#                stuck: an alert.
 #   null run     SIP-6 on: the last NULL_RUN_ALERT blocks (default 20) are
 #                all null. The head still advances, but nobody is burning,
 #                so no transaction can be mined (2026-09-25: the keeper's
@@ -34,6 +44,11 @@ set -uo pipefail
 DISK_ALERT_PCT="${DISK_ALERT_PCT:-80}"
 ZEBRA_LAG_ALERT="${ZEBRA_LAG_ALERT:-20}"
 EPOCH_LAG_ALERT="${EPOCH_LAG_ALERT:-10}"
+EPOCH_LAG_PERSIST_MIN="${EPOCH_LAG_PERSIST_MIN:-10}"
+if [[ -z "${HEALTH_NETWORK_ALERTS:-}" ]]; then
+  HEALTH_NETWORK_ALERTS=0
+  [[ "${ROLE:-}" == rpc ]] && HEALTH_NETWORK_ALERTS=1
+fi
 BLOCK_AGE_ALERT_MIN="${BLOCK_AGE_ALERT_MIN:-10}"
 NULL_RUN_ALERT="${NULL_RUN_ALERT:-20}"
 SOVA_SIP6="${SOVA_SIP6:-1}"
@@ -70,7 +85,27 @@ alert() {
   fi
 }
 
-clear_alert() { rm -f "${STATE_DIR}/$1.last"; }
+clear_alert() { rm -f "${STATE_DIR}/$1.last" "${STATE_DIR}/$1.since"; }
+
+# A finding about the whole network: sent from one host only (see the top).
+net_alert() {
+  if [[ "${HEALTH_NETWORK_ALERTS}" == 1 ]]; then
+    alert "$@"
+  else
+    local key="$1"
+    shift
+    say "network ${key} (sent by the host with HEALTH_NETWORK_ALERTS=1): $*"
+  fi
+}
+
+# persisted <key> <minutes>: true once the condition behind <key> has held
+# on every pass for <minutes>. clear_alert <key> resets it.
+persisted() {
+  local since="${STATE_DIR}/$1.since" now
+  now="$(date +%s)"
+  [[ -f "${since}" ]] || echo "${now}" >"${since}"
+  ((now - $(cat "${since}") >= $2 * 60))
+}
 
 rpc() { # url method [params-json]
   curl -fsS --max-time 5 -H 'Content-Type: application/json' \
@@ -93,11 +128,12 @@ check_block_age() { # head
   fi
   [[ "${ztime}" =~ ^[0-9]+$ ]] && zage=$((now - ztime))
   if [[ -n "${zage}" ]] && ((zage > limit)); then
-    alert block_age "newest Sova block $1 is $((age / 60)) min old (alert at ${BLOCK_AGE_ALERT_MIN} min); zebrad's tip ${ztip} is $((zage / 60)) min old too: Zcash is slow, Sova waits for it"
+    clear_alert block_age
+    say "newest Sova block $1 is $((age / 60)) min old; zebrad's tip ${ztip} is $((zage / 60)) min old too: Zcash is slow, Sova waits for it"
   elif [[ -n "${zage}" ]]; then
-    alert block_age "SOVA STUCK: newest block $1 is $((age / 60)) min old (alert at ${BLOCK_AGE_ALERT_MIN} min) while zebrad's tip ${ztip} is ${zage} s old"
+    net_alert block_age "SOVA STUCK: newest block $1 is $((age / 60)) min old (alert at ${BLOCK_AGE_ALERT_MIN} min) while zebrad's tip ${ztip} is ${zage} s old"
   else
-    alert block_age "newest Sova block $1 is $((age / 60)) min old (alert at ${BLOCK_AGE_ALERT_MIN} min); zebrad's tip time unknown"
+    net_alert block_age "newest Sova block $1 is $((age / 60)) min old (alert at ${BLOCK_AGE_ALERT_MIN} min); zebrad's tip time unknown"
   fi
 }
 
@@ -123,8 +159,20 @@ check_null_run() { # head
   if systemctl is-enabled --quiet sova-keeper 2>/dev/null; then
     keeper="; sova-keeper here is $(systemctl is-active sova-keeper 2>/dev/null) (its burn budget spent?)"
   fi
-  alert null_run "the last ${n} blocks (to ${head}) are all null: nobody is burning, so no transaction can be mined${keeper}"
+  net_alert null_run "the last ${n} blocks (to ${head}) are all null: nobody is burning, so no transaction can be mined${keeper}"
 }
+
+# The keeper host's own burner (a host finding, from that host). It stops
+# by design when its per-run budget is spent; either way blocks go null.
+check_keeper() {
+  systemctl cat sova-keeper >/dev/null 2>&1 || return 0
+  if systemctl is-active --quiet sova-keeper; then
+    clear_alert keeper_down
+  else
+    alert keeper_down "sova-keeper is $(systemctl is-active sova-keeper 2>/dev/null): nothing here is burning (budget spent? journalctl -u sova-keeper)"
+  fi
+}
+check_keeper
 
 # ---- disk -------------------------------------------------------------------
 for mount in / /var/lib/sova; do
@@ -171,7 +219,9 @@ if systemctl is-enabled --quiet sova-node 2>/dev/null; then
     if [[ -n "${ztip}" && -n "${SOVA_EPOCH_BASE:-}" ]] && ((ztip >= SOVA_EPOCH_BASE)); then
       lag=$(((ztip - SOVA_EPOCH_BASE + 1) - head))
       say "epoch lag ${lag} (zebrad ${ztip}, base ${SOVA_EPOCH_BASE}, sova head ${head})"
-      if ((lag > EPOCH_LAG_ALERT)); then
+      if ((lag > EPOCH_LAG_ALERT)) && ! persisted epoch_lag "${EPOCH_LAG_PERSIST_MIN}"; then
+        say "epoch lag ${lag} over ${EPOCH_LAG_ALERT}, under ${EPOCH_LAG_PERSIST_MIN} min so far (a Zcash burst catches up in minutes)"
+      elif ((lag > EPOCH_LAG_ALERT)); then
         ref=""
         if [[ -n "${HEALTH_REFERENCE_RPC}" ]]; then
           ref_hex="$(rpc "${HEALTH_REFERENCE_RPC}" eth_blockNumber 2>/dev/null | jq -r '.result // empty')" || ref_hex=""
@@ -180,9 +230,9 @@ if systemctl is-enabled --quiet sova-node 2>/dev/null; then
         if [[ -n "${ref}" ]] && ((ref > head + 2)); then
           alert epoch_lag "WE LAG (infra): head ${head}, reference ${ref}, epoch lag ${lag}"
         elif [[ -n "${ref}" ]]; then
-          alert epoch_lag "NETWORK STALLED (miner matter, not infra): head ${head} = reference ${ref}, epoch lag ${lag}; nobody is sealing"
+          net_alert epoch_lag "NETWORK BEHIND ZCASH for ${EPOCH_LAG_PERSIST_MIN}+ min: head ${head}, reference ${ref}, epoch lag ${lag}"
         else
-          alert epoch_lag "epoch lag ${lag} (head ${head}); no reference RPC to tell our lag from a network stall"
+          net_alert epoch_lag "epoch lag ${lag} (head ${head}); no reference RPC to tell our lag from a network stall"
         fi
       else
         clear_alert epoch_lag

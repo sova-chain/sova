@@ -250,7 +250,8 @@ pub(crate) fn run(args: MineArgs) -> Result<(), CliError> {
                     state.save(&st_path)?;
                     report_resolution(&resolution, "");
                     if let PendingResolution::Confirmed(record) = &resolution {
-                        last_height = last_height.max(record.height);
+                        // As below: the confirming block still gets a burn.
+                        last_height = last_height.max(record.height.saturating_sub(1));
                         epochs_this_run += 1;
                         if reached_max_epochs(args.max_epochs, epochs_this_run) {
                             return Ok(());
@@ -270,8 +271,8 @@ pub(crate) fn run(args: MineArgs) -> Result<(), CliError> {
             // someone else already mined, so the epoch we're about to
             // submit can, at absolute earliest, confirm in the *next*
             // block after this one -- the real confirming height is read
-            // back once it happens (see `resolve_pending`), and that's what
-            // we advance `last_height` to below, not this.
+            // back once it happens (see `resolve_pending`), and `last_height`
+            // is set from that below, not from this.
             let next_height = last_height + 1;
             let target_height = u32::try_from(next_height).unwrap_or(u32::MAX);
             // SIP-8: short of a Zcash reorg, the burn can't be mined below
@@ -317,12 +318,14 @@ pub(crate) fn run(args: MineArgs) -> Result<(), CliError> {
                         Some(PendingResolution::Confirmed(record)) => {
                             state.save(&st_path)?;
                             report_resolution(&PendingResolution::Confirmed(record.clone()), "");
-                            // Advance past the block the burn actually
-                            // confirmed in -- at least `next_height`, later
-                            // if confirmation took more than one block
-                            // interval. Using the real confirmed height
-                            // keeps this loop's "new block" trigger honest.
-                            last_height = record.height;
+                            // The block the burn confirmed in is itself a
+                            // new block to react to, so the next burn goes
+                            // out now, aimed at the block after it.
+                            // Advancing to `record.height` instead sits that
+                            // block out, and the miner lands a burn in only
+                            // every other Zcash block (2026-09-26: 67-83% of
+                            // testnet blocks were null).
+                            last_height = record.height.saturating_sub(1);
                             epochs_this_run += 1;
                         }
                         Some(resolution) => {

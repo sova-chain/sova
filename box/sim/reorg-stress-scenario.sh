@@ -390,6 +390,25 @@ for k in ("lag", "last", "anchor", "agree", "off", "fcu", "tx", "counts", "parti
 st.setdefault("dm_tolerated", 0)
 now = time.time()
 viol, notes = [], []
+
+# A host that sleeps (a closed laptop lid) freezes the sim, zebrad and the
+# nodes together, and on wake every timer below would read the pause as the
+# chain being stuck. The monotonic clock stops during a suspend and the wall
+# clock doesn't, so their difference since the last check is time spent
+# asleep: move every timer forward by it and say so.
+mono = time.monotonic()
+prev = st.get("prev_clock")
+st["prev_clock"] = [now, mono]
+if prev:
+    slept = (now - prev[0]) - (mono - prev[1])
+    if slept > 30:
+        for bucket in ("lag", "anchor", "agree"):
+            for key in st[bucket]:
+                st[bucket][key] += slept
+        for last in st["last"].values():
+            last[1] += slept
+        st["suspended_s"] = st.get("suspended_s", 0) + slept
+        print(f"check: host was suspended ~{int(slept)}s; timers moved forward")
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 def call(url, method, params, timeout=8):
