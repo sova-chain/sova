@@ -281,7 +281,7 @@ export SOVA_EPOCH_BASE=4388500
 export SOVA_EMISSION_SCHEDULE=flat
 export SOVA_SIP6=1
 export SOVA_SIP7=1
-export SOVA_BOOTNODES=enode://4788bec82fa9559623dd997cd97a01d0203fc8b419712f3fcfbb186b006496c5896be5daaa9bdabb9d8adaa950b3c6e7a66278d936a30338d1497639be25c17f@2.28.138.164:30303
+export SOVA_BOOTNODES=enode://4788bec82fa9559623dd997cd97a01d0203fc8b419712f3fcfbb186b006496c5896be5daaa9bdabb9d8adaa950b3c6e7a66278d936a30338d1497639be25c17f@2.28.138.164:30303,enode://441e2f90b85bc09efa89eaada71af17b7771a6036181038dbe228d35c1a336e0a9ba01daf082fd6f5373c68783d374e09bf63ac44971c8a2228fa19c6cb6366b@62.238.45.222:30303
 ```
 
 Below its `---- yours ----` line are three values of your own:
@@ -748,7 +748,7 @@ your `node.log` lines, or ask in `t.me/sovazec`.
 | `SOVA_EMISSION_SCHEDULE` | `flat` | Consensus: 6,250 SOVA per epoch |
 | `SOVA_SIP6` | `1` | Consensus: sealed or null blocks only |
 | `SOVA_SIP7` | `1` | Consensus: part of the genesis |
-| `SOVA_BOOTNODES` | `enode://4788bec82fa9559623dd997cd97a01d0203fc8b419712f3fcfbb186b006496c5896be5daaa9bdabb9d8adaa950b3c6e7a66278d936a30338d1497639be25c17f@2.28.138.164:30303` | Comma-separated enodes |
+| `SOVA_BOOTNODES` | `enode://4788bec82fa9559623dd997cd97a01d0203fc8b419712f3fcfbb186b006496c5896be5daaa9bdabb9d8adaa950b3c6e7a66278d936a30338d1497639be25c17f@2.28.138.164:30303,enode://441e2f90b85bc09efa89eaada71af17b7771a6036181038dbe228d35c1a336e0a9ba01daf082fd6f5373c68783d374e09bf63ac44971c8a2228fa19c6cb6366b@62.238.45.222:30303` | Comma-separated enodes |
 | `SOVA_ZEBRAD_RPC` | `http://127.0.0.1:18232` | Your zebrad |
 | `SOVA_DATADIR` | `$HOME/.sova-testnet/node` | Chain, node key, seal journal |
 | `SOVA_FOLLOW_ONLY` | `1` (the `testnet.env` default) | Unset to seal |

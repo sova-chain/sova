@@ -8,7 +8,7 @@
   "sip6": true,
   "sip7": true,
   "release": {
-    "tag": "v0.1.6",
+    "tag": "v0.1.7",
     "repo": "sova-chain/sova"
   },
   "zebra_image": "zfnd/zebra:6.3.0",

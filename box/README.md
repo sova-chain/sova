@@ -17,9 +17,9 @@ you're seeing, tunables, and evidence from a real cold run.
 reaches the first mint in under a minute (35-42s measured). Those come from
 a checkout of a tagged release, which downloads that release's CI-built
 binaries with plain `curl` and no GitHub login (`box/up/README.md`,
-"Prebuilt binaries"). The first tagged release is not out yet. Until it
-is, the first run builds from source: about 11 minutes on an idle Apple
-Silicon laptop, and about 25 on a busy one. Later runs reuse the binaries
+"Prebuilt binaries"). Anywhere else (an untagged checkout, or a platform
+without prebuilt binaries) the first run builds from source: about 11
+minutes on an idle Apple Silicon laptop, and about 25 on a busy one. Later runs reuse the binaries
 and take under a minute.
 
 v1 is a **hybrid** stack: `zebrad` runs in Docker (reusing
@@ -29,7 +29,6 @@ as host processes in release mode -- see `box/up/README.md`'s "Why hybrid"
 section for the disk/host-shape reasoning. Full containerization (a
 Dockerfile + compose stack for all three) is a tracked follow-up. E1's
 acceptance bar is "one command, cold to a visibly mining chain in under 10
-minutes". It is not met yet. Locally, with the binaries already present,
-`./box/up.sh` reaches the first mint in under a minute, but a stranger
-has to build from source until the first tagged release ships prebuilt
-binaries.
+minutes". From a tagged release checkout, which downloads prebuilt binaries,
+it is met: the first mint comes in under a minute. Building from source misses
+it (12m54s cold in `docs/reports/e1-stranger-test.md`).
