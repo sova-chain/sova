@@ -21,6 +21,23 @@
 //! burn per Zcash block observed: the cost per block is unchanged, only
 //! the blocks no longer sat out are now paid for.
 //!
+//! Wall-clock throttle (`--min-burn-interval-secs N`, default 0 = off):
+//! one burn per block is a cost per *block*, and Zcash testnet can produce
+//! blocks in bursts of 3-7 s for hours (2026-09-27: the keeper sent 1,441
+//! burns in 5.6 h, ~1.85 TAZ/day). With `N > 0`, no new burn is broadcast
+//! less than `N` seconds after this miner's previous one, which bounds
+//! spend per day at `86_400 / N` burns whatever the block rate. A tip that
+//! arrives inside the interval is not skipped outright: its burn is held
+//! back ([`TipStep::Throttled`]) and sent as soon as the interval is up,
+//! even if no new block has arrived by then -- so with ordinary 75 s
+//! blocks, where the odd block still follows its parent within `N`
+//! seconds, that block's successor still gets a burn. Only new burns are
+//! throttled: re-sends of burns already in flight (evicted, or orphaned by
+//! a reorg) are the same signed bytes, cost nothing extra, and go out on
+//! every tip as before. The last broadcast time is kept in `state.json`
+//! (`last_burn_broadcast_unix_ms`), so a restart honours an interval the
+//! previous process started.
+//!
 //! State (including the UTXO pool and the burns in flight) is saved to the
 //! sidecar before every broadcast (write-ahead: see
 //! `crate::epoch::attempt_epoch`) and after every confirmation, not
@@ -51,7 +68,7 @@
 
 use std::path::PathBuf;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use burn_wallet::rpc::RpcClient;
 use burn_wallet::{Keypair, Network};
@@ -108,6 +125,9 @@ pub(crate) struct MineArgs {
     pub poll_interval_ms: u64,
     /// Optional cap on epochs submitted in this run.
     pub max_epochs: Option<u64>,
+    /// `--min-burn-interval-secs`: the least wall-clock time between two
+    /// new burns from this miner (0: no throttle). See the module docs.
+    pub min_burn_interval_secs: u64,
     /// `--sova-rpc`: the miner's own Sova node, for SIP-8 votes. `None`:
     /// v1 burns only, and nothing waits on Sova.
     pub sova_rpc: Option<String>,
@@ -172,6 +192,13 @@ pub(crate) fn run(args: MineArgs) -> Result<(), CliError> {
     if classify(&keypair, evm_address) == CreditTarget::LegacyUnspendable {
         eprintln!("{}", legacy_warning(&keypair));
     }
+    if args.min_burn_interval_secs > 0 {
+        println!(
+            "min burn interval: {}s (at most {} new burns/day, whatever the block rate)",
+            args.min_burn_interval_secs,
+            86_400 / args.min_burn_interval_secs
+        );
+    }
     // SIP-8: `None` (no `--sova-rpc`) is today's v1 miner exactly. With it,
     // say once whether votes will be cast, and if not, why.
     let gate =
@@ -233,7 +260,12 @@ pub(crate) fn run(args: MineArgs) -> Result<(), CliError> {
         per_epoch_zat: args.per_epoch_zat,
         max_epochs: args.max_epochs,
         epochs_this_run: 0,
+        min_burn_interval_ms: args.min_burn_interval_secs.saturating_mul(1000),
+        clock: &unix_now_ms,
     };
+    // A tip whose burn `--min-burn-interval-secs` held back: when it may go
+    // (Unix ms). Sent then even if no new block has arrived by then.
+    let mut held_back_until: Option<u64> = None;
 
     loop {
         thread::sleep(Duration::from_millis(args.poll_interval_ms));
@@ -247,34 +279,47 @@ pub(crate) fn run(args: MineArgs) -> Result<(), CliError> {
         };
 
         if height == last_height {
-            continue;
+            // No new block. The only thing to do is send a burn the
+            // interval held back, once it is up; the chain identity was
+            // already checked at this tip.
+            match held_back_until {
+                Some(due) if unix_now_ms() >= due => {
+                    println!("tip {height}: min burn interval up; sending the burn held back");
+                }
+                _ => continue,
+            }
+        } else {
+            // The tip moved: re-check the chain identity before spending, so
+            // a node recreated under a running miner (tip regressing, or even
+            // jumping past the old height) is caught before a burn tries to
+            // spend inputs from the dead chain. One `getblockhash` per new
+            // tip.
+            match check_chain(&rpc, &mut state) {
+                Ok(ChainCheck::Same | ChainCheck::Anchored) => {}
+                Ok(ChainCheck::Undetermined { tip }) => {
+                    report_chain_check(ChainCheck::Undetermined { tip });
+                    last_height = height;
+                    held_back_until = None;
+                    continue;
+                }
+                Ok(check @ ChainCheck::Reset { .. }) => {
+                    report_chain_check(check);
+                    state.save(&st_path)?;
+                    // A different chain: its heights have nothing to do with
+                    // the old ones. Start counting new blocks from here.
+                    last_height = height;
+                    held_back_until = None;
+                    println!("new baseline tip height: {last_height}");
+                    continue;
+                }
+                Err(e) => {
+                    eprintln!("warning: chain identity check failed: {e}; will retry");
+                    continue;
+                }
+            }
+            last_height = height;
         }
-        // The tip moved: re-check the chain identity before spending, so a
-        // node recreated under a running miner (tip regressing, or even
-        // jumping past the old height) is caught before a burn tries to
-        // spend inputs from the dead chain. One `getblockhash` per new tip.
-        match check_chain(&rpc, &mut state) {
-            Ok(ChainCheck::Same | ChainCheck::Anchored) => {}
-            Ok(ChainCheck::Undetermined { tip }) => {
-                report_chain_check(ChainCheck::Undetermined { tip });
-                last_height = height;
-                continue;
-            }
-            Ok(check @ ChainCheck::Reset { .. }) => {
-                report_chain_check(check);
-                state.save(&st_path)?;
-                // A different chain: its heights have nothing to do with
-                // the old ones. Start counting new blocks from here.
-                last_height = height;
-                println!("new baseline tip height: {last_height}");
-                continue;
-            }
-            Err(e) => {
-                eprintln!("warning: chain identity check failed: {e}; will retry");
-                continue;
-            }
-        }
-        last_height = height;
+        held_back_until = None;
 
         // SIP-8: short of a Zcash reorg, the burn can't be mined below
         // `target_height` (the tip is already `height`), so that is the
@@ -295,10 +340,36 @@ pub(crate) fn run(args: MineArgs) -> Result<(), CliError> {
             &mut |s: &MinerState| s.save(&st_path),
             sova_ref,
         )?;
-        if step == TipStep::Stop {
-            return Ok(());
+        match step {
+            TipStep::Continue => {}
+            TipStep::Throttled { due_unix_ms } => held_back_until = Some(due_unix_ms),
+            TipStep::Stop => return Ok(()),
         }
     }
+}
+
+/// The wall clock, in Unix milliseconds: what `--min-burn-interval-secs` is
+/// measured with (tests inject their own, see [`Burner::clock`]). A clock
+/// set before 1970 reads 0.
+fn unix_now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
+/// When a new burn may next be broadcast under a minimum interval of
+/// `interval_ms`, if not yet (`None`: now is fine). `last_ms` is the
+/// previous broadcast, `now_ms` the clock now.
+///
+/// A clock stepped backwards (NTP, a VM restore) past the last broadcast by
+/// less than the interval still waits it out -- so at most twice the
+/// interval; by more than the interval, the recorded time is taken to be
+/// from a clock that was wrong and doesn't hold anything back, rather than
+/// stalling the miner for as long as the clock was off.
+fn throttle_due(last_ms: Option<u64>, now_ms: u64, interval_ms: u64) -> Option<u64> {
+    let last_ms = last_ms?;
+    (interval_ms > 0 && now_ms.abs_diff(last_ms) < interval_ms)
+        .then(|| last_ms.saturating_add(interval_ms))
 }
 
 /// The fixed parameters of this run's burns, and its epoch count.
@@ -316,6 +387,12 @@ pub(crate) struct Burner<'a> {
     /// Burns confirmed during this run (including ones an earlier run left
     /// in flight that confirm during this one).
     pub epochs_this_run: u64,
+    /// `--min-burn-interval-secs`, in milliseconds: no new burn goes out
+    /// sooner than this after the previous one (0: no throttle).
+    pub min_burn_interval_ms: u64,
+    /// The wall clock, Unix milliseconds. Injected so tests run on
+    /// simulated time.
+    pub clock: &'a dyn Fn() -> u64,
 }
 
 /// Whether `mine` carries on after a tip.
@@ -323,6 +400,13 @@ pub(crate) struct Burner<'a> {
 pub(crate) enum TipStep {
     /// Keep watching for blocks.
     Continue,
+    /// This tip's burn was held back by `--min-burn-interval-secs`: keep
+    /// watching, and step this tip again at `due_unix_ms` if no new block
+    /// has come by then.
+    Throttled {
+        /// When the interval since the last burn is up (Unix ms).
+        due_unix_ms: u64,
+    },
     /// Done: `--max-epochs` reached or the budget exhausted, with nothing
     /// left in flight.
     Stop,
@@ -331,8 +415,10 @@ pub(crate) enum TipStep {
 /// Everything `mine` does on a new Zcash tip `height` (once the chain
 /// identity checked out): settle the burns in flight, then -- unless
 /// [`MAX_IN_FLIGHT`] are already in flight, or `--max-epochs` is covered
-/// by what confirmed plus what is in flight -- send one new burn aimed at
-/// `height + 1`. `save` persists state after every change; `sova_ref`
+/// by what confirmed plus what is in flight, or `--min-burn-interval-secs`
+/// has not passed since the last new burn ([`TipStep::Throttled`]) -- send
+/// one new burn aimed at `height + 1`. Called again at the same `height`
+/// once a throttled burn is due. `save` persists state after every change; `sova_ref`
 /// gives the SIP-8 reference for a burn's target height (called only when
 /// a burn is built).
 ///
@@ -396,6 +482,25 @@ pub(crate) fn on_new_tip(
         );
         return Ok(TipStep::Continue);
     }
+    // The wall-clock throttle: only new burns wait on it. Re-sends of the
+    // burns in flight already went out above (`resolve_pending`).
+    let now_ms = (burner.clock)();
+    if let Some(due_unix_ms) = throttle_due(
+        state.last_burn_broadcast_unix_ms,
+        now_ms,
+        burner.min_burn_interval_ms,
+    ) {
+        let since_ms = state
+            .last_burn_broadcast_unix_ms
+            .map_or(0, |last| now_ms.saturating_sub(last));
+        println!(
+            "tip {height}: last burn {:.1}s ago, under --min-burn-interval-secs {}; holding this one back {:.1}s",
+            since_ms as f64 / 1000.0,
+            burner.min_burn_interval_ms / 1000,
+            due_unix_ms.saturating_sub(now_ms) as f64 / 1000.0
+        );
+        return Ok(TipStep::Throttled { due_unix_ms });
+    }
 
     // A target, not a promise: the burn can't be mined before the next
     // block, and is often mined in the one after (see the module docs).
@@ -403,6 +508,13 @@ pub(crate) fn on_new_tip(
     // `resolve_pending`).
     let target_height = u32::try_from(height + 1).unwrap_or(u32::MAX);
     let sova_ref = sova_ref(target_height);
+    // Stamped before the write-ahead save below, so a burn on disk as in
+    // flight always has its broadcast time on disk with it: a kill right
+    // after the broadcast can't hand a restart a free burn. Put back if no
+    // burn goes out (the on-disk copy may keep it: that only delays the
+    // next burn after a restart, never adds one).
+    let previous_stamp = state.last_burn_broadcast_unix_ms;
+    state.last_burn_broadcast_unix_ms = Some((burner.clock)());
     // The burn is saved as in flight before it is broadcast (write-ahead,
     // see `attempt_epoch`): a kill at any point after the broadcast
     // neither loses the epoch nor lets a restart spend its inputs again.
@@ -419,6 +531,17 @@ pub(crate) fn on_new_tip(
         state,
         save,
     );
+    if matches!(outcome, Ok(EpochOutcome::Submitted(_))) {
+        // Re-stamped now the node has it: never earlier than the real
+        // broadcast, however long retries took. Best effort -- the
+        // write-ahead stamp is already on disk.
+        state.last_burn_broadcast_unix_ms = Some((burner.clock)());
+        if let Err(e) = save(state) {
+            eprintln!("warning: could not save the burn's broadcast time: {e}");
+        }
+    } else {
+        state.last_burn_broadcast_unix_ms = previous_stamp;
+    }
     match outcome {
         Ok(EpochOutcome::Submitted(pending)) => {
             let vote = sova_ref.map_or_else(String::new, |r| {
@@ -589,7 +712,9 @@ fn attempt_epoch_with_retries(
 // Test code: an unexpected `Err`/`None` here is a test failure.
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
+    use std::cell::{Cell, RefCell};
     use std::collections::{BTreeMap, BTreeSet};
+    use std::rc::Rc;
 
     use super::*;
     use crate::funding::tests::{FakeNode, tx_io, txid};
@@ -607,6 +732,9 @@ mod tests {
         Instant,
     }
 
+    /// Where simulated wall-clock time starts (Unix ms; any value works).
+    const T0: u64 = 1_790_000_000_000;
+
     struct Sim {
         node: FakeNode,
         state: MinerState,
@@ -614,33 +742,74 @@ mod tests {
         keypair: Keypair,
         /// `pending.len()` right after each tip's step.
         in_flight: Vec<usize>,
+        /// Simulated wall clock (Unix ms): the miner's clock, and what
+        /// [`Self::send_times`] stamps sends with.
+        now: Rc<Cell<u64>>,
+        /// `--min-burn-interval-secs`, in ms, for the burners the sim builds.
+        min_interval_ms: u64,
+        /// How far [`Self::block`] moves the clock per block.
+        block_ms: u64,
+        /// The clock at each `sendrawtransaction`, parallel to
+        /// `node.sent` (a test replacing `node.on_send` loses it).
+        send_times: Rc<RefCell<Vec<u64>>>,
     }
 
     impl Sim {
-        /// Tip 200, one confirmed 10,000,000 zat coin.
+        /// Tip 200, one confirmed 10,000,000 zat coin; no throttle, 75 s
+        /// blocks.
         fn new(budget_zat: u64) -> Self {
             let node = FakeNode::default();
             node.tip.set(200);
             node.fund(&txid(7), 0, 10_000_000, 150);
             let mut state = MinerState::new("tmAddr".to_string(), "ab".repeat(20));
             state.begin_invocation(budget_zat, 100_000, None);
+            let now = Rc::new(Cell::new(T0));
+            let send_times: Rc<RefCell<Vec<u64>>> = Rc::default();
+            let (n, t) = (now.clone(), send_times.clone());
+            *node.on_send.borrow_mut() = Some(Box::new(move || t.borrow_mut().push(n.get())));
             Self {
                 node,
                 state,
                 funding: Funding::new(burn_wallet::Network::Regtest),
                 keypair: Keypair::generate(),
                 in_flight: Vec::new(),
+                now,
+                min_interval_ms: 0,
+                block_ms: 75_000,
+                send_times,
             }
         }
 
+        /// [`Self::new`] with `--min-burn-interval-secs` set.
+        fn throttled(budget_zat: u64, min_interval_secs: u64) -> Self {
+            let mut sim = Self::new(budget_zat);
+            sim.min_interval_ms = min_interval_secs * 1000;
+            sim
+        }
+
         /// One Zcash block: the miner reacts to the current tip, then the
-        /// next block is found with `templates`' view of the mempool.
-        /// Returns what the miner's step said.
+        /// next block is found with `templates`' view of the mempool,
+        /// [`Self::block_ms`] later. Returns what the miner's step said.
         fn block(&mut self, templates: Templates, max_epochs: Option<u64>) -> TipStep {
             // Lagged: the template for the next block was built as the
             // current one arrived -- before the miner could react.
             let template = self.node.mempool();
+            let step = self.step_now(max_epochs);
+            self.in_flight.push(self.state.pending.len());
+            self.now.set(self.now.get() + self.block_ms);
+            match templates {
+                Templates::Lagged => self.node.mine(&template),
+                Templates::Instant => self.node.mine(&self.node.mempool()),
+            };
+            step
+        }
+
+        /// The miner's step at the current tip, at the current simulated
+        /// time, with the sim's throttle.
+        fn step_now(&mut self, max_epochs: Option<u64>) -> TipStep {
             let keypair = self.keypair;
+            let now = self.now.clone();
+            let clock = move || now.get();
             let mut burner = Burner {
                 network: burn_wallet::Network::Regtest,
                 keypair: &keypair,
@@ -648,14 +817,69 @@ mod tests {
                 per_epoch_zat: 100_000,
                 max_epochs,
                 epochs_this_run: 0,
+                min_burn_interval_ms: self.min_interval_ms,
+                clock: &clock,
             };
-            let step = self.step(&mut burner);
-            self.in_flight.push(self.state.pending.len());
-            match templates {
-                Templates::Lagged => self.node.mine(&template),
-                Templates::Instant => self.node.mine(&self.node.mempool()),
+            self.step(&mut burner)
+        }
+
+        /// `mine`'s loop on simulated time: the next blocks are found
+        /// `gaps_secs` apart (with `templates`' view of the mempool), and
+        /// the miner, polling every second, steps on each new tip and
+        /// again at the same tip once a burn the throttle held back is
+        /// due. Checks the budget after every step. Stops early on
+        /// [`TipStep::Stop`]; returns every step's result.
+        fn run(&mut self, templates: Templates, gaps_secs: &[u64]) -> Vec<TipStep> {
+            let mut steps = Vec::new();
+            let mut step = |sim: &mut Self| {
+                let step = sim.step_now(None);
+                let s = &sim.state;
+                let spent = s.total_spent_zat() - s.invocation_start_spent_zat;
+                assert!(
+                    spent + s.in_flight_cost_zat() <= s.budget_zat,
+                    "over budget"
+                );
+                steps.push(step);
+                step
             };
-            step
+            for &gap in gaps_secs {
+                let tip_at = self.now.get();
+                let template = self.node.mempool();
+                let mut last = step(self);
+                for poll in 1..gap {
+                    if last == TipStep::Stop {
+                        return steps;
+                    }
+                    self.now.set(tip_at + poll * 1000);
+                    if matches!(last, TipStep::Throttled { due_unix_ms } if self.now.get() >= due_unix_ms)
+                    {
+                        last = step(self);
+                    }
+                }
+                if last == TipStep::Stop {
+                    return steps;
+                }
+                self.now.set(tip_at + gap * 1000);
+                match templates {
+                    Templates::Lagged => self.node.mine(&template),
+                    Templates::Instant => self.node.mine(&self.node.mempool()),
+                };
+            }
+            steps
+        }
+
+        /// When each *new* burn was first broadcast (simulated Unix ms),
+        /// in order: re-sends of the same signed bytes are not counted.
+        fn new_burn_times(&self) -> Vec<u64> {
+            let mut seen = BTreeSet::new();
+            self.node
+                .sent
+                .borrow()
+                .iter()
+                .zip(self.send_times.borrow().iter())
+                .filter(|(raw, _)| seen.insert((*raw).clone()))
+                .map(|(_, &t)| t)
+                .collect()
         }
 
         fn step(&mut self, burner: &mut Burner<'_>) -> TipStep {
@@ -778,6 +1002,8 @@ mod tests {
                 per_epoch_zat: 100_000,
                 max_epochs: Some(3),
                 epochs_this_run: burner_epochs,
+                min_burn_interval_ms: 0,
+                clock: &|| 0,
             };
             let step = sim.step(&mut burner);
             burner_epochs = burner.epochs_this_run;
@@ -862,8 +1088,6 @@ mod tests {
     /// already hold the burn, or a restart forgets a burn that is mined.
     #[test]
     fn a_burn_is_on_disk_before_the_node_sees_it() {
-        use std::cell::RefCell;
-        use std::rc::Rc;
         let mut sim = Sim::new(100_000_000);
         let disk: Rc<RefCell<String>> = Rc::default();
         let at_send: Rc<RefCell<Vec<String>>> = Rc::default();
@@ -878,6 +1102,8 @@ mod tests {
             per_epoch_zat: 100_000,
             max_epochs: None,
             epochs_this_run: 0,
+            min_burn_interval_ms: 0,
+            clock: &|| 0,
         };
         let tip = sim.node.tip.get();
         on_new_tip(
@@ -904,8 +1130,6 @@ mod tests {
     /// three burns are ever mined.
     #[test]
     fn killed_after_every_broadcast_never_overruns_the_lifetime_budget() {
-        use std::cell::RefCell;
-        use std::rc::Rc;
         let mut sim = Sim::new(100_000_000);
         sim.state
             .begin_invocation(100_000_000, 100_000, Some(360_000));
@@ -924,6 +1148,8 @@ mod tests {
                 per_epoch_zat: 100_000,
                 max_epochs: None,
                 epochs_this_run: 0,
+                min_burn_interval_ms: 0,
+                clock: &|| 0,
             };
             let tip = sim.node.tip.get();
             let step = on_new_tip(
@@ -987,6 +1213,8 @@ mod tests {
             per_epoch_zat: 100_000,
             max_epochs: None,
             epochs_this_run: 0,
+            min_burn_interval_ms: 0,
+            clock: &|| 0,
         };
         sim.step(&mut burner);
         let orphaned = sim.state.epochs.last().unwrap().clone();
@@ -1103,5 +1331,222 @@ mod tests {
         ));
         sim.assert_no_double_spend();
         assert!(sim.burns_per_block().values().all(|&n| n <= 2));
+    }
+
+    /// Asserts the new burns went out at least `secs` apart.
+    fn assert_spaced(times: &[u64], secs: u64) {
+        for w in times.windows(2) {
+            assert!(
+                w[1] - w[0] >= secs * 1000,
+                "burns {} ms apart: {times:?}",
+                w[1] - w[0]
+            );
+        }
+    }
+
+    /// Throttle (a): `--min-burn-interval-secs 30` with 75 s blocks holds
+    /// nothing back -- the burn-ahead cadence is exactly as without it: a
+    /// burn in every block from the second on, none doubled.
+    #[test]
+    fn a_30s_interval_still_burns_into_every_75s_block() {
+        for (templates, first) in [(Templates::Lagged, 202), (Templates::Instant, 201)] {
+            let mut sim = Sim::throttled(100_000_000, 30);
+            let steps = sim.run(templates, &[75; 12]);
+            assert!(steps.iter().all(|s| *s == TipStep::Continue), "{steps:?}");
+            let per_block = sim.burns_per_block();
+            assert_eq!(
+                per_block.keys().copied().collect::<Vec<_>>(),
+                (first..=212).collect::<Vec<_>>()
+            );
+            assert!(per_block.values().all(|&n| n == 1), "{per_block:?}");
+            assert_spaced(&sim.new_burn_times(), 75);
+            sim.assert_no_double_spend();
+        }
+    }
+
+    /// Throttle (a), with real block-time variance: some blocks follow
+    /// their parent within the interval. Their burn is held back, not
+    /// skipped -- sent once the interval is up, before the next block --
+    /// so every block from the second on still carries one burn.
+    #[test]
+    fn a_block_inside_the_interval_has_its_burn_held_back_not_skipped() {
+        let mut sim = Sim::throttled(100_000_000, 30);
+        let steps = sim.run(
+            Templates::Lagged,
+            &[75, 10, 80, 20, 75, 5, 90, 75, 15, 70, 75],
+        );
+        let held = steps
+            .iter()
+            .filter(|s| matches!(s, TipStep::Throttled { .. }))
+            .count();
+        assert_eq!(held, 4, "{steps:?}");
+        let per_block = sim.burns_per_block();
+        assert_eq!(
+            per_block.keys().copied().collect::<Vec<_>>(),
+            (202..=211).collect::<Vec<_>>()
+        );
+        assert!(per_block.values().all(|&n| n == 1), "{per_block:?}");
+        assert_spaced(&sim.new_burn_times(), 30);
+        sim.assert_no_double_spend();
+    }
+
+    /// Throttle (b): 5 s blocks for six minutes (the testnet bursts) with
+    /// a 30 s interval: one new burn per 30 s of wall clock, not one per
+    /// block -- twelve instead of seventy-two -- each in its own block.
+    #[test]
+    fn five_second_blocks_get_a_burn_at_most_every_30s() {
+        let mut sim = Sim::throttled(100_000_000, 30);
+        sim.run(Templates::Lagged, &[5; 72]);
+        let times = sim.new_burn_times();
+        assert_spaced(&times, 30);
+        assert_eq!(times.len(), 12, "{times:?}");
+        assert!(sim.burns_per_block().values().all(|&n| n == 1));
+        sim.assert_no_double_spend();
+    }
+
+    /// Throttle (b), budget: the throttle only spaces burns out; the
+    /// budget (checked after every step by `Sim::run`) still ends the run
+    /// after exactly what it pays for.
+    #[test]
+    fn the_throttle_keeps_the_budget() {
+        // Room for three 120,000 zat burns and a bit.
+        let mut sim = Sim::throttled(400_000, 30);
+        let steps = sim.run(Templates::Lagged, &[5; 72]);
+        assert_eq!(steps.last(), Some(&TipStep::Stop));
+        let times = sim.new_burn_times();
+        assert_eq!(times.len(), 3);
+        assert_spaced(&times, 30);
+        assert!(sim.state.pending.is_empty());
+        assert_eq!(sim.state.total_spent_zat(), 360_000);
+    }
+
+    /// Throttle (c): killed right after a broadcast and restarted from what
+    /// was on disk then (the write-ahead save), 10 s later. The broadcast
+    /// time came with it: the new process waits out the rest of the
+    /// interval before its first burn.
+    #[test]
+    fn a_restart_mid_interval_waits_out_the_rest_of_it() {
+        let mut sim = Sim::throttled(100_000_000, 30);
+        let disk: Rc<RefCell<String>> = Rc::default();
+        let at_send: Rc<RefCell<Option<String>>> = Rc::default();
+        let (d, a) = (disk.clone(), at_send.clone());
+        *sim.node.on_send.borrow_mut() =
+            Some(Box::new(move || *a.borrow_mut() = Some(d.borrow().clone())));
+        let keypair = sim.keypair;
+        let now = sim.now.clone();
+        let clock = move || now.get();
+        let mut burner = Burner {
+            network: burn_wallet::Network::Regtest,
+            keypair: &keypair,
+            evm_address: [0u8; 20],
+            per_epoch_zat: 100_000,
+            max_epochs: None,
+            epochs_this_run: 0,
+            min_burn_interval_ms: 30_000,
+            clock: &clock,
+        };
+        let tip = sim.node.tip.get();
+        let step = on_new_tip(
+            &sim.node,
+            &mut sim.funding,
+            &mut burner,
+            &mut sim.state,
+            tip,
+            &mut |s: &MinerState| {
+                *disk.borrow_mut() = serde_json::to_string(s).unwrap();
+                Ok(())
+            },
+            |_| None,
+        )
+        .unwrap();
+        assert_eq!(step, TipStep::Continue);
+        assert_eq!(sim.node.admitted.borrow().len(), 1);
+
+        // Killed right after the broadcast; restarted from disk as `mine`
+        // starts, 10 s and one block later.
+        let snapshot = at_send.borrow_mut().take().unwrap();
+        sim.state = serde_json::from_str(&snapshot).unwrap();
+        assert_eq!(sim.state.last_burn_broadcast_unix_ms, Some(T0));
+        sim.funding = Funding::new(burn_wallet::Network::Regtest);
+        sim.now.set(T0 + 10_000);
+        sim.node.mine(&sim.node.mempool());
+        assert!(resolve_pending(&sim.node, &mut sim.state).1.is_none());
+        sim.state.begin_invocation(100_000_000, 100_000, None);
+
+        assert_eq!(
+            sim.step_now(None),
+            TipStep::Throttled {
+                due_unix_ms: T0 + 30_000
+            }
+        );
+        sim.now.set(T0 + 20_000);
+        sim.node.mine(&sim.node.mempool());
+        assert!(matches!(sim.step_now(None), TipStep::Throttled { .. }));
+        assert_eq!(sim.node.admitted.borrow().len(), 1, "nothing new yet");
+        // The interval is up (no new block needed): the held-back burn goes.
+        sim.now.set(T0 + 30_000);
+        assert_eq!(sim.step_now(None), TipStep::Continue);
+        assert_eq!(sim.node.admitted.borrow().len(), 2);
+        assert_eq!(sim.state.last_burn_broadcast_unix_ms, Some(T0 + 30_000));
+    }
+
+    /// Throttle (d): a burn in flight that the node dropped is re-sent on
+    /// the next tip even inside the interval -- the same signed bytes, no
+    /// new spend -- while the new burn that tip would have sent waits.
+    #[test]
+    fn a_dropped_burn_in_flight_is_resent_inside_the_interval() {
+        let mut sim = Sim::throttled(100_000_000, 30);
+        sim.block_ms = 5_000;
+        // The burn sent at tip 200 misses block 201 (lagged template).
+        assert_eq!(sim.block(Templates::Lagged, None), TipStep::Continue);
+        let burn = sim.state.pending[0].clone();
+        sim.node.forget(&burn.txid);
+
+        let sent_before = sim.node.sent.borrow().len();
+        let step = sim.step_now(None);
+        assert_eq!(
+            step,
+            TipStep::Throttled {
+                due_unix_ms: T0 + 30_000
+            }
+        );
+        assert_eq!(sim.node.sent.borrow().len(), sent_before + 1, "re-sent");
+        assert_eq!(sim.node.sent.borrow().last(), Some(&burn.raw_hex));
+        assert_eq!(
+            sim.node.txs.borrow().get(&burn.txid),
+            Some(&TxStatus::Mempool)
+        );
+        assert_eq!(sim.new_burn_times(), vec![T0], "no new burn");
+        assert_eq!(sim.state.pending, vec![burn.clone()]);
+        // Re-sends don't move the interval.
+        assert_eq!(sim.state.last_burn_broadcast_unix_ms, Some(T0));
+        sim.node.mine(&sim.node.mempool());
+        assert_eq!(
+            sim.node.txs.borrow().get(&burn.txid),
+            Some(&TxStatus::Confirmed { height: 202 })
+        );
+    }
+
+    /// The interval arithmetic, including a clock stepped backwards: by
+    /// less than the interval it is still waited out (at most twice the
+    /// interval in all); by more, the stale stamp holds nothing back
+    /// rather than stalling the miner for as long as the clock was off.
+    #[test]
+    fn throttle_due_arithmetic() {
+        assert_eq!(throttle_due(None, 5_000, 30_000), None, "no burn yet");
+        assert_eq!(throttle_due(Some(1_000), 5_000, 0), None, "off");
+        assert_eq!(throttle_due(Some(1_000), 5_000, 30_000), Some(31_000));
+        assert_eq!(throttle_due(Some(1_000), 30_999, 30_000), Some(31_000));
+        assert_eq!(throttle_due(Some(1_000), 31_000, 30_000), None);
+        assert_eq!(
+            throttle_due(Some(100_000), 90_000, 30_000),
+            Some(130_000),
+            "stepped back 10 s"
+        );
+        assert_eq!(
+            throttle_due(Some(100_000_000), 50_000, 30_000),
+            None,
+            "stepped back a day"
+        );
     }
 }

@@ -111,6 +111,28 @@ unconfirmed change of the burn in flight. zebrad's mempool accepts a
 transaction that spends another mempool transaction's output, and its
 block template includes the child only with or after the parent.
 
+### Burn interval
+
+One burn per block is a cost per *block*, and Zcash testnet sometimes
+makes blocks every 3-7 s for hours. On 2026-09-27 the project keeper sent
+1,441 burns in 5.6 h that way (~1.85 TAZ/day), and 17% of them were
+doubles that sealed nothing.
+
+- **`--min-burn-interval-secs <secs>`** (default 0: off): never broadcast
+  a new burn less than this many seconds (wall clock) after this miner's
+  previous one. That caps a day at 86,400 / `secs` burns, whatever the
+  block rate: with 30, at most 2,880 burns, about 0.86 TAZ at 10,000 zat
+  plus a 20,000 zat fee each. A block that arrives inside the interval
+  isn't skipped: its burn is held back and sent as soon as the interval is
+  up, even if no new block has come by then. With ordinary ~75 s blocks
+  and an interval of 30, every block still gets a burn. Re-sends of burns
+  already in flight (evicted, or orphaned by a reorg) are the same signed
+  bytes and are never held back. The time of the last broadcast is saved
+  in `state.json` (`last_burn_broadcast_unix_ms`), so a restart waits out
+  an interval the previous process started. The miner uses the system
+  clock: if it steps back by more than the interval, the saved time is
+  ignored rather than stalling the miner.
+
 Before a burn is broadcast, `state.json` records it under `pending`
 (write-ahead), and its inputs stay reserved until it is mined. A process
 killed right after the broadcast therefore still knows the burn. A burn

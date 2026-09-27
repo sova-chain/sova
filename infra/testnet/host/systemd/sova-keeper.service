@@ -15,7 +15,8 @@ ExecStart=/usr/local/bin/sova-miner --network test --data-dir /var/lib/sova/keep
   --rpc http://127.0.0.1:${ZEBRA_RPC_PORT} \
   --per-epoch-zat ${KEEPER_PER_EPOCH_ZAT} \
   --budget-zat ${KEEPER_BUDGET_ZAT} \
-  --lifetime-budget-zat ${KEEPER_LIFETIME_BUDGET_ZAT}
+  --lifetime-budget-zat ${KEEPER_LIFETIME_BUDGET_ZAT} \
+  --min-burn-interval-secs ${KEEPER_MIN_BURN_INTERVAL_SECS}
 Restart=on-failure
 RestartSec=30
 NoNewPrivileges=yes

@@ -238,6 +238,25 @@ miner refreshes mid-block does the rate approach 100%. The regtest lab
 refresh, against 50% for v0.1.8, and 76% with a refresh every 6 s,
 against 53% for v0.1.8.
 
+**Bursts, and the burn interval.** Cost per block is only bounded per
+day if blocks are. On 2026-09-27 Zcash testnet ran in bursts of 3-7 s
+blocks for hours: the keeper sent 1,441 burns in 5.6 h (~1.85 TAZ/day),
+which landed in 1,200 distinct blocks (17% doubles, wasted) and covered
+about 45% of blocks. In a burst the time to inclusion that users feel is
+already short, so a burn in every burst block buys little.
+`--min-burn-interval-secs N` (default 0 = off) makes the miner wait at
+least `N` seconds (wall clock) after a burn before broadcasting the next,
+so a day costs at most 86,400 / `N` burns whatever the block rate. The
+kit runs the keeper with `N` = 30 (`KEEPER_MIN_BURN_INTERVAL_SECS`,
+default 30 in `deploy.sh`/`setup-host.sh`): **at most 2,880 burns a day ≈
+0.86 TAZ/day** at 30,000 zat each. A block that arrives inside the
+interval has its burn held back and sent when the interval is up, not
+skipped, so at ordinary ~75 s blocks every block still gets a burn and
+the cadence above is unchanged. Re-sends of burns already in flight are
+never held back. The last broadcast time is kept in `state.json`
+(`last_burn_broadcast_unix_ms`, a field older releases ignore), so a
+restart waits out the rest of the interval.
+
 **Budgets.** A burn counts against `--budget-zat` and
 `--lifetime-budget-zat` from the moment it is saved to `state.json`,
 which happens just *before* it is broadcast, not only once it confirms.
@@ -257,6 +276,7 @@ sova-miner --network test --data-dir /var/lib/sova-keeper \
   --rpc http://127.0.0.1:18232 \
   --per-epoch-zat 10000 \
   --budget-zat 35000000 \
+  --min-burn-interval-secs 30 \
   --lifetime-budget-zat 3000000000   # 30 TAZ for the whole testnet phase (Rob, 2026-09-26)
 ```
 

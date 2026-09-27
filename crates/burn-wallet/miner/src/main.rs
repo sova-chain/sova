@@ -139,6 +139,14 @@ enum Command {
         /// omitted.
         #[arg(long)]
         max_epochs: Option<u64>,
+        /// Never broadcast a new burn less than this many seconds (wall
+        /// clock) after this miner's previous one, however fast Zcash
+        /// blocks come: at most 86,400/SECS burns a day. A block that
+        /// arrives sooner has its burn held back until the interval is up.
+        /// Re-sends of burns already in flight are not held back. 0 (the
+        /// default) burns into every block.
+        #[arg(long, value_name = "SECS", default_value_t = 0)]
+        min_burn_interval_secs: u64,
         /// SIP-8 anchored burns: the JSON-RPC endpoint of YOUR OWN Sova
         /// node, e.g. `http://127.0.0.1:8545`. Each burn then also votes
         /// for that node's head block, once SIP-8 is active on this network
@@ -599,6 +607,7 @@ fn main() {
             rpc,
             poll_interval_ms,
             max_epochs,
+            min_burn_interval_secs,
             sova_rpc,
             vote_wait,
         } => mine::run(mine::MineArgs {
@@ -611,6 +620,7 @@ fn main() {
             rpc_cookie_file: cli.rpc_cookie_file.clone(),
             poll_interval_ms,
             max_epochs,
+            min_burn_interval_secs,
             sova_rpc,
             vote_wait: std::time::Duration::from_secs(vote_wait),
             sip8_from: cli.sip8_from,
@@ -678,6 +688,36 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(report.rpc_cookie_file.as_deref(), Some(Path::new("/c")));
+    }
+
+    /// `--min-burn-interval-secs` defaults to 0 (no throttle: the
+    /// behaviour before the flag existed) and takes seconds.
+    #[test]
+    fn min_burn_interval_defaults_to_off() {
+        let interval = |extra: &[&str]| {
+            let base = [
+                "sova-miner",
+                "mine",
+                "--rpc",
+                "http://127.0.0.1:18232",
+                "--budget-zat",
+                "1",
+                "--per-epoch-zat",
+                "1",
+            ];
+            match Cli::try_parse_from(base.iter().chain(extra))
+                .unwrap()
+                .command
+            {
+                Command::Mine {
+                    min_burn_interval_secs,
+                    ..
+                } => min_burn_interval_secs,
+                _ => unreachable!("parsed `mine`"),
+            }
+        };
+        assert_eq!(interval(&[]), 0);
+        assert_eq!(interval(&["--min-burn-interval-secs", "30"]), 30);
     }
 
     fn recorded_evm(dir: &Path) -> [u8; 20] {

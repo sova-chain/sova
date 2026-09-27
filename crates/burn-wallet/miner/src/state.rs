@@ -219,6 +219,18 @@ pub(crate) struct MinerState {
     /// older releases ignore it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub recent: Vec<RecentBurn>,
+    /// When this miner last broadcast a *new* burn: wall clock, Unix
+    /// milliseconds. `--min-burn-interval-secs` measures from here (see
+    /// `crate::mine::on_new_tip`), and it is on disk so a restart honours
+    /// an interval the previous process started. Set write-ahead, before
+    /// the broadcast, and moved to just after it once the node took the
+    /// burn, so it never reads earlier than the real broadcast by more than
+    /// the send itself took. Re-sends of a burn already in flight don't
+    /// touch it. Additive field, omitted until the first burn: absent in
+    /// state.json written before the throttle existed (`None`: no burn to
+    /// wait after), and ignored by older releases.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_burn_broadcast_unix_ms: Option<u64>,
 }
 
 /// A burn confirmed recently, kept in case a reorg orphans it (see
@@ -341,6 +353,7 @@ impl MinerState {
             retired_chains: Vec::new(),
             pending: Vec::new(),
             recent: Vec::new(),
+            last_burn_broadcast_unix_ms: None,
         }
     }
 
@@ -699,6 +712,24 @@ mod tests {
         assert!(old_none.pending.is_empty());
     }
 
+    /// The last broadcast time survives a save/load, and is left out of
+    /// state.json until there is one, so a state file that never burned
+    /// keeps the shape older releases wrote.
+    #[test]
+    fn last_burn_broadcast_time_roundtrips_and_is_omitted_until_set() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        let mut state = MinerState::new("tmAddr".to_string(), "cd".repeat(20));
+        let json = serde_json::to_value(&state).unwrap();
+        assert!(json.get("last_burn_broadcast_unix_ms").is_none());
+        state.last_burn_broadcast_unix_ms = Some(1_790_000_000_123);
+        state.save(&path).unwrap();
+        assert_eq!(
+            MinerState::load(&path).unwrap().last_burn_broadcast_unix_ms,
+            Some(1_790_000_000_123)
+        );
+    }
+
     /// D5: a fresh `mine` invocation gets its *full* declared budget back,
     /// even immediately after a prior invocation already spent heavily
     /// against this same keystore's lifetime totals -- the core
@@ -812,6 +843,9 @@ mod tests {
         // Nothing in flight either (field added with getaddressutxos
         // funding).
         assert!(loaded.pending.is_empty());
+        // No broadcast time: nothing for --min-burn-interval-secs to wait
+        // after.
+        assert_eq!(loaded.last_burn_broadcast_unix_ms, None);
         // A fresh invocation on this loaded state behaves exactly as if it
         // always had these fields: full budget available, no lifetime cap.
         let mut loaded = loaded;

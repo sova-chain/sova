@@ -87,6 +87,10 @@ for h in sova-seed-1 sova-rpc-1 sova-keeper-1; do
   check "render: ${h}'s node has SIP-7 on" grep -q '^SOVA_SIP7=1$' "${TMP}/out/render/${h}/etc/sova/sova-node.env"
 done
 check "render: keeper budgets rendered" grep -q '^KEEPER_LIFETIME_BUDGET_ZAT=' "${R}/etc/sova/keeper.env"
+check "render: keeper burns at most every 30 s by default" \
+  grep -qx 'KEEPER_MIN_BURN_INTERVAL_SECS=30' "${R}/etc/sova/keeper.env"
+check "render: sova-keeper.service passes the burn interval" \
+  grep -qF -- "--min-burn-interval-secs \${KEEPER_MIN_BURN_INTERVAL_SECS}" "${R}/etc/systemd/system/sova-keeper.service"
 # Private hosts can't be reached by discovery (their firewall admits SSH
 # only), so they dial the seeds as static peers; the seed dials no one.
 for h in sova-rpc-1 sova-keeper-1; do
