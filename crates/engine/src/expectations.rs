@@ -33,7 +33,7 @@
 //!   through `SovaNodeAddOns` is a TODO recorded here deliberately.
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use alloy_rpc_types::Withdrawal;
@@ -126,6 +126,10 @@ pub struct ExpectedSettlements {
     /// be anchored to orphaned Zcash blocks until they are re-sealed
     /// (SIP-4 §7). See [`Self::effective_head`].
     unwound: AtomicU64,
+    /// Set once [`run_expectations`] starts: this node checks settlements
+    /// against its own zebrad, so "nothing scanned yet" means "not known
+    /// yet", not "never known" (nodes with no zebrad).
+    enabled: AtomicBool,
 }
 
 /// How far [`ExpectedSettlements::effective_head`] walks down a stale tip
@@ -151,6 +155,29 @@ impl ExpectedSettlements {
             0 => None,
             h => Some(h),
         }
+    }
+
+    /// Mark this node as running the expectations follower.
+    pub fn mark_enabled(&self) {
+        self.enabled.store(true, Ordering::SeqCst);
+    }
+
+    /// Whether this node runs the expectations follower at all.
+    #[must_use]
+    pub fn enabled(&self) -> bool {
+        self.enabled.load(Ordering::SeqCst)
+    }
+
+    /// Whether a sealer must wait before building on `head`: the follower
+    /// runs but hasn't recorded the head's epoch yet, so SIP-4 §7 can't
+    /// tell whether the head is stale. That includes the first seconds
+    /// after a restart, before the first scan: a keeper restarted while
+    /// its head's anchor was reorged away built its next block on the
+    /// orphaned head at once, and every node followed it (reorg-stress
+    /// seed 202, 2026-09-26).
+    #[must_use]
+    pub fn head_epoch_unknown(&self, head: u64) -> bool {
+        head > 0 && self.enabled() && self.record(head).is_none()
     }
 
     /// The full record for a height (epoch context for v2 preference).
@@ -395,6 +422,7 @@ pub async fn run_expectations<V: ZcashView>(
     schedule: consensus::schedule::Schedule,
     poll_interval: std::time::Duration,
 ) {
+    global().mark_enabled();
     // SIP-7: the follower that feeds the index holds on missing or
     // inconsistent pool accounting (a stall and an alert, never an answer).
     let mut follower = Follower::new(base_height, REORG_WINDOW)
@@ -495,6 +523,26 @@ mod tests {
             },
             ranked: Vec::new(),
         }
+    }
+
+    #[test]
+    fn a_sealer_waits_for_the_head_epoch_from_the_first_moment_the_follower_runs() {
+        let e = ExpectedSettlements::default();
+        // No zebrad (no follower): never wait, or such a node never seals.
+        assert!(!e.head_epoch_unknown(357));
+        // Follower enabled but nothing scanned yet (a restart): wait. This
+        // is the case the old gate (`scanned_through().is_some()`) let by.
+        e.mark_enabled();
+        assert!(e.scanned_through().is_none());
+        assert!(e.head_epoch_unknown(357));
+        // Scanned below the head: still wait.
+        e.insert(356, rec(Vec::new()));
+        assert!(e.head_epoch_unknown(357));
+        // The head's epoch is recorded: §7 can judge it now.
+        e.insert(357, rec(Vec::new()));
+        assert!(!e.head_epoch_unknown(357));
+        // Genesis never waits.
+        assert!(!e.head_epoch_unknown(0));
     }
 
     fn w(i: u64, addr_byte: u8, amount: u64) -> Withdrawal {

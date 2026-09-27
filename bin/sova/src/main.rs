@@ -541,6 +541,9 @@ async fn run() -> eyre::Result<()> {
     ));
 
     if let Some(url) = &zebrad_rpc {
+        // Before any task runs, so the sealer never sees "no follower"
+        // while the follower is merely not scheduled yet.
+        engine::expectations::global().mark_enabled();
         sova_tasks.spawn(engine::expectations::run_expectations(
             ZebradClient::new(url.clone()),
             base_height,

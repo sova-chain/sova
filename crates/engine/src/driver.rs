@@ -533,16 +533,13 @@ pub async fn run_sealer<V: ZcashView>(
         let head = sova_head();
         // SIP-4 §7 can only tell whether the head is stale once our own
         // expectations follower has recorded the head's epoch. Until then
-        // (a restart racing its rescan, or a brief lag behind the sealer's
-        // follower) do not build on it: a keeper restarted onto a stale tip
-        // built its next block on that tip before the tip was recognised as
-        // stale, and followers stayed on that branch (the reorg-stress sim,
-        // 2026-09-26). Only when the expectations follower runs at all.
-        let expectations = crate::expectations::global();
-        if head > 0
-            && expectations.scanned_through().is_some()
-            && expectations.record(head).is_none()
-        {
+        // (a restart before or racing its rescan, or a brief lag behind the
+        // sealer's follower) do not build on it: a keeper restarted onto a
+        // stale tip built its next block on that tip before the tip was
+        // recognised as stale, and followers stayed on that branch (the
+        // reorg-stress sim, 2026-09-26). Only when the expectations follower
+        // runs at all. See `ExpectedSettlements::head_epoch_unknown`.
+        if crate::expectations::global().head_epoch_unknown(head) {
             tracing::debug!(
                 head,
                 "sealer: waiting for our Zcash scan to record the head's epoch"

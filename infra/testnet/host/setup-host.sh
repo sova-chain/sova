@@ -413,6 +413,17 @@ setup_node() {
     return 0
   fi
   echo "${SOVA_EPOCH_BASE}" >"${ETC}/epoch-base-pinned"
+  # Peer ban length (reth.toml [peers] ban_duration, reth default 12 h): one
+  # failed handshake bans the remote IP, so behind a shared VPN exit or
+  # carrier NAT one misconfigured node locks everyone there out of the seeds.
+  # 1 h (Rob, 2026-09-26). reth writes reth.toml on its first start, so a new
+  # host picks this up on its second deploy.
+  local toml="${DATA}/node/reth.toml" ban="${PEER_BAN_DURATION:-1h}"
+  if [[ -f "${toml}" ]] && ! grep -q "^ban_duration = \"${ban}\"$" "${toml}"; then
+    sed -i "s/^ban_duration = \".*\"$/ban_duration = \"${ban}\"/" "${toml}"
+    changed=1
+    log "reth.toml: peer ban_duration ${ban}"
+  fi
   local bin_changed=0
   [[ "$(readlink /usr/local/bin/sova)" != "$(cat "${ETC}/.sova-node.bin" 2>/dev/null)" ]] && bin_changed=1
   if [[ ${changed} == 1 || ${bin_changed} == 1 ]] || ! systemctl is-active --quiet sova-node; then

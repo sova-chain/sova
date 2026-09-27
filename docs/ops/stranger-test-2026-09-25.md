@@ -154,7 +154,7 @@ advancing. The stalls ended only when zebrad was restarted
   More likely, a dependent block timed out waiting for a parent download
   that never finished.
 - This network reaches the internet through a Hong Kong egress (Cloudflare
-  `cf-ray … -HKG`, external IP 156.59.50.240, ~480 ms RTT to Hetzner). So
+  `cf-ray … -HKG`, a VPN exit, ~480 ms RTT to Hetzner). So
   this may partly be the environment.
 - The guide's remedy, "your zebrad stalls and won't follow the network:
   … full-sync", would take days here (see the zero-sync row in the
