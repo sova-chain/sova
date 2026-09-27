@@ -865,6 +865,44 @@ mod tests {
         );
     }
 
+    /// G1 (docs/audits/2026-09-27-follower-stale-block.md): a stale block
+    /// with fresh blocks built on it is still stale. Reorg-stress seed 202
+    /// left exactly this shape in every node's chain: block 376 anchored to
+    /// an orphaned Zcash block, 377.. anchored to the current branch but
+    /// built on 376. The walk above stops at the first non-stale block from
+    /// the top, and a pending rollback floor above the buried block
+    /// resolves as soon as the block just above the floor matches, so the
+    /// effective head is the reth head, the sealer never re-seals 376, and
+    /// followers never get a replacement to converge on.
+    #[test]
+    #[ignore = "G1: see docs/audits/2026-09-27-follower-stale-block.md"]
+    fn g1_a_stale_block_buried_under_fresh_ones_is_still_found() {
+        let e = ExpectedSettlements::default();
+        for h in 1..=20 {
+            e.insert(h, rb_rec(h as u8));
+        }
+        // Stored chain: 11 anchored to an orphaned Zcash block; 12..=20
+        // built on it, each anchored to the follower's current branch.
+        let stored = |h: u64| Some(if h == 11 { [0xee; 32] } else { [h as u8; 32] });
+        assert!(e.is_stale(11, stored(11)));
+        assert_eq!(
+            e.effective_head(20, stored),
+            10,
+            "no rollback pending (a restart): 11 must still be re-sealed"
+        );
+        // A later Zcash reorg above the buried block, rescanned: its floor
+        // resolves (16 matches), but 11 is as stale as before.
+        e.unwind_above(15);
+        for h in 16..=20 {
+            e.insert(h, rb_rec(h as u8));
+        }
+        assert_eq!(
+            e.effective_head(20, stored),
+            10,
+            "a resolved rollback above it must not hide it"
+        );
+    }
+
     #[test]
     fn a_rollback_above_the_head_changes_nothing() {
         let e = ExpectedSettlements::default();

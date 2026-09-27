@@ -629,6 +629,62 @@ mod tests {
         }
     }
 
+    /// G2 (docs/audits/2026-09-27-follower-stale-block.md): a block whose
+    /// own anchor matches our zebrad, built on a parent whose anchor our
+    /// zebrad no longer has, descends from a block SIP-4 §7 invalidated, so
+    /// it must be held like the parent would be. Today only each block's
+    /// own anchor is checked; the parent was checked once, at its own
+    /// import, before the Zcash reorg. That let reorg-stress seed 202's
+    /// followers import 377..410 on top of the stale 376 (valid one by
+    /// one), and the sync driver's forkchoice update then made them
+    /// canonical with no further check.
+    #[test]
+    #[ignore = "G2: see docs/audits/2026-09-27-follower-stale-block.md"]
+    fn g2_a_child_of_a_parent_on_an_orphaned_zcash_block_is_held() {
+        let e = leak();
+        e.insert(5, burnless_record());
+        e.insert(6, burnless_record());
+        let c = consensus(e).with_sip6(|| None);
+        let parent_anchored = |anchor: [u8; 32]| {
+            let mut h = dev_header(b"");
+            h.parent_beacon_block_root = Some(B256::from(anchor));
+            SealedHeader::seal_slow(h)
+        };
+        let child_of = |parent: &SealedHeader| {
+            let mut h = dev_header(b"");
+            h.number = 6;
+            h.parent_hash = parent.hash();
+            h.timestamp = parent.header().timestamp + 12;
+            SealedHeader::seal_slow(h)
+        };
+        // Control: the same child on a parent on our Zcash branch is fine,
+        // so a failure below is the missing rule, not a malformed header.
+        let fresh = parent_anchored(ANCHOR);
+        let ok = c.validate_header_against_parent(&child_of(&fresh), &fresh);
+        assert!(ok.is_ok(), "{ok:?}");
+        // The parent commits to a Zcash block our zebrad no longer has.
+        let stale = parent_anchored([0xEE; 32]);
+        let child = child_of(&stale);
+        assert_eq!(
+            c.check_settlements(&SealedBlock::seal_slow(Block::new(
+                child.header().clone(),
+                BlockBody {
+                    withdrawals: Some(Vec::new().into()),
+                    ..Default::default()
+                },
+            )))
+            .ok(),
+            Some(()),
+            "the child alone is valid: its own anchor matches"
+        );
+        let err = c.validate_header_against_parent(&child, &stale).err();
+        assert!(
+            err.as_ref()
+                .is_some_and(|e| c.is_transient_error(e) && e.to_string().contains(HOLD_MARKER)),
+            "a child of a stale-anchored parent must be held, got {err:?}"
+        );
+    }
+
     /// Same anchor, contradicting mint: now provably the same Zcash block,
     /// so the mismatch is permanent.
     #[test]

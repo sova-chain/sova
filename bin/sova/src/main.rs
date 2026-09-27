@@ -119,6 +119,7 @@ mod log_filter;
 mod pending_rpc;
 mod rpc;
 mod send_sync;
+mod state_cache;
 mod tx_gossip;
 mod zcash_feed;
 
@@ -275,6 +276,9 @@ async fn run() -> eyre::Result<()> {
     // full note. Every node accepts it: harmless for one that never
     // receives relayed calls, and required for one that does.
     node_config.engine.accept_execution_requests_hash = true;
+    // reth's 4 GiB default state cache filled the 4 GB testnet hosts
+    // (2026-09-27); see `state_cache`.
+    node_config.engine.cross_block_cache_size = state_cache::from_env()?;
 
     if follow_only || mine_rpc.is_some() {
         // No `.dev()` here: that flag (`dev.dev`) is what makes reth's

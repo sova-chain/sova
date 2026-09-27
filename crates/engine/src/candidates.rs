@@ -1318,6 +1318,36 @@ mod tests {
         assert_eq!(t.best(10).map(|c| c.block_hash), Some([0x01; 32]));
     }
 
+    /// The follower half of reorg-stress seed 202 (G1 in
+    /// docs/audits/2026-09-27-follower-stale-block.md), pinned as correct:
+    /// after a Zcash rollback to 5 our canonical 6 is stale, so the reader
+    /// stops at the effective head 5 and `unwind_above(5)` dropped 6 from
+    /// the tracker. Blocks built on the stale 6 are not candidates (SIP-4
+    /// §7 invalidates every block above the rollback, and so everything
+    /// built on one); a re-seal of 6 on 5, and blocks built on it, are.
+    #[test]
+    fn a_follower_holds_blocks_built_on_its_stale_block_and_takes_the_reseal() {
+        let t = CandidateTracker::with_canonical_reader(Box::new(|h| {
+            (h <= 5).then_some([h as u8; 32])
+        }));
+        // The sealer's 7 and 8, built on our stale 6 (`[6; 32]`).
+        assert_eq!(t.observe(7, cand(0, 0x77), [6; 32]), Observation::NotBetter);
+        assert_eq!(
+            t.observe(8, cand(0, 0x88), [0x77; 32]),
+            Observation::NotBetter
+        );
+        assert_eq!(t.best(7), None);
+        assert_eq!(t.best(8), None);
+        // A re-seal of 6 on our 5 extends the effective head, and a block
+        // built on it wins 7 over the one built on the stale 6.
+        assert_eq!(t.observe(6, cand(0, 0x66), [5; 32]), Observation::NewBest);
+        assert_eq!(
+            t.observe(7, cand(1, 0x70), [0x66; 32]),
+            Observation::NewBest
+        );
+        assert_eq!(t.best(7).map(|c| c.block_hash), Some([0x70; 32]));
+    }
+
     /// No reader installed (tools, other tests): every candidate counts.
     #[test]
     fn without_a_reader_every_candidate_counts() {
