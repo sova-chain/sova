@@ -40,10 +40,13 @@ pub(crate) struct OutPointRef {
 }
 
 /// A burn that was broadcast but is not yet known to be mined. Saved to
-/// `state.json` right after the broadcast, so a restart (or a confirmation
-/// that outlasts the wait) neither loses the epoch nor spends its inputs a
-/// second time: they stay reserved until the burn is mined, or can no
-/// longer be (the chain passed its expiry height).
+/// `state.json` right after the broadcast, so a restart neither loses the
+/// epoch nor spends its inputs a second time: they stay reserved until the
+/// burn is mined, or can no longer be (the chain passed its expiry height).
+///
+/// Up to `crate::epoch::MAX_IN_FLIGHT` are in flight at once, and a later
+/// one may spend an earlier one's unconfirmed change (see
+/// [`MinerState::pending`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct PendingBurn {
     /// The burn's txid (computed locally from the signed tx), RPC-display
@@ -62,6 +65,24 @@ pub(crate) struct PendingBurn {
     /// The last height it can be mined at; once the tip reaches it
     /// unmined, the burn is dead and its inputs are free again.
     pub expiry_height: u64,
+}
+
+impl PendingBurn {
+    /// What this burn costs once mined: the burn plus its fee.
+    #[must_use]
+    pub(crate) fn cost_zat(&self) -> u64 {
+        self.burn_zat.saturating_add(self.fee_zat)
+    }
+
+    /// Its change output (always output 2, see
+    /// `burn_wallet::tx::build_burn_transaction`), if it has one.
+    #[must_use]
+    pub(crate) fn change_outpoint(&self) -> Option<OutPointRef> {
+        (self.change_zat > 0).then(|| OutPointRef {
+            txid: self.txid.clone(),
+            vout: 2,
+        })
+    }
 }
 
 /// One completed mining epoch: one new Zcash block observed, with a burn
@@ -174,13 +195,76 @@ pub(crate) struct MinerState {
     /// Additive field.
     #[serde(default)]
     pub retired_chains: Vec<RetiredChain>,
-    /// Our burn that was broadcast but not yet seen mined, if any -- at
-    /// most one at a time (see [`PendingBurn`]). Its inputs are already
-    /// removed from [`Self::utxos`]; its change is added once it confirms.
-    /// Additive field: absent in older state.json, which deserializes it
-    /// as `None`.
-    #[serde(default)]
-    pub pending: Option<PendingBurn>,
+    /// Our burns that were broadcast but not yet seen mined, oldest
+    /// first (see [`PendingBurn`]): at most
+    /// `crate::epoch::MAX_IN_FLIGHT`. Their inputs are already removed
+    /// from [`Self::utxos`]; a burn's change is added once it confirms,
+    /// unless a later burn in flight already spends it (chaining: see
+    /// `crate::epoch`). Oldest first is also parent-before-child, the
+    /// order a re-broadcast must follow.
+    ///
+    /// On disk (see [`pending_serde`]): `null` for none, the burn itself
+    /// for one -- the shape every release since the field was added reads
+    /// -- and an array only for two or more, which an older release
+    /// refuses to load rather than silently ignore.
+    #[serde(default, with = "pending_serde")]
+    pub pending: Vec<PendingBurn>,
+    /// Our burns confirmed in the last `crate::epoch::REORG_WATCH_DEPTH`
+    /// blocks, with their signed bytes: a Zcash reorg can orphan one after
+    /// its epoch was recorded, and zebrad doesn't return a reorged-out tx
+    /// to its mempool. `crate::epoch::resolve_pending` checks these each
+    /// tip and moves one the chain no longer has back into
+    /// [`Self::pending`] (un-recording its epoch), so it is re-sent before
+    /// any child spending its change. Additive field, omitted when empty;
+    /// older releases ignore it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent: Vec<RecentBurn>,
+}
+
+/// A burn confirmed recently, kept in case a reorg orphans it (see
+/// [`MinerState::recent`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct RecentBurn {
+    /// The burn as it was in flight (signed bytes included).
+    pub burn: PendingBurn,
+    /// The height it confirmed at.
+    pub height: u64,
+}
+
+/// (De)serializes the in-flight burns: `null` / one object / an array of
+/// two or more, reading any of the three (see [`MinerState::pending`]).
+mod pending_serde {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    use super::PendingBurn;
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum OneOrMany {
+        Many(Vec<PendingBurn>),
+        One(Box<PendingBurn>),
+    }
+
+    pub(super) fn serialize<S: Serializer>(
+        pending: &[PendingBurn],
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        match pending {
+            [] => serializer.serialize_none(),
+            [one] => one.serialize(serializer),
+            many => many.serialize(serializer),
+        }
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Vec<PendingBurn>, D::Error> {
+        Ok(match Option::<OneOrMany>::deserialize(deserializer)? {
+            None => Vec::new(),
+            Some(OneOrMany::One(one)) => vec![*one],
+            Some(OneOrMany::Many(many)) => many,
+        })
+    }
 }
 
 /// A chain identity: the hash of the block at `height`, in RPC-display hex
@@ -209,9 +293,9 @@ pub(crate) struct RetiredChain {
     pub epochs: Vec<EpochRecord>,
     /// The UTXOs that were tracked on that chain when it was retired.
     pub utxos: Vec<TrackedUtxo>,
-    /// The burn that was in flight on that chain, if any. Additive field.
-    #[serde(default)]
-    pub pending: Option<PendingBurn>,
+    /// The burns that were in flight on that chain. Additive field.
+    #[serde(default, with = "pending_serde")]
+    pub pending: Vec<PendingBurn>,
 }
 
 /// Errors loading or saving miner state.
@@ -255,7 +339,8 @@ impl MinerState {
             lifetime_budget_zat: None,
             chain_anchor: None,
             retired_chains: Vec::new(),
-            pending: None,
+            pending: Vec::new(),
+            recent: Vec::new(),
         }
     }
 
@@ -271,7 +356,7 @@ impl MinerState {
     }
 
     /// The chain this state was built on is gone (E1d): set its
-    /// chain-derived state -- the UTXO pool, any in-flight burn, and the
+    /// chain-derived state -- the UTXO pool, the burns in flight, and the
     /// epoch history, and with
     /// it the per-chain epoch counter, which is `epochs.len() + 1` -- aside
     /// in [`Self::retired_chains`], and re-anchor to `new_anchor`.
@@ -290,8 +375,9 @@ impl MinerState {
             reason,
             epochs: std::mem::take(&mut self.epochs),
             utxos: std::mem::take(&mut self.utxos),
-            pending: self.pending.take(),
+            pending: std::mem::take(&mut self.pending),
         });
+        self.recent.clear();
         self.chain_anchor = Some(new_anchor);
     }
 
@@ -335,6 +421,22 @@ impl MinerState {
                 path: path.to_path_buf(),
                 source,
             })
+    }
+
+    /// Takes back the epoch of `txid` (its burn was orphaned by a reorg):
+    /// removes its record, subtracts it from the lifetime totals and
+    /// renumbers the epochs after it. The caller puts the burn back in
+    /// flight, so what it will cost is still held against both budgets.
+    /// Returns the removed record, if there was one.
+    pub(crate) fn unrecord_epoch(&mut self, txid: &str) -> Option<EpochRecord> {
+        let i = self.epochs.iter().position(|e| e.txid == txid)?;
+        let record = self.epochs.remove(i);
+        self.total_burned_zat = self.total_burned_zat.saturating_sub(record.burn_zat);
+        self.total_fee_zat = self.total_fee_zat.saturating_sub(record.fee_zat);
+        for (n, e) in self.epochs.iter_mut().enumerate().skip(i) {
+            e.epoch = u64::try_from(n).unwrap_or(u64::MAX) + 1;
+        }
+        Some(record)
     }
 
     /// Records a completed epoch and updates the running (lifetime)
@@ -400,6 +502,18 @@ impl MinerState {
     pub(crate) fn lifetime_budget_remaining_zat(&self) -> Option<u64> {
         self.lifetime_budget_zat
             .map(|cap| cap.saturating_sub(self.total_spent_zat()))
+    }
+
+    /// What the burns in flight will cost once mined (burns plus fees).
+    /// Not spent yet -- a burn is charged when it confirms -- but already
+    /// committed: both budget checks hold it back (see
+    /// `crate::epoch::attempt_epoch`), so their confirming can't push a
+    /// cap past what was checked when the last one was sent.
+    #[must_use]
+    pub(crate) fn in_flight_cost_zat(&self) -> u64 {
+        self.pending
+            .iter()
+            .fold(0u64, |acc, p| acc.saturating_add(p.cost_zat()))
     }
 }
 
@@ -470,7 +584,7 @@ mod tests {
         assert_eq!(loaded.utxos[0].value_zat, 42);
         assert_eq!(loaded.chain_anchor, state.chain_anchor);
         assert!(loaded.retired_chains.is_empty());
-        assert_eq!(loaded.pending, None);
+        assert!(loaded.pending.is_empty());
     }
 
     fn sample_pending() -> PendingBurn {
@@ -488,6 +602,22 @@ mod tests {
         }
     }
 
+    /// A second burn, spending the first one's unconfirmed change.
+    fn sample_child() -> PendingBurn {
+        PendingBurn {
+            txid: "b2".repeat(32),
+            raw_hex: "0501".to_string(),
+            spent: vec![OutPointRef {
+                txid: "b1".repeat(32),
+                vout: 2,
+            }],
+            burn_zat: 10_000,
+            fee_zat: 20_000,
+            change_zat: 940_000,
+            expiry_height: 242,
+        }
+    }
+
     /// The in-flight burn survives a save/load (it is saved right after
     /// the broadcast, so a restart finds it), and the write leaves no temp
     /// file behind.
@@ -496,7 +626,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("state.json");
         let mut state = MinerState::new("tmAddr".to_string(), "cd".repeat(20));
-        state.pending = Some(sample_pending());
+        state.pending = vec![sample_pending()];
         state.save(&path).unwrap();
         state.save(&path).unwrap();
         assert_eq!(MinerState::load(&path).unwrap().pending, state.pending);
@@ -512,7 +642,7 @@ mod tests {
     #[test]
     fn retire_chain_takes_the_pending_burn() {
         let mut state = MinerState::new("tmAddr".to_string(), "cd".repeat(20));
-        state.pending = Some(sample_pending());
+        state.pending = vec![sample_pending(), sample_child()];
         state.retire_chain(
             "test".to_string(),
             ChainAnchor {
@@ -520,8 +650,53 @@ mod tests {
                 hash: "02".repeat(32),
             },
         );
-        assert_eq!(state.pending, None);
-        assert_eq!(state.retired_chains[0].pending, Some(sample_pending()));
+        assert!(state.pending.is_empty());
+        assert_eq!(
+            state.retired_chains[0].pending,
+            vec![sample_pending(), sample_child()]
+        );
+    }
+
+    /// Two burns in flight survive a restart in order (parent first), and
+    /// their cost is held against the budget until they resolve.
+    #[test]
+    fn two_burns_in_flight_roundtrip_in_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        let mut state = MinerState::new("tmAddr".to_string(), "cd".repeat(20));
+        state.pending = vec![sample_pending(), sample_child()];
+        state.save(&path).unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(json["pending"].is_array(), "two or more: an array");
+        let loaded = MinerState::load(&path).unwrap();
+        assert_eq!(loaded.pending, state.pending);
+        assert_eq!(loaded.in_flight_cost_zat(), 60_000);
+        assert_eq!(
+            loaded.pending[0].change_outpoint(),
+            Some(loaded.pending[1].spent[0].clone())
+        );
+    }
+
+    /// Downgrade safety: with none or one burn in flight, `pending` keeps
+    /// the shape older releases read (`null` / one object); both shapes,
+    /// as older releases wrote them, still load.
+    #[test]
+    fn zero_or_one_burn_in_flight_keeps_the_old_on_disk_shape() {
+        let mut state = MinerState::new("tmAddr".to_string(), "cd".repeat(20));
+        let json = serde_json::to_value(&state).unwrap();
+        assert!(json["pending"].is_null());
+        state.pending = vec![sample_pending()];
+        let json = serde_json::to_value(&state).unwrap();
+        assert!(json["pending"].is_object());
+        assert_eq!(json["pending"]["txid"], "b1".repeat(32));
+
+        let old_one: MinerState = serde_json::from_value(json).unwrap();
+        assert_eq!(old_one.pending, vec![sample_pending()]);
+        let mut old_none = serde_json::to_value(&state).unwrap();
+        old_none["pending"] = serde_json::Value::Null;
+        let old_none: MinerState = serde_json::from_value(old_none).unwrap();
+        assert!(old_none.pending.is_empty());
     }
 
     /// D5: a fresh `mine` invocation gets its *full* declared budget back,
@@ -636,7 +811,7 @@ mod tests {
         assert!(loaded.retired_chains.is_empty());
         // Nothing in flight either (field added with getaddressutxos
         // funding).
-        assert_eq!(loaded.pending, None);
+        assert!(loaded.pending.is_empty());
         // A fresh invocation on this loaded state behaves exactly as if it
         // always had these fields: full budget available, no lifetime cap.
         let mut loaded = loaded;

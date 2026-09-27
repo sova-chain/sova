@@ -1,8 +1,8 @@
 //! One mining epoch: select UTXOs, build and sign a SIP-1 burn transaction
 //! for exactly `per_epoch_zat`, and broadcast it -- or report that the
 //! declared budget won't stretch to cover this epoch. Then
-//! [`resolve_pending`] / [`wait_for_pending`] follow the broadcast burn
-//! until it is mined (recording the epoch) or can no longer be.
+//! [`resolve_pending`] follows the broadcast burns until each is mined
+//! (recording its epoch) or can no longer be.
 //!
 //! Funding comes from `getaddressutxos` (see `crate::funding`): every
 //! attempt first re-reads the address's confirmed UTXOs (one RPC, cheap at
@@ -14,15 +14,27 @@
 //!
 //! UTXO chaining: [`crate::state::MinerState::utxos`] tracks both funding
 //! and the miner's own change. A burn's inputs leave the pool when it is
-//! broadcast (they are reserved by [`crate::state::PendingBurn`] until it
-//! is mined or expires), and its change joins the pool once it confirms --
-//! so consecutive epochs spend the previous burn's change without waiting
-//! on coinbase maturity (100 confirmations) the way a *fresh* coinbase
-//! output would.
+//! broadcast (they are reserved by its [`crate::state::PendingBurn`] until
+//! it is mined or expires), and its change joins the pool once it confirms
+//! -- so consecutive epochs spend the previous burn's change without
+//! waiting on coinbase maturity (100 confirmations) the way a *fresh*
+//! coinbase output would.
+//!
+//! Burning ahead: up to [`MAX_IN_FLIGHT`] burns are in flight at once, so a
+//! burn can already be waiting in the mempool when the next Zcash block's
+//! template is built (see `crate::mine`). When no confirmed coin can fund
+//! the next burn, it spends the *unconfirmed* change of a burn still in
+//! flight -- a transaction spending another mempool transaction's output,
+//! which zebrad's mempool accepts (it resolves such inputs from the mempool
+//! and records the dependency; zebra PR 8857, in every release since 2.1)
+//! and whose block template includes the child only together with or after
+//! its parent. A confirmed coin is always preferred, so a wallet holding
+//! several coins burns from independent ones. If the parent is dropped, so
+//! is the child ([`resolve_pending`]).
 
 use std::collections::BTreeSet;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use burn_wallet::tx::{BurnTxRequest, DEFAULT_TX_EXPIRY_DELTA, build_burn_transaction};
 use burn_wallet::utxo::{decode_rpc_hash, encode_rpc_hash};
@@ -34,10 +46,19 @@ use consensus::sip1::SovaRef;
 use crate::fee::{BurnPayloadVersion, DUST_THRESHOLD_ZAT, zip317_fee_zat};
 use crate::funding::{self, Funding};
 use crate::node::{Node, TxStatus};
-use crate::state::{EpochRecord, MinerState, OutPointRef, PendingBurn, TrackedUtxo};
+use crate::state::{
+    EpochRecord, MinerState, OutPointRef, PendingBurn, RecentBurn, StateError, TrackedUtxo,
+};
 
-/// How often [`wait_for_pending`] polls while waiting.
-const CONFIRMATION_POLL_INTERVAL: Duration = Duration::from_millis(500);
+/// At most this many of our burns are in flight (broadcast, not yet
+/// mined) at once: one in the block template being mined now and one
+/// waiting in the mempool for the next (see `crate::mine`). Also bounds
+/// how deep a chain of unconfirmed change gets.
+pub(crate) const MAX_IN_FLIGHT: usize = 2;
+/// How many blocks a confirmed burn stays watched for a reorg that
+/// orphans it (see [`crate::state::MinerState::recent`]). Well past any
+/// reorg seen on Zcash testnet or in the reorg stress sims.
+pub(crate) const REORG_WATCH_DEPTH: u64 = 10;
 /// How many times [`attempt_epoch`] sends the same signed burn before
 /// giving up on it (see [`broadcast`]).
 const BROADCAST_ATTEMPTS: u32 = 3;
@@ -98,6 +119,10 @@ pub(crate) enum EpochError {
     /// Building or signing the transaction failed.
     #[error(transparent)]
     Build(#[from] burn_wallet::BurnTxError),
+    /// Saving state before (or after a refused) broadcast failed. When
+    /// this is returned before the broadcast, nothing was sent.
+    #[error(transparent)]
+    State(#[from] crate::state::StateError),
     /// The node refused the burn: every send was answered with an error,
     /// and the node doesn't have the transaction. Nothing was spent.
     #[error("burn {txid} rejected by the node: {message}")]
@@ -127,9 +152,11 @@ pub(crate) enum BudgetKind {
 /// The result of attempting one epoch.
 #[derive(Debug)]
 pub(crate) enum EpochOutcome {
-    /// A burn was built, signed, and accepted by the node; it is now
-    /// `state.pending` (the caller saves state, then follows it with
-    /// [`wait_for_pending`]).
+    /// A burn was built, signed, saved as in flight (the last entry of
+    /// `state.pending`, persisted before it was broadcast) and accepted
+    /// by the node -- or its broadcast outcome is unknown, which is
+    /// tracked the same way. The caller follows it with
+    /// [`resolve_pending`] on later blocks.
     Submitted(PendingBurn),
     /// The wallet has funds, but spending them for this epoch would exceed
     /// a declared budget.
@@ -139,12 +166,16 @@ pub(crate) enum EpochOutcome {
         kind: BudgetKind,
         /// Total zatoshis (burn + fee) this epoch would have cost.
         needed_zat: u64,
-        /// Budget remaining, under `kind`'s cap, before this epoch.
+        /// Budget remaining, under `kind`'s cap, before this epoch, after
+        /// holding back what the burns in flight will cost.
         remaining_zat: u64,
+        /// What the burns in flight will cost (held back from
+        /// `remaining_zat`); 0 with nothing in flight.
+        in_flight_zat: u64,
     },
 }
 
-/// What became of the in-flight burn.
+/// What became of one in-flight burn.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum PendingResolution {
     /// It was mined: the epoch is recorded (already pushed onto
@@ -156,8 +187,18 @@ pub(crate) enum PendingResolution {
         /// Its txid.
         txid: String,
     },
+    /// A Zcash reorg orphaned it after its epoch was recorded: the epoch
+    /// is taken back and the burn is in flight again (re-sent, before any
+    /// child spending its change).
+    Reorged {
+        /// Its txid.
+        txid: String,
+        /// The height it had been recorded at.
+        height: u64,
+    },
     /// It can no longer be mined (the tip reached its expiry height
-    /// without it): dropped, nothing recorded, inputs free again.
+    /// without it, or it spends the change of a burn that was dropped):
+    /// dropped, nothing recorded, inputs free again.
     Dropped {
         /// Its txid.
         txid: String,
@@ -243,7 +284,7 @@ fn select_utxos(
     None
 }
 
-/// The outpoints reserved by the in-flight burn, if any.
+/// The outpoints reserved by the burns in flight.
 pub(crate) fn reserved(state: &MinerState) -> BTreeSet<OutPointRef> {
     state
         .pending
@@ -252,9 +293,58 @@ pub(crate) fn reserved(state: &MinerState) -> BTreeSet<OutPointRef> {
         .collect()
 }
 
+/// A burn's inputs, chosen, and the fee/change they imply.
+struct Funded {
+    selection: Selection,
+    /// The chosen UTXOs, in selection order.
+    inputs: Vec<TrackedUtxo>,
+}
+
+/// [`select_utxos`] over `pool`, with the chosen UTXOs copied out.
+fn pick(pool: &[TrackedUtxo], burn_zat: u64, payload: BurnPayloadVersion) -> Option<Funded> {
+    let selection = select_utxos(pool, burn_zat, payload)?;
+    let inputs = selection.indices.iter().map(|&i| pool[i].clone()).collect();
+    Some(Funded { selection, inputs })
+}
+
+/// The change outputs of our burns in flight that no later burn in flight
+/// already spends, as spendable UTXOs -- unconfirmed, so only for chaining
+/// (see the module docs). Only burns the node has *in its mempool* count:
+/// a child of a burn the node doesn't know would be refused, and a burn
+/// mined since this tip's resolution has a confirmed change output that
+/// the funding pass already found (offering it here too would let one
+/// selection spend it twice). An outpoint already in the pool is skipped
+/// for the same reason.
+fn unconfirmed_change(node: &impl Node, state: &MinerState) -> Result<Vec<TrackedUtxo>, RpcError> {
+    let reserved = reserved(state);
+    let mut out = Vec::new();
+    for p in &state.pending {
+        let Some(change) = p.change_outpoint() else {
+            continue;
+        };
+        if reserved.contains(&change)
+            || state
+                .utxos
+                .iter()
+                .any(|u| u.txid == change.txid && u.vout == change.vout)
+            || node.tx_status(&p.txid)? != TxStatus::Mempool
+        {
+            continue;
+        }
+        out.push(TrackedUtxo {
+            txid: change.txid,
+            vout: change.vout,
+            value_zat: p.change_zat,
+        });
+    }
+    Ok(out)
+}
+
 /// Re-reads the address's confirmed UTXOs, drops tracked entries the node
 /// no longer lists, and -- only if the tracked pool can't cover `burn_zat`
-/// -- merges in newly found spendable outputs. Returns the selection, or
+/// -- merges in newly found spendable outputs. Only if confirmed funds
+/// still fall short does it add the unconfirmed change of our burns in
+/// flight (chaining). Returns the inputs, or
 /// [`EpochError::InsufficientFunds`] (or, where coinbase can't fund a burn
 /// and some is waiting, [`EpochError::CoinbaseMustBeShielded`]).
 fn fund_burn(
@@ -264,7 +354,7 @@ fn fund_burn(
     burn_zat: u64,
     payload: BurnPayloadVersion,
     state: &mut MinerState,
-) -> Result<Selection, EpochError> {
+) -> Result<Funded, EpochError> {
     let snapshot = node.address_utxos(address)?;
     let stale = funding::drop_stale(&mut state.utxos, &snapshot);
     if !stale.is_empty() {
@@ -284,8 +374,8 @@ fn fund_burn(
             coinbase.len()
         );
     }
-    if let Some(selection) = select_utxos(&state.utxos, burn_zat, payload) {
-        return Ok(selection);
+    if let Some(funded) = pick(&state.utxos, burn_zat, payload) {
+        return Ok(funded);
     }
     // The tracked pool is short: take in whatever else the address holds
     // (first epoch, a top-up, a matured coinbase on regtest).
@@ -302,11 +392,24 @@ fn fund_burn(
             )
         };
         println!(
-            "funding: {added} new spendable UTXO(s) for {address} via getaddressutxos at tip {} ({spendable_zat} zat spendable, {held_back}, {} zat reserved by our in-flight burn)",
+            "funding: {added} new spendable UTXO(s) for {address} via getaddressutxos at tip {} ({spendable_zat} zat spendable, {held_back}, {} zat reserved by our burns in flight)",
             snapshot.tip_height, found.reserved_zat
         );
     }
-    select_utxos(&state.utxos, burn_zat, payload).ok_or(if found.coinbase_zat > 0 {
+    if let Some(funded) = pick(&state.utxos, burn_zat, payload) {
+        return Ok(funded);
+    }
+    // Confirmed funds are short (usually: the only coin is the change of a
+    // burn still in flight). Chain onto that change.
+    let change = unconfirmed_change(node, state)?;
+    if !change.is_empty() {
+        let mut pool = state.utxos.clone();
+        pool.extend(change);
+        if let Some(funded) = pick(&pool, burn_zat, payload) {
+            return Ok(funded);
+        }
+    }
+    Err(if found.coinbase_zat > 0 {
         EpochError::CoinbaseMustBeShielded {
             burn_zat,
             spendable_zat,
@@ -322,11 +425,19 @@ fn fund_burn(
 }
 
 /// Attempts one mining epoch: find funding, check both budgets, and build,
-/// sign and broadcast a burn. On success the burn becomes `state.pending`
-/// (its inputs leave `state.utxos`); the caller saves state and follows it
-/// with [`wait_for_pending`]. Must not be called while a burn is already in
-/// flight -- at most one is, so its inputs and our unconfirmed change are
-/// never double-spent.
+/// sign and broadcast a burn. Write-ahead: the burn is appended to
+/// `state.pending` (its inputs leave `state.utxos`) and `persist`ed
+/// *before* it is broadcast, so a process killed at any point after the
+/// broadcast still finds it on restart -- its epoch is recorded and its
+/// cost counted against both budgets. A burn saved but never admitted is
+/// simply re-sent by [`resolve_pending`] (the same signed bytes, so never a
+/// double-spend). If the node cleanly refuses it, it is taken back out and
+/// state is persisted again. The caller follows a submitted burn with
+/// [`resolve_pending`] on later blocks. The caller
+/// keeps at most [`MAX_IN_FLIGHT`] in flight. Inputs reserved by a burn in
+/// flight are never selected again, so nothing is double-spent; when no
+/// confirmed coin suffices, the unconfirmed change of a burn in flight is
+/// spent (see the module docs).
 ///
 /// `target_height` is only a *target*, used for the transaction's
 /// consensus branch id / expiry -- not what gets recorded: the epoch's
@@ -343,7 +454,13 @@ fn fund_burn(
 /// `mine` invocation started, and the optional `--lifetime-budget-zat`,
 /// measured against everything this keystore has ever spent. Either one
 /// running short of this epoch's cost produces
-/// [`EpochOutcome::BudgetExhausted`] before any funds move.
+/// [`EpochOutcome::BudgetExhausted`] before any funds move. What the burns
+/// already in flight will cost is held back from both first
+/// ([`MinerState::in_flight_cost_zat`]): they are not charged until they
+/// confirm, but they will be, so burns confirming after this one was sent
+/// can't push either cap past its limit (for `--budget-zat`: burns this
+/// run sends; one inherited in flight from an earlier run is charged to
+/// whichever run it confirms in).
 ///
 /// # Errors
 ///
@@ -361,17 +478,23 @@ pub(crate) fn attempt_epoch(
     target_height: u32,
     sova_ref: Option<SovaRef>,
     state: &mut MinerState,
+    persist: &mut dyn FnMut(&MinerState) -> Result<(), StateError>,
 ) -> Result<EpochOutcome, EpochError> {
-    debug_assert!(state.pending.is_none(), "one burn in flight at a time");
+    debug_assert!(
+        state.pending.len() < MAX_IN_FLIGHT,
+        "at most {MAX_IN_FLIGHT} burns in flight"
+    );
     let address = keypair.encode_address(network);
     let payload = if sova_ref.is_some() {
         BurnPayloadVersion::V2
     } else {
         BurnPayloadVersion::V1
     };
-    let selection = fund_burn(node, funding, &address, burn_zat, payload, state)?;
+    let Funded { selection, inputs } =
+        fund_burn(node, funding, &address, burn_zat, payload, state)?;
 
     let total_cost_zat = burn_zat.saturating_add(selection.fee_zat);
+    let in_flight_zat = state.in_flight_cost_zat();
 
     // Two independent caps (D5): `--budget-zat` (this invocation only) is
     // checked first since it's the primary, always-declared flag; the
@@ -379,29 +502,28 @@ pub(crate) fn attempt_epoch(
     // ceiling across every invocation ever run against this keystore. A
     // generous per-invocation budget does not override a tighter lifetime
     // cap, and vice versa -- either one exhausting stops this epoch.
-    let remaining_zat = state.budget_remaining_zat();
+    let remaining_zat = state.budget_remaining_zat().saturating_sub(in_flight_zat);
     if total_cost_zat > remaining_zat {
         return Ok(EpochOutcome::BudgetExhausted {
             kind: BudgetKind::PerInvocation,
             needed_zat: total_cost_zat,
             remaining_zat,
+            in_flight_zat,
         });
     }
-    if let Some(lifetime_remaining_zat) = state.lifetime_budget_remaining_zat()
+    if let Some(lifetime_remaining_zat) = state
+        .lifetime_budget_remaining_zat()
+        .map(|r| r.saturating_sub(in_flight_zat))
         && total_cost_zat > lifetime_remaining_zat
     {
         return Ok(EpochOutcome::BudgetExhausted {
             kind: BudgetKind::Lifetime,
             needed_zat: total_cost_zat,
             remaining_zat: lifetime_remaining_zat,
+            in_flight_zat,
         });
     }
 
-    let inputs: Vec<TrackedUtxo> = selection
-        .indices
-        .iter()
-        .map(|&i| state.utxos[i].clone())
-        .collect();
     let utxos: Vec<Utxo> = inputs
         .iter()
         .map(|t| {
@@ -444,9 +566,32 @@ pub(crate) fn attempt_epoch(
         expiry_height: u64::from(target_height) + u64::from(DEFAULT_TX_EXPIRY_DELTA),
     };
 
+    // Write-ahead: in flight (inputs out of the pool, reserved by
+    // `pending`; its change joins once it confirms) and on disk before the
+    // node sees it. An input that is another burn's unconfirmed change was
+    // never in the pool, and is kept out of it from here by `reserved`.
+    let spent: BTreeSet<&OutPointRef> = pending.spent.iter().collect();
+    let (taken, kept): (Vec<TrackedUtxo>, Vec<TrackedUtxo>) =
+        std::mem::take(&mut state.utxos).into_iter().partition(|t| {
+            spent.contains(&OutPointRef {
+                txid: t.txid.clone(),
+                vout: t.vout,
+            })
+        });
+    state.utxos = kept;
+    state.pending.push(pending.clone());
+    let undo = |state: &mut MinerState, taken: Vec<TrackedUtxo>| {
+        state.pending.pop();
+        state.utxos.extend(taken);
+    };
+    if let Err(e) = persist(state) {
+        undo(state, taken);
+        return Err(e.into());
+    }
+
     match broadcast(node, &pending.raw_hex, &pending.txid, BROADCAST_ATTEMPTS) {
         Broadcast::Sent => {}
-        // Fail safe: the node may have it. Track it as in flight (inputs
+        // Fail safe: the node may have it. Keep it in flight (inputs
         // reserved) rather than build a second burn from the same inputs;
         // `resolve_pending` re-sends it on each new block until it is
         // mined or expires.
@@ -455,95 +600,217 @@ pub(crate) fn attempt_epoch(
             pending.txid
         ),
         Broadcast::Rejected(message) => {
+            undo(state, taken);
+            if let Err(e) = persist(state) {
+                // The saved state still holds the refused burn: a restart
+                // re-sends it, which is refused again, and its inputs stay
+                // reserved until its expiry height. Safe, just idle.
+                eprintln!(
+                    "warning: burn {}: could not save state after the node refused it: {e}",
+                    pending.txid
+                );
+            }
             return Err(EpochError::Rejected {
                 txid: pending.txid,
                 message,
             });
         }
     }
-
-    // Broadcast: its inputs leave the pool now (reserved by `pending`
-    // until it is mined or dead); its change joins once it confirms.
-    let spent: BTreeSet<&OutPointRef> = pending.spent.iter().collect();
-    state.utxos.retain(|t| {
-        !spent.contains(&OutPointRef {
-            txid: t.txid.clone(),
-            vout: t.vout,
-        })
-    });
-    state.pending = Some(pending.clone());
     Ok(EpochOutcome::Submitted(pending))
 }
 
-/// One look at the in-flight burn, if any (`None` if there is none):
-/// mined -> record the epoch at its real confirming height and track its
-/// change; unknown with the tip at or past its expiry height -> drop it
-/// (its inputs are free again: the node still lists them, so the next
-/// funding pass picks them back up); otherwise it is still in flight.
+/// One look at every burn in flight, oldest (parent) first; returns what
+/// became of each, and the RPC error that cut the pass short, if any (the
+/// burns not reached stay in flight, and everything resolved before it is
+/// already applied to `state`).
 ///
-/// # Errors
-///
-/// Returns the [`RpcError`] if the node can't be asked.
+/// Per burn: mined -> record the epoch at its real confirming height and
+/// track its change (unless a later burn in flight already spends it);
+/// unknown to the node with the tip at or past its expiry height, or
+/// spending the change of a burn dropped in this pass -> drop it (its
+/// confirmed inputs are free again: the node still lists them, so the next
+/// funding pass picks them back up); unknown but still minable -> send the
+/// same signed bytes again (after its parent, by the order); otherwise it
+/// is still in flight.
 pub(crate) fn resolve_pending(
     node: &impl Node,
     state: &mut MinerState,
-) -> Result<Option<PendingResolution>, RpcError> {
-    let Some(pending) = state.pending.clone() else {
-        return Ok(None);
+) -> (Vec<PendingResolution>, Option<RpcError>) {
+    let mut resolutions = match unconfirm_reorged(node, state) {
+        Ok(r) => r,
+        Err(e) => return (Vec::new(), Some(e)),
     };
+    // Change outputs of burns dropped in this pass: a burn spending one
+    // can never be mined either.
+    let mut dead: BTreeSet<OutPointRef> = BTreeSet::new();
+    let mut i = 0;
+    while i < state.pending.len() {
+        let pending = state.pending[i].clone();
+        let resolution = match resolve_one(node, &pending, &dead) {
+            Ok(r) => r,
+            Err(e) => return (resolutions, Some(e)),
+        };
+        match &resolution {
+            PendingResolution::InFlight { .. } | PendingResolution::Reorged { .. } => i += 1,
+            PendingResolution::Confirmed(record) => {
+                state.pending.remove(i);
+                state.recent.push(RecentBurn {
+                    burn: pending.clone(),
+                    height: record.height,
+                });
+                if let Some(change) = pending.change_outpoint()
+                    && !reserved(state).contains(&change)
+                    && !state
+                        .utxos
+                        .iter()
+                        .any(|u| u.txid == change.txid && u.vout == change.vout)
+                {
+                    state.utxos.push(TrackedUtxo {
+                        txid: change.txid,
+                        vout: change.vout,
+                        value_zat: pending.change_zat,
+                    });
+                }
+            }
+            PendingResolution::Dropped { .. } => {
+                state.pending.remove(i);
+                dead.extend(pending.change_outpoint());
+            }
+        }
+        let resolution = match resolution {
+            PendingResolution::Confirmed(mut record) => {
+                record.epoch = u64::try_from(state.epochs.len()).unwrap_or(u64::MAX) + 1;
+                state.record_epoch(record.clone());
+                PendingResolution::Confirmed(record)
+            }
+            other => other,
+        };
+        resolutions.push(resolution);
+    }
+    // Stop watching burns buried deeper than any reorg we plan for.
+    if let Some(top) = state.recent.iter().map(|r| r.height).max() {
+        state
+            .recent
+            .retain(|r| top.saturating_sub(r.height) < REORG_WATCH_DEPTH);
+    }
+    (resolutions, None)
+}
+
+/// The reorg check of [`resolve_pending`]: every recently confirmed burn
+/// the node no longer has in its best chain (orphaned by a Zcash reorg;
+/// zebrad doesn't return such a tx to its mempool) is un-recorded and put
+/// back in flight, ahead of the burns already in flight -- it is their
+/// parent if any spends its change. Its change leaves the pool and its
+/// inputs are reserved again. One re-mined at another height has its
+/// record moved there.
+fn unconfirm_reorged(
+    node: &impl Node,
+    state: &mut MinerState,
+) -> Result<Vec<PendingResolution>, RpcError> {
+    let mut back = Vec::new();
+    let mut resolutions = Vec::new();
+    let mut i = 0;
+    while i < state.recent.len() {
+        let height = state.recent[i].height;
+        let txid = state.recent[i].burn.txid.clone();
+        match node.tx_status(&txid)? {
+            TxStatus::Confirmed { height: now } => {
+                if now != height {
+                    state.recent[i].height = now;
+                    if let Some(e) = state.epochs.iter_mut().find(|e| e.txid == txid) {
+                        e.height = now;
+                    }
+                }
+                i += 1;
+            }
+            TxStatus::Mempool | TxStatus::Unknown => {
+                let recent = state.recent.remove(i);
+                state.unrecord_epoch(&txid);
+                let burn = recent.burn;
+                let out: BTreeSet<OutPointRef> = burn
+                    .spent
+                    .iter()
+                    .cloned()
+                    .chain(burn.change_outpoint())
+                    .collect();
+                state.utxos.retain(|u| {
+                    !out.contains(&OutPointRef {
+                        txid: u.txid.clone(),
+                        vout: u.vout,
+                    })
+                });
+                resolutions.push(PendingResolution::Reorged { txid, height });
+                back.push(burn);
+            }
+        }
+    }
+    if !back.is_empty() {
+        back.append(&mut state.pending);
+        state.pending = back;
+    }
+    Ok(resolutions)
+}
+
+/// What became of one burn in flight (see [`resolve_pending`]; this only
+/// asks the node and re-sends, `state` is updated by the caller). A
+/// `Confirmed` record's `epoch` is filled in by the caller.
+fn resolve_one(
+    node: &impl Node,
+    pending: &PendingBurn,
+    dead: &BTreeSet<OutPointRef>,
+) -> Result<PendingResolution, RpcError> {
     match node.tx_status(&pending.txid)? {
-        TxStatus::Confirmed { height } => {
-            state.pending = None;
-            if pending.change_zat > 0 {
-                state.utxos.push(TrackedUtxo {
+        TxStatus::Confirmed { height } => Ok(PendingResolution::Confirmed(EpochRecord {
+            epoch: 0,
+            height,
+            burn_zat: pending.burn_zat,
+            fee_zat: pending.fee_zat,
+            change_zat: pending.change_zat,
+            txid: pending.txid.clone(),
+        })),
+        TxStatus::Mempool => Ok(PendingResolution::InFlight {
+            txid: pending.txid.clone(),
+        }),
+        TxStatus::Unknown => {
+            if let Some(parent) = pending.spent.iter().find(|o| dead.contains(o)) {
+                return Ok(PendingResolution::Dropped {
                     txid: pending.txid.clone(),
-                    vout: 2, // payload=0, eater=1, change=2 -- see build_burn_transaction.
-                    value_zat: pending.change_zat,
+                    reason: format!(
+                        "it spends the change of burn {}, which was dropped; its other inputs are free again",
+                        parent.txid
+                    ),
                 });
             }
-            let record = EpochRecord {
-                epoch: u64::try_from(state.epochs.len()).unwrap_or(u64::MAX) + 1,
-                height,
-                burn_zat: pending.burn_zat,
-                fee_zat: pending.fee_zat,
-                change_zat: pending.change_zat,
-                txid: pending.txid,
-            };
-            state.record_epoch(record.clone());
-            Ok(Some(PendingResolution::Confirmed(record)))
-        }
-        TxStatus::Mempool => Ok(Some(PendingResolution::InFlight { txid: pending.txid })),
-        TxStatus::Unknown => {
             let tip = node.tip_height()?;
             if tip >= pending.expiry_height {
-                state.pending = None;
-                Ok(Some(PendingResolution::Dropped {
-                    txid: pending.txid,
+                return Ok(PendingResolution::Dropped {
+                    txid: pending.txid.clone(),
                     reason: format!(
                         "not mined by its expiry height {} (tip {tip}); its inputs are free again",
                         pending.expiry_height
                     ),
-                }))
-            } else {
-                // The node doesn't have it (evicted, restarted, or the
-                // original send never arrived) but it can still be mined:
-                // send the same signed bytes again. Idempotent -- the txid
-                // can't change, so this can never double-spend.
-                match broadcast(node, &pending.raw_hex, &pending.txid, 1) {
-                    Broadcast::Sent => {
-                        println!("burn {}: re-sent to the node", pending.txid);
-                    }
-                    Broadcast::Rejected(message)
-                    | Broadcast::Ambiguous(RpcError::RpcFailure { message, .. }) => {
-                        eprintln!(
-                            "warning: burn {}: re-send refused ({message}); keeping its inputs reserved until its expiry height {}",
-                            pending.txid, pending.expiry_height
-                        );
-                    }
-                    Broadcast::Ambiguous(e) => return Err(e),
-                }
-                Ok(Some(PendingResolution::InFlight { txid: pending.txid }))
+                });
             }
+            // The node doesn't have it (evicted, restarted, or the
+            // original send never arrived) but it can still be mined:
+            // send the same signed bytes again. Idempotent -- the txid
+            // can't change, so this can never double-spend.
+            match broadcast(node, &pending.raw_hex, &pending.txid, 1) {
+                Broadcast::Sent => {
+                    println!("burn {}: re-sent to the node", pending.txid);
+                }
+                Broadcast::Rejected(message)
+                | Broadcast::Ambiguous(RpcError::RpcFailure { message, .. }) => {
+                    eprintln!(
+                        "warning: burn {}: re-send refused ({message}); keeping its inputs reserved until its expiry height {}",
+                        pending.txid, pending.expiry_height
+                    );
+                }
+                Broadcast::Ambiguous(e) => return Err(e),
+            }
+            Ok(PendingResolution::InFlight {
+                txid: pending.txid.clone(),
+            })
         }
     }
 }
@@ -651,40 +918,6 @@ pub(crate) fn broadcast(node: &impl Node, raw_hex: &str, txid: &str, attempts: u
         });
     }
     last.unwrap_or_else(|| Broadcast::Rejected("no broadcast attempted".to_string()))
-}
-
-/// Follows the in-flight burn with [`resolve_pending`] until it is mined or
-/// dropped, or `timeout` elapses (then it is still
-/// [`PendingResolution::InFlight`]: the caller keeps it reserved and looks
-/// again on later blocks -- a slow confirmation is not an error). A
-/// transient RPC failure while polling is logged and retried. `None` if
-/// nothing is in flight.
-pub(crate) fn wait_for_pending(
-    node: &impl Node,
-    state: &mut MinerState,
-    timeout: Duration,
-) -> Option<PendingResolution> {
-    let deadline = Instant::now() + timeout;
-    loop {
-        match resolve_pending(node, state) {
-            Ok(Some(PendingResolution::InFlight { txid })) => {
-                if Instant::now() >= deadline {
-                    return Some(PendingResolution::InFlight { txid });
-                }
-            }
-            Ok(done) => return done,
-            Err(e) => {
-                let txid = state.pending.as_ref().map(|p| p.txid.clone())?;
-                eprintln!(
-                    "warning: checking burn {txid} failed while awaiting confirmation: {e}; retrying"
-                );
-                if Instant::now() >= deadline {
-                    return Some(PendingResolution::InFlight { txid });
-                }
-            }
-        }
-        thread::sleep(CONFIRMATION_POLL_INTERVAL);
-    }
 }
 
 #[cfg(test)]
@@ -801,6 +1034,7 @@ mod tests {
             target_height,
             None,
             state,
+            &mut |_| Ok(()),
         )
     }
 
@@ -916,7 +1150,9 @@ mod tests {
                 kind,
                 needed_zat,
                 remaining_zat,
+                in_flight_zat,
             } => {
+                assert_eq!(in_flight_zat, 0);
                 assert_eq!(kind, BudgetKind::PerInvocation);
                 assert_eq!(needed_zat, 120_000);
                 assert_eq!(remaining_zat, 50_000);
@@ -924,7 +1160,7 @@ mod tests {
             other => panic!("expected BudgetExhausted, got {other:?}"),
         }
         assert!(node.sent.borrow().is_empty(), "nothing may be broadcast");
-        assert!(state.pending.is_none());
+        assert!(state.pending.is_empty());
     }
 
     /// D5: `--lifetime-budget-zat`, when set, is an *additional* cap on top
@@ -957,7 +1193,9 @@ mod tests {
                 kind,
                 needed_zat,
                 remaining_zat,
+                in_flight_zat,
             } => {
+                assert_eq!(in_flight_zat, 0);
                 assert_eq!(kind, BudgetKind::Lifetime);
                 assert_eq!(needed_zat, 120_000);
                 assert_eq!(remaining_zat, 30_000);
@@ -997,7 +1235,7 @@ mod tests {
         assert_eq!(pending.fee_zat, 20_000);
         assert_eq!(pending.change_zat, 10_000_000 - 120_000);
         assert_eq!(pending.expiry_height, 201 + 40);
-        assert_eq!(state.pending.as_ref(), Some(&pending));
+        assert_eq!(state.pending, vec![pending.clone()]);
         assert!(state.utxos.is_empty(), "the input left the pool");
         assert_eq!(
             node.txs.borrow().get(&pending.txid),
@@ -1068,8 +1306,15 @@ mod tests {
             change_zat: 9_880_000,
             expiry_height,
         };
-        state.pending = Some(p.clone());
+        state.pending = vec![p.clone()];
         p
+    }
+
+    /// [`resolve_pending`], for tests that expect no RPC error.
+    fn resolve(node: &FakeNode, state: &mut MinerState) -> Vec<PendingResolution> {
+        let (resolutions, error) = resolve_pending(node, state);
+        assert!(error.is_none(), "{error:?}");
+        resolutions
     }
 
     #[test]
@@ -1081,15 +1326,13 @@ mod tests {
             .borrow_mut()
             .insert(p.txid.clone(), TxStatus::Confirmed { height: 203 });
 
-        let Some(PendingResolution::Confirmed(record)) =
-            resolve_pending(&node, &mut state).unwrap()
-        else {
+        let [PendingResolution::Confirmed(record)] = &resolve(&node, &mut state)[..] else {
             panic!("expected Confirmed");
         };
         assert_eq!(record.epoch, 1);
         assert_eq!(record.height, 203);
         assert_eq!(record.txid, p.txid);
-        assert!(state.pending.is_none());
+        assert!(state.pending.is_empty());
         assert_eq!(state.epochs.len(), 1);
         assert_eq!(state.total_spent_zat(), 120_000);
         assert_eq!(state.utxos.len(), 1);
@@ -1108,19 +1351,19 @@ mod tests {
             .borrow_mut()
             .insert(p.txid.clone(), TxStatus::Mempool);
         assert_eq!(
-            resolve_pending(&node, &mut state).unwrap(),
-            Some(PendingResolution::InFlight {
+            resolve(&node, &mut state),
+            vec![PendingResolution::InFlight {
                 txid: p.txid.clone()
-            })
+            }]
         );
         // Not (yet) known to the node, but the chain hasn't reached its
         // expiry height: it may still be mined. Keep the inputs reserved.
         node.txs.borrow_mut().remove(&p.txid);
         assert!(matches!(
-            resolve_pending(&node, &mut state).unwrap(),
-            Some(PendingResolution::InFlight { .. })
+            &resolve(&node, &mut state)[..],
+            [PendingResolution::InFlight { .. }]
         ));
-        assert!(state.pending.is_some());
+        assert_eq!(state.pending.len(), 1);
         assert!(state.epochs.is_empty());
     }
 
@@ -1131,10 +1374,10 @@ mod tests {
         in_flight(&mut state, 200);
 
         assert!(matches!(
-            resolve_pending(&node, &mut state).unwrap(),
-            Some(PendingResolution::Dropped { .. })
+            &resolve(&node, &mut state)[..],
+            [PendingResolution::Dropped { .. }]
         ));
-        assert!(state.pending.is_none());
+        assert!(state.pending.is_empty());
         assert!(state.epochs.is_empty());
         assert_eq!(state.total_spent_zat(), 0);
 
@@ -1153,29 +1396,10 @@ mod tests {
     }
 
     #[test]
-    fn nothing_pending_resolves_to_none() {
+    fn nothing_pending_resolves_to_nothing() {
         let node = funded_node();
         let mut state = fresh_state();
-        assert_eq!(resolve_pending(&node, &mut state).unwrap(), None);
-        assert_eq!(
-            wait_for_pending(&node, &mut state, Duration::from_millis(1)),
-            None
-        );
-    }
-
-    #[test]
-    fn wait_gives_up_as_in_flight_not_as_an_error() {
-        let node = funded_node();
-        let mut state = fresh_state();
-        let p = in_flight(&mut state, 241);
-        node.txs
-            .borrow_mut()
-            .insert(p.txid.clone(), TxStatus::Mempool);
-        assert_eq!(
-            wait_for_pending(&node, &mut state, Duration::from_millis(1)),
-            Some(PendingResolution::InFlight { txid: p.txid })
-        );
-        assert!(state.pending.is_some());
+        assert!(resolve(&node, &mut state).is_empty());
     }
 
     fn submit_with(
@@ -1199,7 +1423,7 @@ mod tests {
             panic!("expected Submitted");
         };
         assert_eq!(node.sent.borrow().len(), 1, "sent exactly once");
-        assert_eq!(state.pending.as_ref(), Some(&pending));
+        assert_eq!(state.pending, vec![pending.clone()]);
         assert_eq!(
             node.txs.borrow().get(&pending.txid),
             Some(&TxStatus::Mempool)
@@ -1217,7 +1441,7 @@ mod tests {
         let sent = node.sent.borrow();
         assert_eq!(sent.len(), 2);
         assert_eq!(sent[0], sent[1], "a retry re-sends the same signed tx");
-        assert!(state.pending.is_some());
+        assert_eq!(state.pending.len(), 1);
     }
 
     /// Re-sending a burn the node already has: "already exists in mempool"
@@ -1225,7 +1449,7 @@ mod tests {
     #[test]
     fn retry_answered_already_known_is_success() {
         let (node, state, _) = submit_with(vec![]);
-        let pending = state.pending.clone().unwrap();
+        let pending = state.pending[0].clone();
         let raw = pending.raw_hex.clone();
         assert!(matches!(
             broadcast(&node, &raw, &pending.txid, 1),
@@ -1258,7 +1482,7 @@ mod tests {
             other => panic!("expected Rejected, got {other:?}"),
         }
         assert_eq!(node.sent.borrow().len(), 3);
-        assert!(state.pending.is_none());
+        assert!(state.pending.is_empty());
         assert_eq!(state.utxos.len(), 1, "the input is still ours to spend");
     }
 
@@ -1274,7 +1498,7 @@ mod tests {
         ]);
         assert!(matches!(result.unwrap(), EpochOutcome::Submitted(_)));
         assert_eq!(node.sent.borrow().len(), 3);
-        assert!(state.pending.is_some());
+        assert_eq!(state.pending.len(), 1);
         assert!(state.utxos.is_empty());
     }
 
@@ -1283,13 +1507,13 @@ mod tests {
     #[test]
     fn unknown_pending_burn_is_resent_before_expiry() {
         let (node, mut state, _) = submit_with(vec![]);
-        let pending = state.pending.clone().unwrap();
-        node.txs.borrow_mut().remove(&pending.txid); // the node forgot it
+        let pending = state.pending[0].clone();
+        node.forget(&pending.txid); // the node forgot it
         assert_eq!(
-            resolve_pending(&node, &mut state).unwrap(),
-            Some(PendingResolution::InFlight {
+            resolve(&node, &mut state),
+            vec![PendingResolution::InFlight {
                 txid: pending.txid.clone()
-            })
+            }]
         );
         assert_eq!(node.sent.borrow().len(), 2);
         assert_eq!(txid_of(&node.sent.borrow()[1]), Some(pending.txid.clone()));
@@ -1297,6 +1521,435 @@ mod tests {
             node.txs.borrow().get(&pending.txid),
             Some(&TxStatus::Mempool)
         );
+    }
+
+    // --- burning ahead: several burns in flight, chained change ---
+
+    fn submitted(outcome: Result<EpochOutcome, EpochError>) -> PendingBurn {
+        match outcome {
+            Ok(EpochOutcome::Submitted(p)) => p,
+            other => panic!("expected Submitted, got {other:?}"),
+        }
+    }
+
+    /// Two burns sent back to back on a one-coin wallet: the second spends
+    /// the first's unconfirmed change, and the node (which, like zebrad,
+    /// admits a tx spending a mempool output) takes it.
+    fn two_chained(node: &FakeNode, state: &mut MinerState) -> (PendingBurn, PendingBurn) {
+        state.begin_invocation(10_000_000, 100_000, None);
+        let first = submitted(attempt(node, state, 100_000));
+        let second = submitted(attempt_on(node, state, 100_000, Network::Regtest, 202));
+        (first, second)
+    }
+
+    #[test]
+    fn second_burn_chains_onto_the_first_burns_unconfirmed_change() {
+        let node = funded_node();
+        let mut state = fresh_state();
+        let (first, second) = two_chained(&node, &mut state);
+        assert_eq!(
+            first.spent,
+            vec![OutPointRef {
+                txid: txid(7),
+                vout: 0
+            }]
+        );
+        assert_eq!(second.spent, vec![first.change_outpoint().unwrap()]);
+        assert_eq!(second.change_zat, first.change_zat - 120_000);
+        assert_eq!(state.pending, vec![first.clone(), second.clone()]);
+        assert_eq!(node.mempool(), vec![first.txid, second.txid]);
+        assert!(
+            state.utxos.is_empty(),
+            "unconfirmed change never enters the pool"
+        );
+    }
+
+    /// A wallet holding several confirmed coins burns from independent
+    /// ones: no chaining while a confirmed coin can pay.
+    #[test]
+    fn a_confirmed_coin_is_preferred_over_unconfirmed_change() {
+        let node = funded_node();
+        node.fund(&txid(8), 1, 5_000_000, 160);
+        let mut state = fresh_state();
+        let (first, second) = two_chained(&node, &mut state);
+        assert_eq!(
+            first.spent,
+            vec![OutPointRef {
+                txid: txid(7),
+                vout: 0
+            }]
+        );
+        assert_eq!(
+            second.spent,
+            vec![OutPointRef {
+                txid: txid(8),
+                vout: 1
+            }]
+        );
+    }
+
+    /// A burn the node no longer has can't be chained onto (the child
+    /// would be refused): with no confirmed coin left, the wallet is short
+    /// -- and nothing is sent.
+    #[test]
+    fn chaining_skips_a_burn_the_node_does_not_have() {
+        let node = funded_node();
+        let mut state = fresh_state();
+        state.begin_invocation(10_000_000, 100_000, None);
+        let first = submitted(attempt(&node, &mut state, 100_000));
+        node.forget(&first.txid);
+        assert!(matches!(
+            attempt(&node, &mut state, 100_000),
+            Err(EpochError::InsufficientFunds { .. })
+        ));
+        assert_eq!(node.sent.borrow().len(), 1);
+        assert_eq!(state.pending, vec![first]);
+    }
+
+    /// Budget: what the burns in flight will cost is held back before the
+    /// next is sent, so neither cap can be overrun when they all confirm.
+    #[test]
+    fn burns_in_flight_are_held_against_both_budgets() {
+        let node = funded_node();
+        let mut state = fresh_state();
+        // Room for one 120,000 zat burn, not two.
+        state.begin_invocation(230_000, 100_000, None);
+        submitted(attempt(&node, &mut state, 100_000));
+        assert_eq!(state.total_spent_zat(), 0, "charged only when mined");
+        assert_eq!(state.in_flight_cost_zat(), 120_000);
+        assert_eq!(state.budget_remaining_zat(), 230_000);
+        match attempt(&node, &mut state, 100_000).unwrap() {
+            EpochOutcome::BudgetExhausted {
+                kind,
+                needed_zat,
+                remaining_zat,
+                in_flight_zat,
+            } => {
+                assert_eq!(kind, BudgetKind::PerInvocation);
+                assert_eq!(needed_zat, 120_000);
+                assert_eq!(remaining_zat, 110_000);
+                assert_eq!(in_flight_zat, 120_000);
+            }
+            other => panic!("expected BudgetExhausted, got {other:?}"),
+        }
+        assert_eq!(node.sent.borrow().len(), 1);
+        // Once it is mined, it is spent rather than held: same answer.
+        node.mine(&node.mempool());
+        resolve(&node, &mut state);
+        assert_eq!(state.budget_remaining_zat(), 110_000);
+        assert!(matches!(
+            attempt(&node, &mut state, 100_000),
+            Ok(EpochOutcome::BudgetExhausted {
+                in_flight_zat: 0,
+                remaining_zat: 110_000,
+                ..
+            })
+        ));
+
+        // The lifetime cap too.
+        let node = funded_node();
+        let mut state = fresh_state();
+        state.begin_invocation(10_000_000, 100_000, Some(130_000));
+        submitted(attempt(&node, &mut state, 100_000));
+        match attempt(&node, &mut state, 100_000).unwrap() {
+            EpochOutcome::BudgetExhausted {
+                kind,
+                remaining_zat,
+                in_flight_zat,
+                ..
+            } => {
+                assert_eq!(kind, BudgetKind::Lifetime);
+                assert_eq!(remaining_zat, 10_000);
+                assert_eq!(in_flight_zat, 120_000);
+            }
+            other => panic!("expected BudgetExhausted, got {other:?}"),
+        }
+    }
+
+    /// The parent confirms first: its epoch is recorded, but its change
+    /// stays out of the pool -- the child in flight spends it -- so the
+    /// next burn chains onto the child instead of double-spending it.
+    #[test]
+    fn a_confirmed_parents_change_stays_reserved_for_its_child() {
+        let node = funded_node();
+        let mut state = fresh_state();
+        let (first, second) = two_chained(&node, &mut state);
+        node.mine(std::slice::from_ref(&first.txid)); // 201
+        assert_eq!(
+            resolve(&node, &mut state),
+            vec![
+                PendingResolution::Confirmed(EpochRecord {
+                    epoch: 1,
+                    height: 201,
+                    burn_zat: 100_000,
+                    fee_zat: 20_000,
+                    change_zat: first.change_zat,
+                    txid: first.txid.clone(),
+                }),
+                PendingResolution::InFlight {
+                    txid: second.txid.clone()
+                },
+            ]
+        );
+        assert!(state.utxos.is_empty());
+        assert!(reserved(&state).contains(&first.change_outpoint().unwrap()));
+
+        let third = submitted(attempt_on(
+            &node,
+            &mut state,
+            100_000,
+            Network::Regtest,
+            202,
+        ));
+        assert_eq!(third.spent, vec![second.change_outpoint().unwrap()]);
+
+        node.mine(&node.mempool()); // 202: second and third
+        let resolved = resolve(&node, &mut state);
+        assert_eq!(resolved.len(), 2);
+        assert!(state.pending.is_empty());
+        assert_eq!(state.epochs.len(), 3);
+        assert_eq!(state.total_spent_zat(), 360_000);
+        assert_eq!(
+            state.utxos,
+            vec![TrackedUtxo {
+                txid: third.txid.clone(),
+                vout: 2,
+                value_zat: 10_000_000 - 360_000,
+            }]
+        );
+    }
+
+    /// Restart with two burns in flight: the reloaded state reserves both,
+    /// re-sends both parent-first to a node that lost them (the child is
+    /// admitted only because its parent went first), and records both
+    /// epochs once mined -- no double-spend, nothing lost.
+    #[test]
+    fn restart_with_two_burns_in_flight_resends_them_in_order() {
+        let node = funded_node();
+        let mut state = fresh_state();
+        let (first, second) = two_chained(&node, &mut state);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        state.save(&path).unwrap();
+        let mut state = MinerState::load(&path).unwrap();
+        assert_eq!(state.pending, vec![first.clone(), second.clone()]);
+
+        // The node restarted with an empty mempool.
+        node.forget(&first.txid);
+        node.forget(&second.txid);
+        let sent_before = node.sent.borrow().len();
+        assert_eq!(
+            resolve(&node, &mut state),
+            vec![
+                PendingResolution::InFlight {
+                    txid: first.txid.clone()
+                },
+                PendingResolution::InFlight {
+                    txid: second.txid.clone()
+                },
+            ]
+        );
+        assert_eq!(
+            node.sent.borrow()[sent_before..].to_vec(),
+            vec![first.raw_hex.clone(), second.raw_hex.clone()]
+        );
+        assert_eq!(
+            node.mempool(),
+            vec![first.txid.clone(), second.txid.clone()]
+        );
+
+        // Nothing reserved is free to spend again.
+        let reserved = reserved(&state);
+        assert!(reserved.contains(&OutPointRef {
+            txid: txid(7),
+            vout: 0
+        }));
+        assert!(reserved.contains(&first.change_outpoint().unwrap()));
+
+        node.mine(&[first.txid.clone(), second.txid.clone()]);
+        assert_eq!(resolve(&node, &mut state).len(), 2);
+        assert_eq!(state.epochs.len(), 2);
+        assert_eq!(state.total_spent_zat(), 240_000);
+    }
+
+    /// Restart after the parent was mined while the miner was down.
+    #[test]
+    fn restart_after_the_parent_was_mined_records_it_and_keeps_the_child() {
+        let node = funded_node();
+        let mut state = fresh_state();
+        let (first, second) = two_chained(&node, &mut state);
+        let json = serde_json::to_string(&state).unwrap();
+        node.mine(std::slice::from_ref(&first.txid));
+        let mut state: MinerState = serde_json::from_str(&json).unwrap();
+        let resolved = resolve(&node, &mut state);
+        assert!(matches!(&resolved[0], PendingResolution::Confirmed(r) if r.txid == first.txid));
+        assert_eq!(
+            resolved[1],
+            PendingResolution::InFlight {
+                txid: second.txid.clone()
+            }
+        );
+        assert_eq!(state.pending, vec![second]);
+    }
+
+    /// A dropped parent takes its child with it, even before the child's
+    /// own expiry: the child's input can never exist. The parent's own
+    /// (confirmed) input is free again.
+    #[test]
+    fn a_dropped_parent_drops_its_child() {
+        let node = funded_node();
+        let mut state = fresh_state();
+        let (first, second) = two_chained(&node, &mut state);
+        assert_eq!((first.expiry_height, second.expiry_height), (241, 242));
+        node.forget(&first.txid);
+        node.forget(&second.txid);
+        node.tip.set(241);
+        let resolved = resolve(&node, &mut state);
+        match &resolved[..] {
+            [
+                PendingResolution::Dropped {
+                    txid: a,
+                    reason: ra,
+                },
+                PendingResolution::Dropped {
+                    txid: b,
+                    reason: rb,
+                },
+            ] => {
+                assert_eq!((a, b), (&first.txid, &second.txid));
+                assert!(ra.contains("expiry height 241"), "{ra}");
+                assert!(
+                    rb.contains(&format!("change of burn {}", first.txid)),
+                    "{rb}"
+                );
+            }
+            other => panic!("expected both dropped, got {other:?}"),
+        }
+        assert!(state.pending.is_empty());
+        assert!(state.epochs.is_empty());
+        assert_eq!(state.in_flight_cost_zat(), 0, "budget released");
+        let next = submitted(attempt_on(
+            &node,
+            &mut state,
+            100_000,
+            Network::Regtest,
+            242,
+        ));
+        assert_eq!(
+            next.spent,
+            vec![OutPointRef {
+                txid: txid(7),
+                vout: 0
+            }]
+        );
+    }
+
+    /// A child dropped after its parent confirmed frees the (now
+    /// confirmed) change it spent.
+    #[test]
+    fn a_dropped_child_frees_its_parents_confirmed_change() {
+        let node = funded_node();
+        let mut state = fresh_state();
+        let (first, second) = two_chained(&node, &mut state);
+        node.mine(std::slice::from_ref(&first.txid)); // 201
+        resolve(&node, &mut state);
+        node.forget(&second.txid);
+        node.tip.set(second.expiry_height);
+        assert!(matches!(
+            &resolve(&node, &mut state)[..],
+            [PendingResolution::Dropped { .. }]
+        ));
+        let next = submitted(attempt_on(
+            &node,
+            &mut state,
+            100_000,
+            Network::Regtest,
+            243,
+        ));
+        assert_eq!(next.spent, vec![first.change_outpoint().unwrap()]);
+    }
+
+    /// Review finding 4: the parent is mined between this tip's
+    /// resolution (it was still in the mempool) and the next burn's
+    /// funding. Its change is now a confirmed UTXO the pool picks up --
+    /// and must not also be offered as unconfirmed change, or a burn
+    /// needing more than that one coin spends it twice.
+    #[test]
+    fn a_parent_mined_mid_tick_is_not_spent_twice() {
+        let node = FakeNode::default();
+        node.tip.set(200);
+        node.fund(&txid(7), 0, 200_000, 150);
+        let mut state = fresh_state();
+        state.begin_invocation(10_000_000, 100_000, None);
+        let first = submitted(attempt(&node, &mut state, 100_000));
+        assert_eq!(first.change_zat, 80_000);
+        node.mine(std::slice::from_ref(&first.txid)); // not resolved yet
+        let result = attempt_on(&node, &mut state, 100_000, Network::Regtest, 202);
+        assert!(
+            matches!(result, Err(EpochError::InsufficientFunds { .. })),
+            "{result:?}"
+        );
+        assert_eq!(node.sent.borrow().len(), 1, "nothing else was sent");
+    }
+
+    /// Review finding 2, accounting: a recorded burn orphaned by a reorg
+    /// is un-recorded and back in flight, so spent + held for burns in
+    /// flight never drops (the budget stays safe); re-mined, it is
+    /// recorded once. Burns buried past the watch depth are forgotten.
+    #[test]
+    fn a_reorged_burn_is_unrecorded_with_its_cost_still_held() {
+        let node = funded_node();
+        let mut state = fresh_state();
+        state.begin_invocation(10_000_000, 100_000, Some(1_000_000));
+        let first = submitted(attempt(&node, &mut state, 100_000));
+        node.mine(std::slice::from_ref(&first.txid)); // 201
+        resolve(&node, &mut state);
+        assert_eq!(state.recent.len(), 1);
+        let committed = state.total_spent_zat() + state.in_flight_cost_zat();
+        assert_eq!(committed, 120_000);
+
+        node.reorg(201);
+        node.mine(&[]); // a new, empty 201
+        let resolved = resolve(&node, &mut state);
+        assert_eq!(
+            resolved[0],
+            PendingResolution::Reorged {
+                txid: first.txid.clone(),
+                height: 201
+            }
+        );
+        assert!(state.epochs.is_empty());
+        assert!(state.utxos.is_empty(), "its change is gone from the pool");
+        assert_eq!(state.pending, vec![first.clone()]);
+        assert_eq!(
+            state.total_spent_zat() + state.in_flight_cost_zat(),
+            committed
+        );
+        assert_eq!(node.mempool(), vec![first.txid.clone()], "re-sent");
+
+        node.mine(&node.mempool()); // 202
+        resolve(&node, &mut state);
+        assert_eq!(state.epochs.len(), 1);
+        assert_eq!(state.epochs[0].height, 202);
+        assert_eq!(state.total_spent_zat(), 120_000);
+        for _ in 0..REORG_WATCH_DEPTH {
+            node.mine(&[]);
+        }
+        let second = submitted(attempt_on(
+            &node,
+            &mut state,
+            100_000,
+            Network::Regtest,
+            213,
+        ));
+        node.mine(std::slice::from_ref(&second.txid));
+        resolve(&node, &mut state);
+        assert_eq!(
+            state.recent.len(),
+            1,
+            "the burn at 202 is no longer watched"
+        );
+        assert_eq!(state.recent[0].burn.txid, second.txid);
     }
 
     // --- SIP-8: anchored burns ---
@@ -1320,6 +1973,7 @@ mod tests {
             201,
             sova_ref,
             &mut state,
+            &mut |_| Ok(()),
         )
         .unwrap();
         let EpochOutcome::Submitted(pending) = outcome else {

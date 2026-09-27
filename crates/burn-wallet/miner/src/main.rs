@@ -446,12 +446,14 @@ fn cmd_report(
         None => println!("chain anchor:            (not yet anchored; set by the next `mine`)"),
     }
     println!("epochs:                  {}", state.epochs.len());
-    match &state.pending {
-        Some(p) => println!(
+    if state.pending.is_empty() {
+        println!("burns in flight:         (none)");
+    }
+    for p in &state.pending {
+        println!(
             "burn in flight:          {} ({} zat + {} zat fee; expires after height {})",
             p.txid, p.burn_zat, p.fee_zat, p.expiry_height
-        ),
-        None => println!("burn in flight:          (none)"),
+        );
     }
     println!("burned on this chain:    {} zat", state.chain_burned_zat());
     if !state.retired_chains.is_empty() {

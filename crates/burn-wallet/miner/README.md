@@ -94,18 +94,58 @@ confirmed outputs paying the t-address can fund burns:
   has to be shielded and sent back to the t-addr as an ordinary transfer
   first: see `docs/ops/keeper-miner.md`, "Coinbase must be shielded
   first".
-- **Unconfirmed outputs** are not spent. `getaddressutxos` doesn't show
-  the mempool, so a transfer becomes usable one block after it is sent.
+- **Unconfirmed outputs** are not spent, with one exception (below): a
+  burn's own change. `getaddressutxos` doesn't show the mempool, so a
+  transfer becomes usable one block after it is sent.
 
-At most one burn is in flight at a time. When a burn is broadcast,
-`state.json` records it as `pending` right away, and its inputs stay
-reserved until it is mined. If `mine` is killed, or the burn takes longer
-than the 60 s wait (usual on testnet, where blocks come every 75 s), it is
-checked again on each new block. The next burn is built only after it is
-mined, and it then spends the burn's change. A burn that is still not
-mined when the chain reaches its expiry height (40 blocks after it was
-built) is dropped, and its inputs become spendable again. `report` shows
-the burn in flight.
+`mine` sends one burn for each new Zcash block it sees, and up to two are
+in flight (broadcast, not yet mined) at once. A burn sent right after
+block `h` usually reaches the Zcash miners after they built `h+1`'s block
+template, so it is mined in `h+2`. So `mine` doesn't wait for a burn to
+confirm before sending the next one. While one burn is in the template
+being mined, the next is already waiting in the mempool, and every block
+can carry one. Where miners pick up mempool changes at once (regtest's
+`generate`), each burn is mined in the next block and only one is ever in
+flight. If no confirmed coin can fund the next burn, it spends the
+unconfirmed change of the burn in flight. zebrad's mempool accepts a
+transaction that spends another mempool transaction's output, and its
+block template includes the child only with or after the parent.
+
+Before a burn is broadcast, `state.json` records it under `pending`
+(write-ahead), and its inputs stay reserved until it is mined. A process
+killed right after the broadcast therefore still knows the burn. A burn
+that was saved but never reached the node is simply sent on the next
+start. With one burn in
+flight, `pending` keeps the shape older releases read. With two it is an
+array, and an older release refuses the file rather than ignore the
+second burn. If `mine` is killed, the burns in flight are picked up
+again on the next start. On each new block they are checked parent
+first. A burn the node no longer has is sent again with the same bytes.
+A burn that is still not mined when the chain reaches its expiry height
+(40 blocks after it was built) is dropped, and its inputs become
+spendable again. A burn that spends the change of a dropped burn is
+dropped with it. `report` lists the burns in flight.
+
+A Zcash reorg can orphan a burn after its epoch was recorded, and zebrad
+doesn't put a reorged-out transaction back into its mempool. So `mine`
+keeps the signed bytes of every burn confirmed in the last 10 blocks. If
+one of them is no longer on the best chain, its epoch is taken back and
+the burn goes back in flight, ahead of any burn that spends its change.
+It is re-sent, and recorded again once it is mined. Its cost stays held
+against both budgets throughout.
+
+What the burns in flight will cost counts against `--budget-zat` and
+`--lifetime-budget-zat` before another burn is sent. Burns sent by this
+state file can therefore never add up past `--lifetime-budget-zat`, and a
+run never sends past its `--budget-zat`. There are three limits.
+`--budget-zat` is per run, so a burn a stopped run left in flight is
+charged to the next run once it confirms, and a run given less budget
+than its inherited burns cost ends up over its own figure. The caps are
+only as good as `state.json`: deleting it or restoring an old copy makes
+the miner forget spend. The same goes for running two miners on one
+key. A run that reaches `--max-epochs` or its budget waits for
+its burns in flight and then stops, so its last epoch is on chain when
+`mine` exits.
 
 ### Broadcast
 
@@ -137,7 +177,7 @@ shielding docs.
 `report --verify-rpc <url>` first prints the address's funding at that
 node: `spendable`, the coinbase on its own line (`coinbase maturing` on
 regtest, `coinbase (must be shielded first)` on testnet/mainnet: pass the
-same `--network` as `mine`), and what the burn in flight reserves. It
+same `--network` as `mine`), and what the burns in flight reserve. It
 then checks the chain from this miner's first recorded epoch to the tip,
 or from `--verify-from-height`. It never scans from genesis.
 

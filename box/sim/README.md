@@ -1294,6 +1294,53 @@ stale-lower ordering, it was re-sealed and the chain went on 7 → 12. In
 phase 2, A restarted on the stale tip, re-sealed 13 and went on to 19.
 Neither node logged a `DeltaMismatch`.
 
+## Keeper restart across a Zcash reorg: `restart-reorg-scenario.sh` (nightly)
+
+Regression test for reorg-stress seed 202 (2026-09-26), fixed in `bb8b9de`
+(written as `24484db`). The keeper A was stopped at head `N`. While it was
+down, Zcash replaced `Z = N + B − 1`, `N`'s anchor, with a block that
+carried no burn, and moved on one block. On restart A's sealer built
+`N + 1` on the orphaned `N` within a second, **before** its expectations
+follower's first Zcash scan: the SIP-4 §7 gate from `32c7c65` only held the
+sealer once that follower had scanned something. With the fix
+(`ExpectedSettlements::head_epoch_unknown`, `mark_enabled` before any task
+runs) the sealer waits for the scan, sees `N` is stale and re-seals it.
+
+The stress hit this on one seed. This scenario builds the shape directly:
+
+- Topology as in the stress: A keeper (mine mode, SIP-6/7, sealing
+  keystore, persistent datadir), B seed (follow-only, static peer A), C
+  rpc (follow-only, public RPC profile, static peer B only).
+- Warm-up: `sova-miner` burns 3 epochs (sealed blocks), then stops; 4 null
+  epochs follow. A, B and C sit at `N`, a **null** block anchored to `Z`.
+- SIGTERM A. `invalidateblock(Z)`, mine a replacement with the same
+  **transparent** coinbase (the stress's `sapling=none`: SIP-7's pools can't
+  tell the branches apart, so only the anchor gives the stale `N` away),
+  mine `Z + 1` (so A has epoch `N + 1` to build the moment it starts), and
+  restart A at once. Zcash then stays frozen.
+- Within 180 s (`RESTART_REORG_TIMEOUT_S`): every head is the
+  Zcash-expected `N + 1`; block `N` on every node is anchored to the
+  replacement and was re-sealed on its old parent; A, B and C agree on every
+  hash and every anchor is zebrad's. Then 3 more Zcash blocks, and the same
+  check over the whole chain.
+
+On a timeout the script says whether A built `N + 1` on the orphaned `N`.
+Isolation: zebrad on `:18472` (project `sova-restart-reorg-sim`, container
+`sova-zebrad-restart-reorg`), A on 11045/11051/31211, B on
+11145/11151/31212, C on 11245/11251/31213. A passing run takes about 1–1.5
+minutes; a failing one about 4.
+
+### Results on 2026-09-26: fails before the fix, passes after
+
+| build | run | result |
+|---|---|---|
+| `1629425` (`24484db^`, same engine code as `bb8b9de^`) | 1, 2 | **FAIL**, rc=1: A's RPC came up already at head 10, its first trigger was `height=111 sova_height=10` (`N + 1`), and block 10 has the orphaned 9 as parent. 0 `re-sealing` lines. After 180 s: A=10, B=C=9, block 9 anchored to the orphaned Zcash 110 on all three. |
+| `release` `2311c8a` + this scenario | 1, 2 (suite runner), 3 | **PASS**, rc=0: first trigger `height=110 sova_height=9` (the re-seal), one `waiting for our Zcash scan` line, converged at 10 on all three 5.6 s / 4.6 s / 3.4 s after the restart. 78 s / 76 s / 62 s total. |
+
+In both failing runs B and C stayed on the stale 9 and did not adopt A's 10
+(on the testnet run of seed 202 they followed A). Either way the network
+sits on a block anchored to a Zcash block zebrad no longer has.
+
 ## Randomized Zcash reorg stress: `reorg-stress-scenario.sh` (nightly 15 min, local 45 min)
 
 Both serious public-testnet stalls were a Zcash reorg reaching consensus code

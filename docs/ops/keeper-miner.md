@@ -203,12 +203,53 @@ the file, which zebrad creates with mode `0600`.
 ## Budget
 
 A keeper burn costs `per-epoch-zat` plus the ZIP-317 fee, which is 20,000
-zat for the usual one-input shape. There is at most one burn per Zcash
-block, and from v0.1.8 the miner lands one in every block (earlier
-releases sat out the block their burn confirmed in, so burned about every
-other block). Testnet makes about 1,150 blocks a day at its nominal 75 s,
-and more when it runs fast (~2,600 at the ~30 s seen in September 2026),
-so with `--per-epoch-zat 10000` a full day costs about 0.35-0.78 TAZ.
+zat for the usual one-input shape.
+
+**Cadence.** The miner sends one burn for each new Zcash block it sees
+and keeps one waiting in the mempool. A burn sent right after block `h`
+reaches the Zcash miners after they have built `h+1`'s template, so it is
+mined in `h+2`. Up to v0.1.8 the miner sent a burn only once the previous
+one had confirmed, so the block after most burns was null: 57% of Sova
+blocks were sealed on testnet, up from ~25% before v0.1.8. From the
+release after v0.1.8 it doesn't wait. When block `h` arrives, the burn
+sent at `h-1` is already in `h+1`'s template, and the new burn waits in the
+mempool for `h+2`'s. So at steady state two burns are in flight, and
+every Zcash block can carry one. If the only coin is still unconfirmed
+change, the waiting burn spends it (zebrad's mempool accepts a
+transaction spending another mempool transaction's output). The fee is
+the same 20,000 zat. The miner never has more than two burns in flight. A
+burn the node drops is re-sent, and a burn whose parent was dropped is
+dropped with it.
+
+**Cost.** One burn per Zcash block: blocks per day × (`per-epoch-zat` +
+20,000 zat). Testnet makes about 1,150 blocks a day at its nominal 75 s,
+and more when it runs fast (~2,600 at the ~30 s seen in September 2026).
+So with `--per-epoch-zat 10000` a full day costs about 0.35-0.78 TAZ. That
+is roughly 1.75 times what v0.1.8 actually spent, because v0.1.8 burned in
+only ~57% of blocks. Some Zcash miners refresh their template in the
+middle of a block, and such a miner can mine the waiting burn together
+with the one before it. The next block is then null: the burn still cost
+the same, but it sealed nothing. If a fraction `q` of blocks come before
+the burn reaches a template, about `q(1-q)` of blocks are doubles, each
+followed by a null block. v0.1.8's 57% suggests `q` ≈ 0.75 on testnet,
+which gives about 81% of blocks sealed and 19% doubles. Only when no
+miner refreshes mid-block does the rate approach 100%. The regtest lab
+(2026-09-26, Poisson blocks) measured 97% sealed with no mid-block
+refresh, against 50% for v0.1.8, and 76% with a refresh every 6 s,
+against 53% for v0.1.8.
+
+**Budgets.** A burn counts against `--budget-zat` and
+`--lifetime-budget-zat` from the moment it is saved to `state.json`,
+which happens just *before* it is broadcast, not only once it confirms.
+The miner holds back what the burns in flight will cost before it sends
+another, so this keystore's burns can't add up past
+`--lifetime-budget-zat`, even if the keeper is killed right after a
+broadcast. A dropped burn releases its share. The limits: `--budget-zat`
+is per run, and a burn inherited in flight from a stopped run is charged
+to the run in which it confirms. The caps also trust `state.json`: never
+delete it or restore an old copy while burns may be in flight, and never
+run two burners on one keystore. When the budget runs out, the miner first waits for the burns
+in flight, then stops.
 
 ```bash
 sova-miner --network test --data-dir /var/lib/sova-keeper \
@@ -232,11 +273,11 @@ Run `mine` as a service, for example a systemd unit `sova-keeper` whose
 `ExecStart` is the command above.
 
 - **On:** `systemctl start sova-keeper`.
-- **Off:** `systemctl stop sova-keeper`. State is saved after every
-  broadcast and every confirmation. A burn still in flight when the
-  keeper stops is picked back up on the next start: it is recorded if it
-  was mined, or dropped at its expiry height. Its inputs are never spent
-  twice.
+- **Off:** `systemctl stop sova-keeper`. State is saved before every
+  broadcast and after every confirmation. A burn still in flight when
+  the keeper stops is picked back up on the next start: it is recorded if
+  it was mined, re-sent if the node never got it, or dropped at its expiry
+  height. Its inputs are never spent twice.
 - The service stops on its own when `--budget-zat` is used up. Restarting
   it starts a new run with a fresh per-run budget.
   `--lifetime-budget-zat` still holds.
@@ -250,6 +291,31 @@ keystore.json>` (mode 600, readable by the node's user) and a persistent
 does all of this on `sova-keeper-1`). A burn-only keeper still counts
 toward ranking and still gets its pro-rata share whenever any ranked
 burner seals, and rank-1+ fallbacks seal when the top burner is absent.
+
+## Rolling back to v0.1.8
+
+v0.1.8 reads at most one burn in flight from `state.json`. With two in
+flight, the file stores them as an array, and v0.1.8 refuses to start
+(`malformed state JSON`). It does not ignore the second burn. So drain the
+burns in flight with the **new** binary before you switch:
+
+1. `systemctl stop sova-keeper`.
+2. As the keeper's user, run the new binary once with the service's own
+   flags plus `--max-epochs 0`:
+   `sova-miner --network test --data-dir /var/lib/sova/keeper mine --rpc
+   http://127.0.0.1:18232 --budget-zat … --per-epoch-zat … --max-epochs
+   0`. It sends nothing. It waits until every burn in flight is mined
+   (usually one or two blocks) or dropped (at worst its expiry, 40 blocks
+   after it was built), then exits. With nothing in flight it exits at
+   once. Don't drain with v0.1.8: its `--max-epochs 0` sends a burn.
+3. Check `sova-miner … report`: it should show `burns in flight: (none)`.
+   `pending` in `state.json` is then `null`, which v0.1.8 reads. It
+   ignores the new `recent` field.
+4. Install v0.1.8 and `systemctl start sova-keeper`.
+
+Never roll back by restoring an older copy of `state.json`. It forgets
+the burns sent since the copy was taken, and with them their spend (see
+"Budget").
 
 ## Public disclosure text
 

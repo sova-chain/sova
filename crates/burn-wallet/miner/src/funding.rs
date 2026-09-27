@@ -28,9 +28,11 @@
 //!   coinbase on regtest): spendable.
 //!
 //! Mempool policy: unconfirmed inbound transfers are not spent (the address
-//! index doesn't show them; they become spendable one block later), and the
-//! miner never spends its own unconfirmed change -- it has at most one burn
-//! in flight and waits for it to confirm before building the next.
+//! index doesn't show them; they become spendable one block later). The
+//! only unconfirmed outputs the miner spends are its own burns' change,
+//! when a burn is sent while an earlier one is still in flight and no
+//! confirmed coin can fund it (chaining: see `crate::epoch`). That change
+//! never enters the tracked pool before it confirms.
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -178,16 +180,17 @@ pub(crate) fn balance_lines(c: &Classified, coinbase_spendable: bool) -> Vec<(&'
     vec![
         ("spendable", spendable),
         coinbase,
-        ("reserved by burn in flight", c.reserved_zat),
+        ("reserved by burns in flight", c.reserved_zat),
     ]
 }
 
 /// Drops tracked UTXOs that `snapshot` no longer lists (spent outside this
 /// miner, or on a chain the node no longer serves), returning them. The
-/// snapshot shows only confirmed outputs, so this must run while no burn of
-/// ours is in flight whose change is tracked -- which holds, since a
-/// burn's change is only tracked once it confirmed (see
-/// [`crate::epoch::resolve_pending`]).
+/// snapshot shows only confirmed outputs, so this must never see a tracked
+/// output that is still unconfirmed -- which holds, since a burn's change
+/// is only tracked once it confirmed (see
+/// [`crate::epoch::resolve_pending`]); unconfirmed change a later burn
+/// chains onto stays with its burn in flight, outside the pool.
 pub(crate) fn drop_stale(
     utxos: &mut Vec<TrackedUtxo>,
     snapshot: &AddressSnapshot,
@@ -231,9 +234,21 @@ pub(crate) mod tests {
 
     /// An in-memory node for funding/epoch tests: a UTXO list, a tip, a set
     /// of coinbase txids, the txs it knows, and scripted
-    /// `sendrawtransaction` behaviour.
+    /// `sendrawtransaction` behaviour. Like zebrad, its mempool admits a
+    /// tx only if every input is a listed confirmed output or an output of
+    /// a tx in its mempool, and no other mempool tx spends it; [`Self::mine`]
+    /// moves mempool txs into a block.
     #[derive(Default)]
     pub(crate) struct FakeNode {
+        /// Called at the start of every `send_raw` (e.g. to snapshot what a
+        /// process killed right after the broadcast would leave on disk).
+        #[allow(clippy::type_complexity)]
+        pub on_send: RefCell<Option<Box<dyn Fn()>>>,
+        /// Confirmed outputs spent by mined txs, with the spending height
+        /// (so [`Self::reorg`] can restore them).
+        pub spent_log: RefCell<Vec<(u64, AddressUtxo)>>,
+        /// txid -> raw hex of every tx it admitted, in admission order.
+        pub admitted: RefCell<Vec<(String, String)>>,
         pub tip: Cell<u64>,
         pub utxos: RefCell<Vec<AddressUtxo>>,
         pub coinbase: BTreeSet<String>,
@@ -247,7 +262,142 @@ pub(crate) mod tests {
         pub send_script: RefCell<Vec<SendScript>>,
     }
 
+    /// A raw tx's inputs (txid, vout) and output values.
+    pub(crate) fn tx_io(raw_hex: &str) -> (Vec<(String, u32)>, Vec<u64>) {
+        let raw = hex::decode(raw_hex).unwrap();
+        let tx = Transaction::read(raw.as_slice(), BranchId::Nu5).unwrap();
+        let bundle = tx.transparent_bundle().unwrap();
+        let inputs = bundle
+            .vin
+            .iter()
+            .map(|i| {
+                (
+                    burn_wallet::utxo::encode_rpc_hash(*i.prevout().hash()),
+                    i.prevout().n(),
+                )
+            })
+            .collect();
+        let outputs = bundle.vout.iter().map(|o| o.value().into_u64()).collect();
+        (inputs, outputs)
+    }
+
     impl FakeNode {
+        /// The txids in its mempool, in admission order.
+        pub(crate) fn mempool(&self) -> Vec<String> {
+            let txs = self.txs.borrow();
+            self.admitted
+                .borrow()
+                .iter()
+                .filter(|(txid, _)| txs.get(txid) == Some(&TxStatus::Mempool))
+                .map(|(txid, _)| txid.clone())
+                .collect()
+        }
+
+        /// Evicts `txid` (as a restarted or pruning node would).
+        pub(crate) fn forget(&self, txid: &str) {
+            self.txs.borrow_mut().remove(txid);
+        }
+
+        /// Why the mempool would refuse `raw_hex` (`None`: it wouldn't).
+        fn refuse(&self, raw_hex: &str) -> Option<String> {
+            let (inputs, _) = tx_io(raw_hex);
+            let distinct: BTreeSet<&(String, u32)> = inputs.iter().collect();
+            if distinct.len() != inputs.len() {
+                return Some("transaction has duplicate inputs".to_string());
+            }
+            let mempool = self.mempool();
+            let admitted = self.admitted.borrow();
+            let spent_in_mempool: BTreeSet<(String, u32)> = admitted
+                .iter()
+                .filter(|(txid, _)| mempool.contains(txid))
+                .flat_map(|(_, raw)| tx_io(raw).0)
+                .collect();
+            for (txid, vout) in inputs {
+                let confirmed = self
+                    .utxos
+                    .borrow()
+                    .iter()
+                    .any(|u| u.txid == txid && u.output_index == vout);
+                let unconfirmed = mempool.contains(&txid)
+                    && admitted
+                        .iter()
+                        .find(|(t, _)| *t == txid)
+                        .is_some_and(|(_, raw)| tx_io(raw).1.len() > vout as usize);
+                if !confirmed && !unconfirmed {
+                    return Some(format!("transparent input {txid}:{vout} not found"));
+                }
+                if spent_in_mempool.contains(&(txid.clone(), vout)) {
+                    return Some(format!("input {txid}:{vout} already spent in the mempool"));
+                }
+            }
+            None
+        }
+
+        /// Mines one block holding the mempool txs in `include` (admission
+        /// order, so a parent precedes its child): marks them confirmed,
+        /// spends their inputs, and lists their change (output 2, ours) as
+        /// confirmed UTXOs. Returns the new tip.
+        pub(crate) fn mine(&self, include: &[String]) -> u64 {
+            let height = self.tip.get() + 1;
+            self.tip.set(height);
+            let mempool = self.mempool();
+            let admitted = self.admitted.borrow().clone();
+            for (txid, raw) in admitted {
+                if !include.contains(&txid) || !mempool.contains(&txid) {
+                    continue;
+                }
+                let (inputs, outputs) = tx_io(&raw);
+                let (spent, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut *self.utxos.borrow_mut())
+                    .into_iter()
+                    .partition(|u| inputs.contains(&(u.txid.clone(), u.output_index)));
+                *self.utxos.borrow_mut() = kept;
+                self.spent_log
+                    .borrow_mut()
+                    .extend(spent.into_iter().map(|u| (height, u)));
+                if let Some(&change) = outputs.get(2) {
+                    self.utxos.borrow_mut().push(AddressUtxo {
+                        address: "tmAddr".to_string(),
+                        txid: txid.clone(),
+                        output_index: 2,
+                        satoshis: change,
+                        height,
+                    });
+                }
+                self.txs
+                    .borrow_mut()
+                    .insert(txid, TxStatus::Confirmed { height });
+            }
+            height
+        }
+
+        /// A Zcash reorg back to `fork - 1` (the caller then mines the new
+        /// branch): blocks from `fork` up are undone -- their txs become
+        /// unknown, the outputs they created vanish and the ones they spent
+        /// come back -- and, like zebrad on a chain reset, the mempool is
+        /// cleared (reorged-out txs are *not* returned to it).
+        pub(crate) fn reorg(&self, fork: u64) {
+            let mut txs = self.txs.borrow_mut();
+            let orphaned: BTreeSet<String> = txs
+                .iter()
+                .filter(|(_, st)| matches!(st, TxStatus::Confirmed { height } if *height >= fork))
+                .map(|(id, _)| id.clone())
+                .collect();
+            txs.retain(|id, st| !orphaned.contains(id) && *st != TxStatus::Mempool);
+            drop(txs);
+            self.utxos
+                .borrow_mut()
+                .retain(|u| !(u.height >= fork && orphaned.contains(&u.txid)));
+            let mut log = self.spent_log.borrow_mut();
+            let (back, stay): (Vec<_>, Vec<_>) = std::mem::take(&mut *log)
+                .into_iter()
+                .partition(|(h, _)| *h >= fork);
+            *log = stay;
+            self.utxos
+                .borrow_mut()
+                .extend(back.into_iter().map(|(_, u)| u));
+            self.tip.set(fork - 1);
+        }
+
         pub(crate) fn fund(&self, txid: &str, vout: u32, satoshis: u64, height: u64) {
             self.utxos.borrow_mut().push(AddressUtxo {
                 address: "tmAddr".to_string(),
@@ -286,6 +436,9 @@ pub(crate) mod tests {
                 .unwrap_or(TxStatus::Unknown))
         }
         fn send_raw(&self, raw_hex: &str) -> Result<String, RpcError> {
+            if let Some(hook) = self.on_send.borrow().as_ref() {
+                hook();
+            }
             self.sent.borrow_mut().push(raw_hex.to_string());
             let Some(txid) = txid_of(raw_hex) else {
                 return Err(rpc_failure("failed to deserialize transaction"));
@@ -297,7 +450,10 @@ pub(crate) mod tests {
             let known = self.txs.borrow().get(&txid).copied();
             match script {
                 Some(SendScript::AdmitButFail(message)) => {
-                    self.txs.borrow_mut().insert(txid, TxStatus::Mempool);
+                    self.txs
+                        .borrow_mut()
+                        .insert(txid.clone(), TxStatus::Mempool);
+                    self.admitted.borrow_mut().push((txid, raw_hex.to_string()));
                     Err(rpc_failure(&message))
                 }
                 Some(SendScript::Reject(message)) => Err(rpc_failure(&message)),
@@ -312,9 +468,16 @@ pub(crate) mod tests {
                     Err(rpc_failure("transaction was committed to the best chain"))
                 }
                 None => {
+                    if let Some(reason) = self.refuse(raw_hex) {
+                        return Err(rpc_failure(&reason));
+                    }
                     self.txs
                         .borrow_mut()
                         .insert(txid.clone(), TxStatus::Mempool);
+                    let mut admitted = self.admitted.borrow_mut();
+                    if !admitted.iter().any(|(t, _)| *t == txid) {
+                        admitted.push((txid.clone(), raw_hex.to_string()));
+                    }
                     Ok(txid)
                 }
             }
@@ -429,7 +592,7 @@ pub(crate) mod tests {
             vec![
                 ("spendable", 7_000_000),
                 ("coinbase (must be shielded first)", 125_000_000),
-                ("reserved by burn in flight", 0),
+                ("reserved by burns in flight", 0),
             ]
         );
 
@@ -440,7 +603,7 @@ pub(crate) mod tests {
             vec![
                 ("spendable", 132_000_000),
                 ("coinbase maturing", 0),
-                ("reserved by burn in flight", 0),
+                ("reserved by burns in flight", 0),
             ]
         );
     }
