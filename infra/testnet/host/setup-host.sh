@@ -22,6 +22,8 @@
 #   keeper zebrad + sova-node in MINE mode (seals, incl. null blocks;
 #          with SOVA_SIP6=1 it signs as the keeper's miner key)
 #          + sova-keeper burner (installed, not started)
+# Every role: a SWAP_GB (default 4; 0 = none) /swapfile, vm.swappiness=10,
+# and the health timer (host/health.sh).
 #
 # SOVA_SIP6=1 (the default): every node requires SIP-6 sealed or null
 # blocks, and the keeper's node signs with a 0600 copy of the keeper's
@@ -53,6 +55,7 @@ SOVA_SIP6="${SOVA_SIP6:-1}"
 SOVA_SIP7="${SOVA_SIP7:-1}"
 BUILD_FROM_SOURCE="${BUILD_FROM_SOURCE:-0}"
 CHECKOUT_RELAYER="${CHECKOUT_RELAYER:-0}"
+SWAP_GB="${SWAP_GB:-4}"
 
 DATA=/var/lib/sova
 ETC=/etc/sova
@@ -60,11 +63,13 @@ ETC=/etc/sova
 # keystore readable only by the node's user (sova-node.service User=sova).
 SEALER_KEYSTORE="${DATA}/sealer/keystore.json"
 UNIT_DIR=/etc/systemd/system
+SYSCTL_DIR=/etc/sysctl.d
 RENDER=""
 if [[ "${2:-}" == --render ]]; then
   RENDER="${3:?--render needs a directory}"
   ETC="${RENDER}/etc/sova"
   UNIT_DIR="${RENDER}/etc/systemd/system"
+  SYSCTL_DIR="${RENDER}/etc/sysctl.d"
 fi
 PLATFORM=linux-x86_64
 ASSET="sova-box-bin-${PLATFORM}.tar.gz"
@@ -90,6 +95,7 @@ case "${SOVA_EMISSION_SCHEDULE}" in sip3 | flat) ;; *) die "SOVA_EMISSION_SCHEDU
 case "${SOVA_SIP6}" in 0 | 1) ;; *) die "SOVA_SIP6 must be 0 or 1" ;; esac
 case "${SOVA_SIP7}" in 0 | 1) ;; *) die "SOVA_SIP7 must be 0 or 1" ;; esac
 case "${CHECKOUT_RELAYER}" in 0 | 1) ;; *) die "CHECKOUT_RELAYER must be 0 or 1" ;; esac
+if ! [[ "${SWAP_GB}" =~ ^[0-9]+$ ]] || ((SWAP_GB > 64)); then die "SWAP_GB must be 0..64 (GB; 0 = no swapfile)"; fi
 
 has_node() { [[ "${ROLE}" == seed || "${ROLE}" == rpc || "${ROLE}" == keeper ]]; }
 has_tunnel() { [[ "${ROLE}" == rpc || "${ROLE}" == faucet ]]; }
@@ -116,6 +122,99 @@ mount_volume() {
   fi
   mountpoint -q "${DATA}" || mount "${DATA}"
   log "data volume ${devs[0]} mounted at ${DATA}"
+}
+
+# ---- swap ---------------------------------------------------------------------------------
+# A SWAP_GB swapfile on every host (0 = the kit manages none), and
+# vm.swappiness=10 so the kernel drops page cache before it swaps out the
+# nodes' working sets: swap is a cushion against running out of memory, not
+# extra RAM. 2026-09-27: reth's state cache filled the 4 GB hosts, which had
+# no swap; zebrad stopped answering, the chain stalled ~20 min and the
+# public RPC host thrashed. An active /swapfile (e.g. one made by hand) is
+# left as it is, whatever its size.
+SWAPFILE=/swapfile
+SWAP_SYSCTL_FILE=60-sova-swap.conf
+
+swap_sysctl_text() {
+  cat <<EOF
+# Written by setup-host.sh; re-run deploy.sh to change it. Drop page cache
+# before swapping out the nodes' working sets (swap is a cushion).
+vm.swappiness=10
+EOF
+}
+
+swap_fstab_line() { printf '%s none swap sw 0 0\n' "${SWAPFILE}"; }
+
+# The swap line for the render log: what setup_swap would do.
+swap_plan() {
+  if [[ "${SWAP_GB}" == 0 ]]; then
+    echo "swap: SWAP_GB=0, no swapfile managed; vm.swappiness=10"
+  else
+    echo "swap: ${SWAPFILE} ${SWAP_GB} GB if absent (fallocate, chmod 600, mkswap, swapon; fstab '$(swap_fstab_line)'); vm.swappiness=10"
+  fi
+}
+
+# Whether $SWAPFILE is an active swap area now.
+swapfile_active() {
+  local active
+  active="$(swapon --show=NAME --noheadings 2>/dev/null || true)"
+  grep -qxF "${SWAPFILE}" <<<"${active}"
+}
+
+setup_swap() {
+  local f="${SWAPFILE}" conf="${SYSCTL_DIR}/${SWAP_SYSCTL_FILE}"
+  # swappiness always: harmless without swap, and useful with a host's own.
+  install -d -m 0755 "${SYSCTL_DIR}"
+  swap_sysctl_text >"${conf}.new"
+  if cmp -s "${conf}.new" "${conf}"; then
+    rm -f "${conf}.new"
+  else
+    mv "${conf}.new" "${conf}"
+    chmod 0644 "${conf}"
+    log "sysctl: vm.swappiness=10 (${conf})"
+  fi
+  sysctl -q -p "${conf}" >/dev/null || log "WARNING: sysctl could not load ${conf} (vm.swappiness is $(cat /proc/sys/vm/swappiness 2>/dev/null))"
+  if [[ "${SWAP_GB}" == 0 ]]; then
+    log "swap: SWAP_GB=0, no swapfile managed (swap now: $(free -m | awk '/^Swap:/ { print $2 " MB" }'))"
+    return 0
+  fi
+  if swapfile_active; then
+    log "swap: ${f} already active ($(swapon --show=NAME,SIZE --noheadings | awk -v f="${f}" '$1 == f { print $2 }')), left as is"
+  else
+    if [[ -e "${f}" ]]; then
+      chmod 0600 "${f}"
+      if swapon "${f}" 2>/dev/null; then
+        log "swap: ${f} existed but was off: turned it on"
+      else
+        # Not a swap area (e.g. a create that died before mkswap): redo it.
+        rm -f "${f}"
+        log "swap: ${f} existed but was not a usable swap area: re-creating it"
+      fi
+    fi
+    if ! swapfile_active; then
+      local avail_mb need_mb=$((SWAP_GB * 1024 + 2048))
+      avail_mb="$(df --output=avail -m / | tail -1 | tr -dc '0-9')"
+      if [[ -z "${avail_mb}" ]] || ((avail_mb < need_mb)); then
+        log "WARNING: swap: only ${avail_mb:-?} MB free on /, need ${need_mb} (SWAP_GB=${SWAP_GB} + 2 GB): NO swapfile made; lower SWAP_GB or free the disk"
+        return 0
+      fi
+      if ! { fallocate -l "${SWAP_GB}G" "${f}" 2>/dev/null ||
+        dd if=/dev/zero of="${f}" bs=1M count=$((SWAP_GB * 1024)) status=none; }; then
+        rm -f "${f}"
+        die "swap: could not allocate ${f} (${SWAP_GB} GB)"
+      fi
+      chmod 0600 "${f}"
+      mkswap "${f}" >/dev/null || { rm -f "${f}"; die "swap: mkswap ${f} failed"; }
+      swapon "${f}" || die "swap: swapon ${f} failed"
+      log "swap: created ${f} (${SWAP_GB} GB) and turned it on"
+    fi
+  fi
+  if grep -qE "^[[:space:]]*${f}[[:space:]]" /etc/fstab; then
+    log "swap: ${f} already in /etc/fstab"
+  else
+    swap_fstab_line >>/etc/fstab
+    log "swap: added '$(swap_fstab_line)' to /etc/fstab"
+  fi
 }
 
 # ---- users and directories --------------------------------------------------------
@@ -710,7 +809,9 @@ FAUCET_PORT=${FAUCET_PORT}
 HEALTH_REFERENCE_RPC=${HEALTH_REFERENCE_RPC:-}
 SOVA_SIP6=${SOVA_SIP6}
 BLOCK_AGE_ALERT_MIN=${BLOCK_AGE_ALERT_MIN:-10}
-NULL_RUN_ALERT=${NULL_RUN_ALERT:-20}
+NULL_SEALED_MAX_MIN=${NULL_SEALED_MAX_MIN:-45}
+MEM_ALERT_MB=${MEM_ALERT_MB:-300}
+HEALTH_NETWORK_ALERTS=${HEALTH_NETWORK_ALERTS:-}
 CHECKOUT_RELAYER_PORT=${CHECKOUT_RELAYER_PORT:-}
 CHECKOUT_RELAYER_ALERT_BALANCE_WEI=${CHECKOUT_RELAYER_ALERT_BALANCE_WEI:-}
 EOF
@@ -746,7 +847,9 @@ check_no_keys() {
 # --render: the files this host would get, written under $RENDER, using
 # the same text functions as the real setup. Nothing is installed or run.
 render_host() {
-  install -d "${ETC}" "${UNIT_DIR}"
+  install -d "${ETC}" "${UNIT_DIR}" "${SYSCTL_DIR}"
+  swap_sysctl_text >"${SYSCTL_DIR}/${SWAP_SYSCTL_FILE}"
+  log "$(swap_plan)"
   write_zebrad_files "$(zebra_ref)"
   cp "${HERE}/systemd/zebrad.service" "${HERE}/systemd/sova-health.service" \
     "${HERE}/systemd/sova-health.timer" "${UNIT_DIR}/"
@@ -794,6 +897,7 @@ if [[ "${2:-}" == --enode-only ]]; then
 fi
 log "setting up ${ROLE} on $(hostname) (${PUBLIC_IPV4}), release ${SOVA_RELEASE_TAG}"
 setup_ufw
+setup_swap
 setup_zebrad
 install_binaries
 [[ "${ROLE}" == keeper ]] && setup_keeper

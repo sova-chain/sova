@@ -270,14 +270,57 @@ validate_sip7() {
 
 # Health-alert thresholds (config.env.example, "Health alerts"), rendered
 # into every host's /etc/sova/host.env for host/health.sh. Defaults keep an
-# older config.env (no such section) working.
+# older config.env (no such section) working. Also the host's swapfile
+# (SWAP_GB, setup-host.sh), rendered the same way.
 validate_health_config() {
   BLOCK_AGE_ALERT_MIN="${BLOCK_AGE_ALERT_MIN:-10}"
-  NULL_RUN_ALERT="${NULL_RUN_ALERT:-20}"
+  NULL_SEALED_MAX_MIN="${NULL_SEALED_MAX_MIN:-45}"
+  MEM_ALERT_MB="${MEM_ALERT_MB:-300}"
+  SWAP_GB="${SWAP_GB:-4}"
   [[ "${BLOCK_AGE_ALERT_MIN}" =~ ^[1-9][0-9]*$ ]] || die "config: BLOCK_AGE_ALERT_MIN must be a positive number of minutes"
-  if ! [[ "${NULL_RUN_ALERT}" =~ ^[1-9][0-9]*$ ]] || ((NULL_RUN_ALERT > 100)); then
-    die "config: NULL_RUN_ALERT must be a block count from 1 to 100"
+  [[ "${NULL_SEALED_MAX_MIN}" =~ ^[1-9][0-9]*$ ]] || die "config: NULL_SEALED_MAX_MIN must be a positive number of minutes"
+  # Replaced by NULL_SEALED_MAX_MIN (a count of null blocks false-alarms in
+  # Zcash bursts and with a demand-mode keeper): accepted, ignored.
+  [[ -z "${NULL_RUN_ALERT:-}" ]] ||
+    cfg_warn "NULL_RUN_ALERT is deprecated and ignored: the null-run alert is time-based now (NULL_SEALED_MAX_MIN=${NULL_SEALED_MAX_MIN} min); remove it"
+  [[ "${MEM_ALERT_MB}" =~ ^[1-9][0-9]*$ ]] || die "config: MEM_ALERT_MB must be a positive number of MB"
+  if ! [[ "${SWAP_GB}" =~ ^[0-9]+$ ]] || ((SWAP_GB > 64)); then
+    die "config: SWAP_GB must be a whole number of GB from 0 (no swapfile) to 64"
   fi
+  validate_network_alert_hosts
+}
+
+# The hosts that send network-wide alerts (health.sh net_alert: stuck head,
+# all-null run, network behind Zcash). Two, on different machines, so one
+# dead host can't silence them (2026-09-27: the rpc host, then the only
+# sender, ran out of memory and nothing was sent). Default: the rpc server
+# and the first seed in SERVERS. Each must run a sova node (the findings
+# come from its RPC). Sets HEALTH_NETWORK_ALERT_HOSTS to a space-separated
+# list; deploy.sh renders HEALTH_NETWORK_ALERTS=1 on those, 0 elsewhere.
+validate_network_alert_hosts() {
+  local list="${HEALTH_NETWORK_ALERT_HOSTS:-}" h s role n=0 seen=" "
+  if [[ -z "${list}" ]]; then
+    list="$(servers_with_role rpc | sed -n 1p) $(servers_with_role seed | sed -n 1p)"
+  fi
+  HEALTH_NETWORK_ALERT_HOSTS=""
+  for h in ${list//,/ }; do
+    [[ "${seen}" != *" ${h} "* ]] || continue
+    seen+="${h} "
+    s="$(server_entry "${h}")" || die "config: HEALTH_NETWORK_ALERT_HOSTS names '${h}', which is not in SERVERS"
+    role="$(srv_role "${s}")"
+    [[ "${role}" == seed || "${role}" == rpc || "${role}" == keeper ]] ||
+      die "config: HEALTH_NETWORK_ALERT_HOSTS: ${h} is a ${role} host with no sova node, so it can't see network findings"
+    HEALTH_NETWORK_ALERT_HOSTS+="${HEALTH_NETWORK_ALERT_HOSTS:+ }${h}"
+    n=$((n + 1))
+  done
+  ((n > 0)) || die "config: HEALTH_NETWORK_ALERT_HOSTS is empty: no host would send network alerts"
+  ((n > 1)) || cfg_warn "only ${HEALTH_NETWORK_ALERT_HOSTS} sends network alerts (stuck head, null run): if it dies, nothing is sent; name two hosts in HEALTH_NETWORK_ALERT_HOSTS"
+  return 0
+}
+
+# 1 if server $1 sends network alerts (validate_network_alert_hosts), else 0.
+network_alerts_for() {
+  [[ " ${HEALTH_NETWORK_ALERT_HOSTS} " == *" $1 "* ]] && echo 1 || echo 0
 }
 
 validate_config() {

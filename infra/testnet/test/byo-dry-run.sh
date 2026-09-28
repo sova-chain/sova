@@ -65,6 +65,7 @@ check "deploy.sh check: no 'pending' or 'no keeper' warning once the IP is fille
   lacks "pending|no keeper server" "${out}"
 
 out="$(cd "${KIT}" && kit ./deploy.sh render "${VERIFY[@]+"${VERIFY[@]}"}" 2>&1)"
+RENDER_OUT="${out}"
 check "deploy.sh render${VERIFY[*]:+ ${VERIFY[*]}} passes" grep -q '^==> config OK' <<<"${out}"
 R="${TMP}/out/render/sova-keeper-1"
 check "render: keeper gets sova-keeper.service" test -f "${R}/etc/systemd/system/sova-keeper.service"
@@ -128,11 +129,15 @@ check "render: relayer runs /opt/sova-checkout-relayer with the system node" \
   grep -qx 'ExecStart=/usr/bin/node /opt/sova-checkout-relayer/src/server.mjs' "${FU}"
 check "render: relayer can write only its state dir" grep -qx 'ReadWritePaths=/var/lib/sova/checkout-relayer' "${FU}"
 # Block-latency alerts (host/health.sh): every host's health env carries
-# the thresholds and knows SIP-6 is on (the null-run check needs it).
+# the thresholds and knows SIP-6 is on (the null-run check needs it). The
+# null-run rule is time-based (NULL_SEALED_MAX_MIN); the old block count
+# (NULL_RUN_ALERT) is no longer rendered anywhere.
 for h in sova-seed-1 sova-rpc-1 sova-keeper-1 sova-faucet-1; do
-  for kv in BLOCK_AGE_ALERT_MIN=10 NULL_RUN_ALERT=20 SOVA_SIP6=1; do
+  for kv in BLOCK_AGE_ALERT_MIN=10 NULL_SEALED_MAX_MIN=45 SOVA_SIP6=1; do
     check "render: ${h} health has ${kv}" grep -qx "${kv}" "${TMP}/out/render/${h}/etc/sova/host.env"
   done
+  check "render: ${h} host.env (deploy.sh) has NULL_SEALED_MAX_MIN=45" grep -qx 'NULL_SEALED_MAX_MIN=45' "${TMP}/out/render/${h}/host.env"
+  check "render: ${h} renders no NULL_RUN_ALERT" lacks '^NULL_RUN_ALERT=' "$(cat "${TMP}/out/render/${h}/host.env" "${TMP}/out/render/${h}/etc/sova/host.env")"
 done
 check "render: faucet health knows the relayer" grep -qx 'CHECKOUT_RELAYER_PORT=18791' "${F}/etc/sova/host.env"
 for h in sova-seed-1 sova-rpc-1 sova-keeper-1; do
@@ -183,14 +188,103 @@ check "deploy.sh check: SOVA_SIP7=0 is an open item, not an error" has "SOVA_SIP
 CFG="${TMP}/config.env"
 
 # ---- health-alert thresholds -------------------------------------------------------
-sed 's/^NULL_RUN_ALERT=20$/NULL_RUN_ALERT=500/' "${TMP}/config.env" >"${TMP}/health-bad.env"
 CFG="${TMP}/health-bad.env"
-check "deploy.sh check refuses NULL_RUN_ALERT=500" has "NULL_RUN_ALERT must be a block count from 1 to 100" "$(cd "${KIT}" && kit ./deploy.sh check 2>&1)"
+for v in 0 -5 45m ""; do
+  sed "s/^NULL_SEALED_MAX_MIN=45\$/NULL_SEALED_MAX_MIN=${v}/" "${TMP}/config.env" >"${TMP}/health-bad.env"
+  if [[ -z "${v}" ]]; then # empty: the default, 45
+    out="$(cd "${KIT}" && kit ./deploy.sh render --out "${TMP}/render-nsm-empty" 2>&1)"
+    check "NULL_SEALED_MAX_MIN empty: renders the default 45" grep -qx 'NULL_SEALED_MAX_MIN=45' "${TMP}/render-nsm-empty/sova-rpc-1/etc/sova/host.env"
+  else
+    check "deploy.sh check refuses NULL_SEALED_MAX_MIN=${v}" has "NULL_SEALED_MAX_MIN must be a positive number of minutes" "$(cd "${KIT}" && kit ./deploy.sh check 2>&1)"
+  fi
+done
+sed 's/^NULL_SEALED_MAX_MIN=45$/NULL_SEALED_MAX_MIN=90/' "${TMP}/config.env" >"${TMP}/health-nsm.env"
+CFG="${TMP}/health-nsm.env"
+out="$(cd "${KIT}" && kit ./deploy.sh render --out "${TMP}/render-nsm" 2>&1)"
+check "NULL_SEALED_MAX_MIN=90: rendered into every host's health env" \
+  test "$(grep -lx NULL_SEALED_MAX_MIN=90 "${TMP}"/render-nsm/*/etc/sova/host.env | wc -l | tr -d ' ')" == 4
+# An older config.env still naming NULL_RUN_ALERT (even an out-of-range
+# one): accepted with a deprecation warning, ignored, not rendered.
+{ grep -v '^NULL_SEALED_MAX_MIN=' "${TMP}/config.env"; echo 'NULL_RUN_ALERT=500'; } >"${TMP}/health-nra.env"
+CFG="${TMP}/health-nra.env"
+out="$(cd "${KIT}" && kit ./deploy.sh check 2>&1)"
+check "deploy.sh check: NULL_RUN_ALERT is accepted (config OK)" grep -q '^==> config OK' <<<"${out}"
+check "deploy.sh check: ... with a deprecation warning" has "NULL_RUN_ALERT is deprecated and ignored" "${out}"
+out="$(cd "${KIT}" && kit ./deploy.sh render --out "${TMP}/render-nra" 2>&1)"
+check "NULL_RUN_ALERT config: renders NULL_SEALED_MAX_MIN=45 and no NULL_RUN_ALERT" \
+  bash -c "grep -qx NULL_SEALED_MAX_MIN=45 '${TMP}/render-nra/sova-seed-1/etc/sova/host.env' && ! grep -q '^NULL_RUN_ALERT=' '${TMP}/render-nra/sova-seed-1/host.env' '${TMP}/render-nra/sova-seed-1/etc/sova/host.env'"
+CFG="${TMP}/health-bad.env"
 sed 's/^BLOCK_AGE_ALERT_MIN=10$/BLOCK_AGE_ALERT_MIN=0/' "${TMP}/config.env" >"${TMP}/health-bad.env"
 check "deploy.sh check refuses BLOCK_AGE_ALERT_MIN=0" has "BLOCK_AGE_ALERT_MIN must be a positive number" "$(cd "${KIT}" && kit ./deploy.sh check 2>&1)"
-grep -v '^BLOCK_AGE_ALERT_MIN=\|^NULL_RUN_ALERT=' "${TMP}/config.env" >"${TMP}/health-old.env"
+grep -v '^BLOCK_AGE_ALERT_MIN=\|^NULL_SEALED_MAX_MIN=\|^MEM_ALERT_MB=\|^HEALTH_NETWORK_ALERT_HOSTS=\|^SWAP_GB=' "${TMP}/config.env" >"${TMP}/health-old.env"
 CFG="${TMP}/health-old.env"
 check "deploy.sh check: an older config without the health section still passes" grep -q '^==> config OK' <<<"$(cd "${KIT}" && kit ./deploy.sh check 2>&1)"
+out="$(cd "${KIT}" && kit ./deploy.sh render --out "${TMP}/render-old" 2>&1)"
+check "older config: renders the defaults (SWAP_GB=4, MEM_ALERT_MB=300, NULL_SEALED_MAX_MIN=45)" \
+  bash -c "grep -qx SWAP_GB=4 '${TMP}/render-old/sova-seed-1/host.env' && grep -qx MEM_ALERT_MB=300 '${TMP}/render-old/sova-seed-1/etc/sova/host.env' && grep -qx NULL_SEALED_MAX_MIN=45 '${TMP}/render-old/sova-seed-1/etc/sova/host.env'"
+check "older config: network alerts from the rpc host and the first seed" \
+  test "$(grep -lx HEALTH_NETWORK_ALERTS=1 "${TMP}"/render-old/*/etc/sova/host.env | awk -F/ '{ print $(NF-3) }' | sort | tr '\n' ' ')" == "sova-rpc-1 sova-seed-1 "
+CFG="${TMP}/config.env"
+
+# ---- memory: swap on every host, mem_low alert (2026-09-27 incident) ---------
+RR="${TMP}/out/render"
+for h in sova-seed-1 sova-rpc-1 sova-keeper-1 sova-faucet-1; do
+  check "render: ${h} host.env (deploy.sh) has SWAP_GB=4" grep -qx 'SWAP_GB=4' "${RR}/${h}/host.env"
+  check "render: ${h} health has MEM_ALERT_MB=300" grep -qx 'MEM_ALERT_MB=300' "${RR}/${h}/etc/sova/host.env"
+  check "render: ${h} gets /etc/sysctl.d/60-sova-swap.conf with vm.swappiness=10" \
+    grep -qx 'vm.swappiness=10' "${RR}/${h}/etc/sysctl.d/60-sova-swap.conf"
+done
+check "render: every host's setup plans a 4 GB /swapfile with its fstab line" \
+  test "$(grep -cF "swap: /swapfile 4 GB if absent (fallocate, chmod 600, mkswap, swapon; fstab '/swapfile none swap sw 0 0'); vm.swappiness=10" <<<"${RENDER_OUT}")" == 4
+check "setup-host.sh: the full setup runs setup_swap (before zebrad)" \
+  bash -c "awk '/^setup_ufw\$/ { u = NR } /^setup_swap\$/ { s = NR } /^setup_zebrad\$/ { z = NR } END { exit !(u && s > u && z > s) }' '${KIT}/host/setup-host.sh'"
+check "setup-host.sh: swapfile made with fallocate, chmod 600, mkswap, swapon" \
+  bash -c "f='${KIT}/host/setup-host.sh'; grep -q 'fallocate -l \"\${SWAP_GB}G\"' \"\$f\" && grep -q 'chmod 0600 \"\${f}\"' \"\$f\" && grep -q 'mkswap \"\${f}\"' \"\$f\" && grep -q 'swapon \"\${f}\"' \"\$f\""
+# shellcheck disable=SC2016 # the literal source line
+check "setup-host.sh: /etc/fstab line added only if absent" \
+  grep -qF 'if grep -qE "^[[:space:]]*${f}[[:space:]]" /etc/fstab; then' "${KIT}/host/setup-host.sh"
+check "health.sh: mem_low alert on MemAvailable with the top 3 by RSS" \
+  bash -c "grep -q 'alert mem_low' '${KIT}/host/health.sh' && grep -q 'ps -eo rss=,comm= --sort=-rss' '${KIT}/host/health.sh'"
+sed 's/^SWAP_GB=4$/SWAP_GB=0/' "${TMP}/config.env" >"${TMP}/swap-off.env"
+CFG="${TMP}/swap-off.env"
+out="$(cd "${KIT}" && kit ./deploy.sh render --out "${TMP}/render-swap-off" 2>&1)"
+check "SWAP_GB=0: renders and plans no swapfile" \
+  test "$(grep -cF 'swap: SWAP_GB=0, no swapfile managed; vm.swappiness=10' <<<"${out}")" == 4
+check "SWAP_GB=0: rendered into host.env" grep -qx 'SWAP_GB=0' "${TMP}/render-swap-off/sova-rpc-1/host.env"
+sed 's/^SWAP_GB=4$/SWAP_GB=100/' "${TMP}/config.env" >"${TMP}/swap-bad.env"
+CFG="${TMP}/swap-bad.env"
+check "deploy.sh check refuses SWAP_GB=100" has "SWAP_GB must be a whole number of GB from 0" "$(cd "${KIT}" && kit ./deploy.sh check 2>&1)"
+sed 's/^MEM_ALERT_MB=300$/MEM_ALERT_MB=0/' "${TMP}/config.env" >"${TMP}/mem-bad.env"
+CFG="${TMP}/mem-bad.env"
+check "deploy.sh check refuses MEM_ALERT_MB=0" has "MEM_ALERT_MB must be a positive number" "$(cd "${KIT}" && kit ./deploy.sh check 2>&1)"
+CFG="${TMP}/config.env"
+
+# ---- network alerts from two hosts --------------------------------------------
+na_hosts() { # render-dir -> the hosts rendered with HEALTH_NETWORK_ALERTS=1
+  grep -lx HEALTH_NETWORK_ALERTS=1 "$1"/*/etc/sova/host.env | awk -F/ '{ print $(NF-3) }' | sort | tr '\n' ' '
+}
+check "render: network alerts from exactly sova-rpc-1 and sova-seed-1 (the default)" test "$(na_hosts "${RR}")" == "sova-rpc-1 sova-seed-1 "
+for h in sova-keeper-1 sova-faucet-1; do
+  check "render: ${h} only logs network findings (HEALTH_NETWORK_ALERTS=0)" grep -qx 'HEALTH_NETWORK_ALERTS=0' "${RR}/${h}/etc/sova/host.env"
+done
+# The live shape: a second seed. Still the first seed + rpc, not both seeds.
+{ cat "${TMP}/config.env"; echo 'SERVERS+=("sova-seed-2:cx23:hel1:0:seed")'; } >"${TMP}/two-seeds.env"
+CFG="${TMP}/two-seeds.env"
+out="$(cd "${KIT}" && kit ./deploy.sh render --out "${TMP}/render-two-seeds" 2>&1)"
+check "two seeds: sova-seed-2 rendered" test -f "${TMP}/render-two-seeds/sova-seed-2/etc/sova/host.env"
+check "two seeds: network alerts still from sova-rpc-1 and sova-seed-1 only" test "$(na_hosts "${TMP}/render-two-seeds")" == "sova-rpc-1 sova-seed-1 "
+sed 's/^HEALTH_NETWORK_ALERT_HOSTS=.*/HEALTH_NETWORK_ALERT_HOSTS="sova-rpc-1,sova-keeper-1"/' "${TMP}/config.env" >"${TMP}/na.env"
+CFG="${TMP}/na.env"
+out="$(cd "${KIT}" && kit ./deploy.sh render --out "${TMP}/render-na" 2>&1)"
+check "HEALTH_NETWORK_ALERT_HOSTS picks the hosts (rpc-1 + keeper-1)" test "$(na_hosts "${TMP}/render-na")" == "sova-keeper-1 sova-rpc-1 "
+sed 's/^HEALTH_NETWORK_ALERT_HOSTS=.*/HEALTH_NETWORK_ALERT_HOSTS="sova-rpc-1,sova-faucet-1"/' "${TMP}/config.env" >"${TMP}/na.env"
+check "refuses a network-alert host with no sova node (faucet)" has "sova-faucet-1 is a faucet host with no sova node" "$(cd "${KIT}" && kit ./deploy.sh check 2>&1)"
+sed 's/^HEALTH_NETWORK_ALERT_HOSTS=.*/HEALTH_NETWORK_ALERT_HOSTS="sova-rpc-9"/' "${TMP}/config.env" >"${TMP}/na.env"
+check "refuses a network-alert host not in SERVERS" has "names 'sova-rpc-9', which is not in SERVERS" "$(cd "${KIT}" && kit ./deploy.sh check 2>&1)"
+sed 's/^HEALTH_NETWORK_ALERT_HOSTS=.*/HEALTH_NETWORK_ALERT_HOSTS="sova-rpc-1"/' "${TMP}/config.env" >"${TMP}/na.env"
+out="$(cd "${KIT}" && kit ./deploy.sh check 2>&1)"
+check "one network-alert host: an open item, not an error" \
+  bash -c "grep -q 'only sova-rpc-1 sends network alerts' <<<\"\$1\" && grep -q '^==> config OK' <<<\"\$1\"" _ "${out}"
 CFG="${TMP}/config.env"
 
 # ---- bootnodes.sh: the genesis hash comes from the nodes, never a constant ----

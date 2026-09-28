@@ -7,12 +7,22 @@
 # same alert is re-sent at most once an hour.
 #
 # Findings about the whole network (a stall, all-null blocks, an old
-# newest block) look the same from every host, so only one host sends
-# them: HEALTH_NETWORK_ALERTS=1, by default the rpc host. The others only
-# log them. Findings about the host itself (disk, zebrad, sova-node, "we
-# lag") come from every host.
+# newest block) look the same from every host, so only the hosts with
+# HEALTH_NETWORK_ALERTS=1 send them: two, so one dead host can't silence
+# them (deploy.sh: HEALTH_NETWORK_ALERT_HOSTS, by default the rpc host and
+# the first seed; 2026-09-27 the rpc host, then the only sender, ran out of
+# memory and no alert went out). The once-an-hour dedupe is per host, so a
+# network finding reaches Telegram up to twice an hour, once from each: an
+# accepted cost. Unset (a host.env from an older kit): 1 on the rpc host
+# and on a seed whose hostname ends in -seed-1. The other hosts only log
+# them. Findings about the host itself (memory, disk, zebrad, sova-node,
+# "we lag") come from every host.
 #
 # Checks (infra-m1 §2 "Monitoring and alerting"):
+#   memory       MemAvailable < MEM_ALERT_MB (default 300) on 2 passes in a
+#                row (~2 min): alert mem_low with the top 3 processes by
+#                RSS. Checked first, so it still goes out while zebrad or
+#                sova-node have stopped answering.
 #   disk         / and /var/lib/sova >= DISK_ALERT_PCT (default 80)
 #   zebrad lag   estimatedheight - blocks > ZEBRA_LAG_ALERT (default 20)
 #   epoch lag    (zebrad tip - B + 1) - sova head > EPOCH_LAG_ALERT
@@ -28,10 +38,16 @@
 #                when zebrad's tip is old too, Zcash is slow and Sova is
 #                waiting for it: that is only logged. Otherwise Sova is
 #                stuck: an alert.
-#   null run     SIP-6 on: the last NULL_RUN_ALERT blocks (default 20) are
-#                all null. The head still advances, but nobody is burning,
-#                so no transaction can be mined (2026-09-25: the keeper's
-#                burn budget ran out; heights looked healthy for an hour).
+#   null run     SIP-6 on: no sealed block for more than NULL_SEALED_MAX_MIN
+#                (default 45) minutes. The head still advances on null
+#                blocks, but nobody is burning, so no transaction can be
+#                mined (2026-09-25: the keeper's burn budget ran out;
+#                heights looked healthy for an hour). Time, not a count of
+#                null blocks: a demand-mode keeper burns only for pending
+#                transactions plus a heartbeat (KEEPER_HEARTBEAT_SECS, 30
+#                min), and Zcash bursts of 3 s blocks make long null runs
+#                that are no fault. NULL_RUN_ALERT (the old block count) is
+#                ignored.
 #   C5           any "settlement mismatch" rejection in the last 3 minutes
 #   faucet       not accepting drips, or hot wallet over its limit
 #   checkout     the checkout relayer's /status not answering, its SOVA
@@ -48,9 +64,17 @@ EPOCH_LAG_PERSIST_MIN="${EPOCH_LAG_PERSIST_MIN:-10}"
 if [[ -z "${HEALTH_NETWORK_ALERTS:-}" ]]; then
   HEALTH_NETWORK_ALERTS=0
   [[ "${ROLE:-}" == rpc ]] && HEALTH_NETWORK_ALERTS=1
+  [[ "${ROLE:-}" == seed && "$(hostname)" == *-seed-1 ]] && HEALTH_NETWORK_ALERTS=1
 fi
+MEM_ALERT_MB="${MEM_ALERT_MB:-300}"
 BLOCK_AGE_ALERT_MIN="${BLOCK_AGE_ALERT_MIN:-10}"
-NULL_RUN_ALERT="${NULL_RUN_ALERT:-20}"
+NULL_SEALED_MAX_MIN="${NULL_SEALED_MAX_MIN:-45}"
+[[ "${NULL_SEALED_MAX_MIN}" =~ ^[1-9][0-9]*$ ]] || NULL_SEALED_MAX_MIN=45
+# How far back the null-run check walks at most (blocks: 60 min of 2 s
+# blocks; it stops sooner, once the walk spans NULL_SEALED_MAX_MIN), and how
+# many blocks one batched RPC call reads.
+NULL_SEALED_WALK=1800
+NULL_SEALED_BATCH=50
 SOVA_SIP6="${SOVA_SIP6:-1}"
 # Another node's public RPC to tell "we lag" from "network stalled"
 # (e.g. https://rpc.testnet.sova.io on a seed host). Empty: can't tell.
@@ -60,6 +84,11 @@ mkdir -p "${STATE_DIR}"
 HOST="$(hostname)"
 
 say() { logger -t sova-health -- "$*"; echo "$*"; }
+
+# A host.env from an older kit sets NULL_RUN_ALERT (a count of null blocks,
+# replaced by NULL_SEALED_MAX_MIN): accepted, ignored, noted.
+[[ -n "${NULL_RUN_ALERT:-}" ]] &&
+  say "NULL_RUN_ALERT=${NULL_RUN_ALERT} is deprecated and ignored: the null-run alert is time-based (NULL_SEALED_MAX_MIN=${NULL_SEALED_MAX_MIN} min); re-run deploy.sh to drop it"
 
 alert() {
   local key="$1"
@@ -85,16 +114,16 @@ alert() {
   fi
 }
 
-clear_alert() { rm -f "${STATE_DIR}/$1.last" "${STATE_DIR}/$1.since"; }
+clear_alert() { rm -f "${STATE_DIR}/$1.last" "${STATE_DIR}/$1.since" "${STATE_DIR}/$1.passes"; }
 
-# A finding about the whole network: sent from one host only (see the top).
+# A finding about the whole network: sent from two hosts only (see the top).
 net_alert() {
   if [[ "${HEALTH_NETWORK_ALERTS}" == 1 ]]; then
     alert "$@"
   else
     local key="$1"
     shift
-    say "network ${key} (sent by the host with HEALTH_NETWORK_ALERTS=1): $*"
+    say "network ${key} (sent by the hosts with HEALTH_NETWORK_ALERTS=1): $*"
   fi
 }
 
@@ -137,29 +166,96 @@ check_block_age() { # head
   fi
 }
 
-# SIP-6: a sealed block's extraData is 97 bytes (0x + 194 hex), a null
-# block's is empty. No sealed block in the last NULL_RUN_ALERT means no
-# burner, and no transaction can be mined, however healthy heights look.
+# last_sealed <url> <head> <limit-secs>: walk back from <head> (at most
+# NULL_SEALED_WALK blocks, NULL_SEALED_BATCH per batched call, never to
+# genesis, which is exempt) to the newest sealed block, stopping early at a
+# null block more than <limit-secs> older than the head (the verdict is
+# known then). SIP-6: a sealed
+# block's extraData is 97 bytes (0x + 194 hex), a null block's is empty.
+# Sets LS_HEAD_TS (the head's timestamp), LS_NUM and LS_TS (the sealed
+# block; empty when none was found), LS_OLDEST and LS_OLDEST_TS (the oldest
+# block read). Returns 1 unless every block it asked for came
+# back readable: an RPC hiccup is not a finding.
+last_sealed() {
+  local url="$1" head="$2" limit="$3" lo hi b i hex req rows want num x ts
+  LS_HEAD_TS="" LS_NUM="" LS_TS="" LS_OLDEST="" LS_OLDEST_TS=""
+  lo=$((head - NULL_SEALED_WALK + 1))
+  ((lo < 1)) && lo=1
+  for ((hi = head; hi >= lo; hi = b - 1)); do
+    b=$((hi - NULL_SEALED_BATCH + 1))
+    ((b < lo)) && b=${lo}
+    req=""
+    for ((i = hi; i >= b; i--)); do
+      printf -v hex '0x%x' "${i}"
+      req+="${req:+,}{\"jsonrpc\":\"2.0\",\"id\":${i},\"method\":\"eth_getBlockByNumber\",\"params\":[\"${hex}\",false]}"
+    done
+    rows="$(curl -fsS --max-time 10 -H 'Content-Type: application/json' --data "[${req}]" "${url}" 2>/dev/null |
+      jq -r 'sort_by(-.id)[] | "\(.id) \(.result.extraData // "-") \(.result.timestamp // "-")"' 2>/dev/null)" || return 1
+    want=${hi}
+    while read -r num x ts; do
+      [[ "${num}" == "${want}" && "${x}" =~ ^0x[0-9a-fA-F]*$ && "${ts}" =~ ^0x[0-9a-fA-F]+$ ]] || return 1
+      want=$((want - 1))
+      ((num == head)) && LS_HEAD_TS=$((ts))
+      if ((${#x} == 196)); then
+        LS_NUM=${num} LS_TS=$((ts))
+        return 0
+      fi
+      LS_OLDEST=${num} LS_OLDEST_TS=$((ts))
+    done <<<"${rows}"
+    ((want == b - 1)) || return 1 # fewer answers than asked
+    ((LS_HEAD_TS - LS_OLDEST_TS > limit)) && return 0
+  done
+  return 0
+}
+
+# No sealed block for more than NULL_SEALED_MAX_MIN minutes means no burner,
+# and no transaction can be mined, however healthy heights look. A block's
+# time is its Zcash block's, so the gap is also measured from the head's
+# time: when no Sova block at all has come for a while (Zcash slow, or Sova
+# stuck), that is block_age's finding, not this one.
 check_null_run() { # head
   [[ "${SOVA_SIP6}" == 1 ]] || return 0
-  local head="$1" n="${NULL_RUN_ALERT}" i x sealed=0 seen=0 keeper=""
-  ((head >= n)) || return 0 # a young chain: genesis is exempt, too few blocks
-  for ((i = 0; i < n; i++)); do
-    x="$(rpc "${SOVA_URL}" eth_getBlockByNumber "[\"$(printf '0x%x' $((head - i)))\",false]" 2>/dev/null | jq -r '.result.extraData // empty' 2>/dev/null)" || x=""
-    [[ -n "${x}" ]] || continue
-    seen=$((seen + 1))
-    ((${#x} == 196)) && sealed=$((sealed + 1))
-  done
-  ((seen == n)) || return 0 # the RPC hiccuped: don't guess
-  say "sealed blocks: ${sealed} of the last ${n}"
-  if ((sealed > 0)); then
-    clear_alert null_run
+  local head="$1" limit=$((NULL_SEALED_MAX_MIN * 60)) now age gap what keeper=""
+  ((head >= 1)) || return 0 # genesis only: exempt, nothing to judge
+  if ! last_sealed "${SOVA_URL}" "${head}" "${limit}"; then
+    say "null run: could not read the last blocks to ${head}; not judged this pass"
+    return 0
+  fi
+  now="$(date +%s)"
+  if [[ -n "${LS_NUM}" || "${LS_OLDEST}" == 1 ]]; then
+    if [[ -n "${LS_NUM}" ]]; then
+      age=$((now - LS_TS))
+      gap=$((LS_HEAD_TS - LS_TS))
+      say "newest sealed block ${LS_NUM} is $((age / 60)) min old (head ${head}; alert over ${NULL_SEALED_MAX_MIN} min)"
+      what="no sealed block for $((age / 60)) min (alert over ${NULL_SEALED_MAX_MIN} min): the newest is ${LS_NUM}, and $((head - LS_NUM)) null blocks follow it to ${head}"
+    else # a young chain, null since genesis: timed from block 1
+      age=$((now - LS_OLDEST_TS))
+      gap=$((LS_HEAD_TS - LS_OLDEST_TS))
+      say "no sealed block since genesis: blocks 1..${head} are null, block 1 is $((age / 60)) min old"
+      what="no sealed block since genesis: all ${head} blocks are null, the first $((age / 60)) min old (alert over ${NULL_SEALED_MAX_MIN} min)"
+    fi
+    if ((age <= limit)); then
+      clear_alert null_run
+      return 0
+    fi
+    if ((gap <= limit)); then
+      say "null run: no sealed block for $((age / 60)) min, but no Sova block at all for $(((now - LS_HEAD_TS) / 60)) min: a slow Zcash or a stuck Sova (block_age), not a missing burner"
+      return 0
+    fi
+  elif ((LS_HEAD_TS - LS_OLDEST_TS > limit)); then
+    # Null blocks spanning more than the limit, back from the head.
+    say "no sealed block in blocks ${LS_OLDEST}..${head} (back to $(((now - LS_OLDEST_TS) / 60)) min ago)"
+    what="no sealed block for over ${NULL_SEALED_MAX_MIN} min: blocks ${LS_OLDEST}..${head} are all null, back to $(((now - LS_OLDEST_TS) / 60)) min ago"
+  else
+    # The walk's cap, inside the limit: a Zcash burst faster than 2 s a
+    # block. Judged on a later pass, once the null run spans the limit.
+    say "null run: no sealed block in the last ${NULL_SEALED_WALK} blocks, but they span only $(((LS_HEAD_TS - LS_OLDEST_TS) / 60)) min; not judged this pass"
     return 0
   fi
   if systemctl is-enabled --quiet sova-keeper 2>/dev/null; then
     keeper="; sova-keeper here is $(systemctl is-active sova-keeper 2>/dev/null) (its burn budget spent?)"
   fi
-  net_alert null_run "the last ${n} blocks (to ${head}) are all null: nobody is burning, so no transaction can be mined${keeper}"
+  net_alert null_run "${what}: nobody is burning, so no transaction can be mined${keeper}"
 }
 
 # The keeper host's own burner (a host finding, from that host). It stops
@@ -172,6 +268,37 @@ check_keeper() {
     alert keeper_down "sova-keeper is $(systemctl is-active sova-keeper 2>/dev/null): nothing here is burning (budget spent? journalctl -u sova-keeper)"
   fi
 }
+
+# ---- memory -----------------------------------------------------------------
+# MemAvailable (what can be had without swapping) under MEM_ALERT_MB on two
+# passes in a row: one low pass is often a burst (a RocksDB compaction, a
+# build). 2026-09-27: reth's state cache filled the 4 GB hosts; zebrad
+# stopped answering and the public RPC host thrashed, with no alert.
+check_memory() {
+  local avail_kb avail_mb passes f="${STATE_DIR}/mem_low.passes" top swap
+  avail_kb="$(awk '/^MemAvailable:/ { print $2 }' /proc/meminfo 2>/dev/null)"
+  [[ "${avail_kb}" =~ ^[0-9]+$ ]] || return 0
+  avail_mb=$((avail_kb / 1024))
+  if ((avail_mb >= MEM_ALERT_MB)); then
+    [[ -f "${f}" ]] && say "memory recovered: ${avail_mb} MB available"
+    clear_alert mem_low
+    return 0
+  fi
+  passes="$(cat "${f}" 2>/dev/null)"
+  [[ "${passes}" =~ ^[0-9]+$ ]] || passes=0
+  passes=$((passes + 1))
+  echo "${passes}" >"${f}"
+  swap="$(awk '/^SwapTotal:/ { t = $2 } /^SwapFree:/ { u = t - $2 } END { printf "%d of %d MB", u / 1024, t / 1024 }' /proc/meminfo)"
+  if ((passes < 2)); then
+    say "memory low: ${avail_mb} MB available (alert under ${MEM_ALERT_MB} MB on 2 passes in a row); swap used ${swap}"
+    return 0
+  fi
+  # awk takes the first 3 and reads to EOF: no SIGPIPE to ps.
+  top="$(ps -eo rss=,comm= --sort=-rss 2>/dev/null |
+    awk 'NR <= 3 { printf "%s%s %d MB", (NR > 1 ? ", " : ""), $2, $1 / 1024 }')"
+  alert mem_low "only ${avail_mb} MB available (alert under ${MEM_ALERT_MB} MB, ${passes} passes in a row); swap used ${swap}; top RSS: ${top:-?}"
+}
+check_memory
 check_keeper
 
 # ---- disk -------------------------------------------------------------------

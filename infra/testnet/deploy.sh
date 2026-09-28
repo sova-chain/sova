@@ -9,7 +9,9 @@
 #               record its enode (out/servers/<name>.enode).
 #       Pass 2: write each host's host.env (seeds get the OTHER seeds as
 #               bootnodes, everyone else gets every seed, plus
-#               EXTRA_BOOTNODES from config.env) and run setup-host.sh.
+#               EXTRA_BOOTNODES from config.env; HEALTH_NETWORK_ALERTS=1
+#               on the HEALTH_NETWORK_ALERT_HOSTS, 0 elsewhere) and run
+#               setup-host.sh.
 #               Seeds go first. Each node host records the genesis hash
 #               its installed `sova genesis-hash` prints
 #               (out/servers/<name>.genesis_hash; bootnodes.sh publishes it).
@@ -114,7 +116,10 @@ SOVA_AUTH_PORT=${SOVA_AUTH_PORT}
 FAUCET_PORT=${FAUCET_PORT}
 HEALTH_REFERENCE_RPC=${ref_rpc}
 BLOCK_AGE_ALERT_MIN=${BLOCK_AGE_ALERT_MIN}
-NULL_RUN_ALERT=${NULL_RUN_ALERT}
+NULL_SEALED_MAX_MIN=${NULL_SEALED_MAX_MIN}
+MEM_ALERT_MB=${MEM_ALERT_MB}
+HEALTH_NETWORK_ALERTS=$(network_alerts_for "${name}")
+SWAP_GB=${SWAP_GB}
 KEEPER_PER_EPOCH_ZAT=${KEEPER_PER_EPOCH_ZAT:-10000}
 KEEPER_BUDGET_ZAT=${KEEPER_BUDGET_ZAT:-35000000}
 KEEPER_LIFETIME_BUDGET_ZAT=${KEEPER_LIFETIME_BUDGET_ZAT:-1000000000}

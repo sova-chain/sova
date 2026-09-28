@@ -27,8 +27,10 @@
 //!   status costs the sender reputation
 //!   ([`GossipBackend::penalize_invalid_block`]) — except a consensus
 //!   *hold* ([`crate::consensus::HOLD_MARKER`]: our zebrad can't vouch for
-//!   the block's Zcash epoch yet), which is forgotten so a later
-//!   announcement retries it.
+//!   the block's Zcash epoch yet), which is parked and re-validated only
+//!   when our follower's view changes (a Zcash rollback, or the scan
+//!   reaching its height — see [`FollowerMark`]), and forgotten after
+//!   [`MAX_HOLD`] so a later announcement can retry it.
 //! - **Dedup and bounds**: LRU sets of seen (fetched/known) and announced
 //!   hashes; a global cap on in-flight requests with a timeout; per-peer
 //!   per-second budgets for announcements and block requests (excess is
@@ -75,12 +77,16 @@ pub const MAX_ANNOUNCES_PER_SEC: u32 = 128;
 /// Per-peer, per-second budget of inbound `GetBlock`s we serve.
 pub const MAX_GET_BLOCKS_PER_SEC: u32 = 64;
 /// Held blocks (consensus said "not yet": our zebrad hasn't scanned the
-/// block's Zcash epoch) kept for resubmission.
+/// block's Zcash epoch, or has another Zcash block there) kept for
+/// resubmission.
 pub const MAX_HELD: u32 = 64;
-/// A held block is resubmitted at least this often, and immediately once
-/// our scan watermark reaches its height.
+/// A block parked because the local engine *failed* (not a consensus
+/// hold) is resubmitted this often. A consensus hold is not retried on a
+/// timer at all: its verdict is a function of our follower's view, so it is
+/// resubmitted only when that view changes ([`FollowerMark`]; G3,
+/// `docs/audits/2026-09-27-held-block-storm.md`).
 pub const HOLD_RETRY: Duration = Duration::from_secs(3);
-/// How often held blocks are checked against our scan watermark: a block
+/// How often held blocks are checked against our follower's view: a block
 /// that arrived a moment before our zebrad's epoch should import as soon
 /// as the scan reaches it.
 pub const HELD_POLL: Duration = Duration::from_millis(200);
@@ -111,6 +117,43 @@ pub trait GossipBackend: Send + Sync + 'static {
     /// Reputation hit for a peer that sent a block the engine judged
     /// `INVALID`. The only reputation change the service ever makes.
     fn penalize_invalid_block(&self, peer: PeerId);
+    /// Our Zcash follower's scan watermark (a Sova height): `None` before
+    /// anything is scanned, or on a node without a zebrad.
+    fn scanned_through(&self) -> Option<u64> {
+        crate::expectations::global().scanned_through()
+    }
+    /// How many Zcash rollbacks this node has applied. Every change to a
+    /// scanned height's record goes through a rollback, so this and
+    /// [`Self::scanned_through`] are all a consensus hold depends on.
+    fn rollback_generation(&self) -> u64 {
+        crate::candidates::rollback_generation()
+    }
+}
+
+/// What a consensus hold's verdict depends on, for a block at one height:
+/// our follower's record there. The verdict (`SovaConsensus::check_settlements`
+/// and the SIP-6 parent check) reads only `ExpectedSettlements` records and
+/// the scan watermark, and a scanned height's record changes only through a
+/// Zcash rollback, which bumps the rollback generation. So while the mark is
+/// unchanged, re-validating the block gives the same answer — the G3 storm
+/// re-validated one block ~every 0.4 s for 5 minutes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FollowerMark {
+    /// [`GossipBackend::rollback_generation`].
+    generation: u64,
+    /// Whether our scan covers the height (no watermark counts as covered,
+    /// as in consensus: nothing to hold against).
+    covered: bool,
+}
+
+/// Why a block is parked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HoldKind {
+    /// Consensus said "not yet" (or would have: ahead of our scan). Retried
+    /// only when the [`FollowerMark`] for its height changes.
+    Consensus,
+    /// The local engine failed to answer. Retried every [`HOLD_RETRY`].
+    Engine,
 }
 
 /// A connected `sova/1` peer.
@@ -161,6 +204,18 @@ struct Held {
     depth: u32,
     since: Instant,
     last_try: Instant,
+    kind: HoldKind,
+    /// Our follower's view when it was last tried.
+    mark: FollowerMark,
+}
+
+/// A peer block we accepted, kept to serve it and to re-observe it after
+/// a Zcash rollback ([`GossipService::on_rollback_reset`]).
+#[derive(Debug, Clone)]
+struct Recent {
+    rlp: Bytes,
+    height: u64,
+    peer: PeerId,
 }
 
 /// A block to submit.
@@ -178,7 +233,7 @@ pub struct GossipService<B> {
     peers: HashMap<PeerId, PeerState>,
     seen: LruMap<B256, ()>,
     announced: LruMap<B256, ()>,
-    recent_blocks: LruMap<B256, Bytes>,
+    recent_blocks: LruMap<B256, Recent>,
     orphans: LruMap<B256, Orphan>,
     held: LruMap<B256, Held>,
     in_flight: HashMap<B256, InFlight>,
@@ -186,6 +241,9 @@ pub struct GossipService<B> {
     /// The candidate tracker's rollback generation when the caches were
     /// last reset (see [`Self::on_rollback_reset`]).
     rollback_gen: u64,
+    /// Accepted blocks to resubmit after a rollback, lowest first, so the
+    /// validator observes them as candidates again (G3b).
+    reobserve: Vec<Pending>,
 }
 
 impl<B> std::fmt::Debug for GossipService<B> {
@@ -201,6 +259,7 @@ impl<B> std::fmt::Debug for GossipService<B> {
 impl<B: GossipBackend> GossipService<B> {
     /// A fresh service over `backend`.
     pub fn new(backend: B) -> Self {
+        let rollback_gen = backend.rollback_generation();
         Self {
             backend,
             peers: HashMap::new(),
@@ -211,7 +270,16 @@ impl<B: GossipBackend> GossipService<B> {
             held: LruMap::new(ByLength::new(MAX_HELD)),
             in_flight: HashMap::new(),
             last_head: None,
-            rollback_gen: crate::candidates::rollback_generation(),
+            rollback_gen,
+            reobserve: Vec::new(),
+        }
+    }
+
+    /// Our follower's view of `height` right now.
+    fn follower_mark(&self, height: u64) -> FollowerMark {
+        FollowerMark {
+            generation: self.backend.rollback_generation(),
+            covered: self.backend.scanned_through().is_none_or(|s| s >= height),
         }
     }
 
@@ -254,10 +322,18 @@ impl<B: GossipBackend> GossipService<B> {
     /// this a follower stayed on the other branch's block until the chain
     /// was `MAX_ANCESTOR_DEPTH` blocks ahead (the reorg-stress sim,
     /// 2026-09-26: 30+ blocks, ~41 min at testnet cadence). A block we still
-    /// hold is re-submitted cheaply (the engine answers from its tree; the
-    /// validator re-observes it on the way).
+    /// hold is re-validated by [`Self::retry_held`]: the rollback changed its
+    /// [`FollowerMark`].
+    ///
+    /// Re-announcements only help if they come *after* our own rollback. A
+    /// peer whose zebrad saw the reorg first re-announces before ours unwinds
+    /// the tracker, and a block we fetched in between loses its candidate with
+    /// nobody left to offer it again; everything built on it is then never
+    /// attached (G3b: reorg-stress 2026-09-27, B imported 521..543 and stayed
+    /// at 520). So the blocks we accepted near our head are also resubmitted
+    /// ([`Self::queue_reobservation`]).
     fn on_rollback_reset(&mut self) {
-        let g = crate::candidates::rollback_generation();
+        let g = self.backend.rollback_generation();
         if g == self.rollback_gen {
             return;
         }
@@ -265,7 +341,42 @@ impl<B: GossipBackend> GossipService<B> {
         self.seen.clear();
         self.announced.clear();
         self.last_head = None;
-        tracing::info!("sova/1: zcash rollback; announce and fetch caches reset");
+        self.queue_reobservation();
+        tracing::info!(
+            reobserve = self.reobserve.len(),
+            "sova/1: zcash rollback; announce and fetch caches reset"
+        );
+    }
+
+    /// Queues the recently accepted peer blocks that could still become our
+    /// chain — not canonical here (a canonical block needs no candidate: the
+    /// tracker attaches through our chain), and at or above
+    /// `head − MAX_REPLACE_DEPTH` (the branch rule ignores anything deeper) —
+    /// lowest first, so each is observed after its parent. The engine answers
+    /// each from its tree, re-observing it on the way; one still ahead of our
+    /// re-scan waits as a consensus hold.
+    fn queue_reobservation(&mut self) {
+        let floor = self
+            .backend
+            .head()
+            .map_or(0, |(h, _)| h)
+            .saturating_sub(crate::candidates::MAX_REPLACE_DEPTH);
+        let mut blocks: Vec<Pending> = self
+            .recent_blocks
+            .iter()
+            .filter(|(hash, r)| r.height >= floor && !self.backend.has_block(**hash))
+            .filter_map(|(_, r)| {
+                let block = reth_ethereum::Block::decode(&mut r.rlp.as_ref()).ok()?;
+                Some(Pending {
+                    peer: r.peer,
+                    block: SealedBlock::seal_slow(block),
+                    rlp: r.rlp.clone(),
+                    depth: 0,
+                })
+            })
+            .collect();
+        blocks.sort_by_key(|p| p.block.number);
+        self.reobserve = blocks;
     }
 
     /// Handles one connection event.
@@ -342,6 +453,12 @@ impl<B: GossipBackend> GossipService<B> {
         if self.seen.peek(&a.hash).is_some() || self.in_flight.contains_key(&a.hash) {
             return;
         }
+        // Held here already: it is re-validated when our follower's view
+        // changes (`retry_held`), not each time a peer offers it again (a
+        // rollback reset clears `seen`, not `held`).
+        if self.held.peek(&a.hash).is_some() {
+            return;
+        }
         if self.backend.has_block(a.hash) {
             self.seen.insert(a.hash, ());
             return;
@@ -393,7 +510,7 @@ impl<B: GossipBackend> GossipService<B> {
 
     fn on_get_block(&mut self, peer: PeerId, g: GetBlock) {
         let rlp = match self.recent_blocks.peek(&g.hash) {
-            Some(rlp) => Some(rlp.clone()),
+            Some(r) => Some(r.rlp.clone()),
             None => self.backend.block_rlp(g.hash),
         };
         let Some(rlp) = rlp else {
@@ -456,19 +573,20 @@ impl<B: GossipBackend> GossipService<B> {
             // Ahead of our own Zcash scan: consensus would hold it, so park
             // it without a round trip (and without the engine's invalid-
             // block logging) until the scan catches up.
-            if crate::expectations::global()
-                .scanned_through()
-                .is_some_and(|scanned| height > scanned)
-            {
+            // The view the engine will judge it by, read before the await: a
+            // change during the round trip then triggers one more try.
+            let mark = self.follower_mark(height);
+            if !mark.covered {
                 tracing::debug!(%peer, height, %hash, "sova/1: block ahead of our zcash scan; parked");
-                self.park_held(peer, block, rlp, depth);
+                self.park_held(peer, block, rlp, depth, HoldKind::Consensus, mark);
                 continue;
             }
             let status = self.backend.submit(block.clone()).await;
             match status {
                 Ok(PayloadStatusEnum::Valid | PayloadStatusEnum::Accepted) => {
                     tracing::info!(%peer, height, %hash, "sova/1: peer block accepted");
-                    self.recent_blocks.insert(hash, rlp);
+                    self.recent_blocks
+                        .insert(hash, Recent { rlp, height, peer });
                     self.announce(height, hash, Some(peer));
                     let children: Vec<B256> = self
                         .orphans
@@ -509,7 +627,7 @@ impl<B: GossipBackend> GossipService<B> {
                     // peer's fault; park it and resubmit once our scan
                     // catches up (`retry_held`).
                     tracing::info!(%peer, height, %hash, %validation_error, "sova/1: block held");
-                    self.park_held(peer, block, rlp, depth);
+                    self.park_held(peer, block, rlp, depth, HoldKind::Consensus, mark);
                 }
                 Ok(PayloadStatusEnum::Invalid { validation_error }) => {
                     tracing::warn!(
@@ -536,7 +654,7 @@ impl<B: GossipBackend> GossipService<B> {
                     // block that reached the SIP-4 precompile before our
                     // index had its anchor): park it for a retry.
                     tracing::warn!(%peer, height, %hash, %err, "sova/1: engine submit failed");
-                    self.park_held(peer, block, rlp, depth);
+                    self.park_held(peer, block, rlp, depth, HoldKind::Engine, mark);
                 }
             }
         }
@@ -548,6 +666,8 @@ impl<B: GossipBackend> GossipService<B> {
         block: SealedBlock<reth_ethereum::Block>,
         rlp: Bytes,
         depth: u32,
+        kind: HoldKind,
+        mark: FollowerMark,
     ) {
         let now = Instant::now();
         let hash = block.hash();
@@ -581,23 +701,31 @@ impl<B: GossipBackend> GossipService<B> {
                 depth,
                 since,
                 last_try: now,
+                kind,
+                mark,
             },
         );
     }
 
-    /// Resubmits held blocks whose Zcash epoch our follower has now
-    /// scanned, or that haven't been tried for [`HOLD_RETRY`]; drops those
-    /// held longer than [`MAX_HOLD`].
+    /// Resubmits held blocks whose verdict may have changed: a consensus
+    /// hold once our follower's view of its height changed since it was
+    /// tried (a Zcash rollback, or the scan reaching it), an engine failure
+    /// every [`HOLD_RETRY`]. Drops those held longer than [`MAX_HOLD`].
     pub(crate) async fn retry_held(&mut self, now: Instant) {
-        let scanned = crate::expectations::global().scanned_through();
+        for p in std::mem::take(&mut self.reobserve) {
+            if !self.backend.has_block(p.block.hash()) {
+                self.submit_chain(p).await;
+            }
+        }
         let mut due = Vec::new();
         let mut expired = Vec::new();
         for (hash, h) in self.held.iter() {
             if now.duration_since(h.since) >= MAX_HOLD {
                 expired.push(*hash);
-            } else if scanned.is_some_and(|s| s >= h.block.number)
-                || now.duration_since(h.last_try) >= HOLD_RETRY
-            {
+            } else if match h.kind {
+                HoldKind::Consensus => self.follower_mark(h.block.number) != h.mark,
+                HoldKind::Engine => now.duration_since(h.last_try) >= HOLD_RETRY,
+            } {
                 due.push(*hash);
             }
         }
@@ -744,8 +872,13 @@ mod tests {
         canonical: HashMap<u64, B256>,
         known: HashMap<B256, Bytes>,
         statuses: VecDeque<PayloadStatusEnum>,
+        /// The next this-many submissions fail in the engine (`Err`).
+        engine_failures: usize,
         submitted: Vec<B256>,
         penalized: Vec<PeerId>,
+        /// Our follower's view (the globals in production).
+        scanned: Option<u64>,
+        generation: u64,
     }
 
     #[derive(Clone, Default)]
@@ -777,11 +910,31 @@ mod tests {
         ) -> Result<PayloadStatusEnum, String> {
             self.with(|s| {
                 s.submitted.push(block.hash());
+                if s.engine_failures > 0 {
+                    s.engine_failures -= 1;
+                    return Err("engine unavailable".to_string());
+                }
                 Ok(s.statuses.pop_front().unwrap_or(PayloadStatusEnum::Valid))
             })
         }
         fn penalize_invalid_block(&self, peer: PeerId) {
             self.with(|s| s.penalized.push(peer));
+        }
+        fn scanned_through(&self) -> Option<u64> {
+            self.with(|s| s.scanned)
+        }
+        fn rollback_generation(&self) -> u64 {
+            self.with(|s| s.generation)
+        }
+    }
+
+    /// The consensus hold for an anchor mismatch, as the engine reports it.
+    fn anchor_hold(height: u64) -> PayloadStatusEnum {
+        PayloadStatusEnum::Invalid {
+            validation_error: format!(
+                "{}: zcash anchor mismatch at height {height}",
+                crate::consensus::HOLD_MARKER
+            ),
         }
     }
 
@@ -1022,10 +1175,14 @@ mod tests {
         // Parked, not forgotten: a re-announcement doesn't refetch it...
         h.msg(p1, announce(11, b.hash())).await;
         assert!(drain(&mut rx1).is_empty());
-        // ...nothing is retried before HOLD_RETRY...
+        // ...nothing is retried while our follower's view is unchanged, however
+        // long it waits (G3)...
         h.svc.retry_held(Instant::now()).await;
+        h.svc.retry_held(Instant::now() + HOLD_RETRY).await;
         assert_eq!(h.mock.with(|s| s.submitted.len()), 1);
-        // ...then it is resubmitted, accepted, and re-announced onward.
+        // ...then a Zcash rollback changes it: resubmitted, accepted, and
+        // re-announced onward.
+        h.mock.with(|s| s.generation += 1);
         h.svc.retry_held(Instant::now() + HOLD_RETRY).await;
         assert_eq!(
             h.mock.with(|s| s.submitted.clone()),
@@ -1187,5 +1344,235 @@ mod tests {
         let lowest = blocks.first().map(|b| b.hash()).unwrap_or_default();
         h.msg(p1, announce(1_000, lowest)).await;
         assert!(drain(&mut rx1).is_empty());
+    }
+
+    /// Holds `b` (fetched from `peer`) with an anchor-mismatch verdict.
+    async fn hold_one(
+        h: &mut Harness,
+        peer: PeerId,
+        rx: &mut mpsc::Receiver<SovaMessage>,
+        b: &SealedBlock<reth_ethereum::Block>,
+        rlp: Bytes,
+    ) {
+        h.mock.with(|s| s.statuses.push_back(anchor_hold(b.number)));
+        h.msg(peer, announce(b.number, b.hash())).await;
+        assert_eq!(drain(rx), vec![get(b.hash())]);
+        h.msg(peer, SovaMessage::Block(rlp)).await;
+    }
+
+    /// Every [`HELD_POLL`] tick from `from` for `span`.
+    async fn tick_for(h: &mut Harness, from: Instant, span: Duration) {
+        let mut t = from;
+        while t < from + span {
+            h.svc.retry_held(t).await;
+            t += HELD_POLL;
+        }
+    }
+
+    /// G3 (reorg-stress 2026-09-27): a block anchored to a Zcash block our
+    /// follower doesn't have was re-validated every tick for the whole
+    /// MAX_HOLD, and re-fetched whenever a peer re-offered it after a
+    /// rollback reset. The verdict can't change while our follower's view of
+    /// the height is unchanged, so it is validated once per change.
+    #[tokio::test]
+    async fn a_held_block_is_validated_once_per_follower_change() {
+        let mut h = Harness::new();
+        h.mock.with(|s| s.scanned = Some(20));
+        let (p1, mut rx1) = h.connect(1).await;
+        let (p2, mut rx2) = h.connect(2).await;
+        let (b, rlp) = block(11, B256::repeat_byte(10));
+        hold_one(&mut h, p1, &mut rx1, &b, rlp).await;
+        let submitted = |h: &Harness| h.mock.with(|s| s.submitted.len());
+        assert_eq!(submitted(&h), 1);
+
+        // Offered again and again, by both peers, over most of MAX_HOLD
+        // (the storm offered it every ~0.4 s): never re-fetched...
+        for _ in 0..50 {
+            h.msg(p1, announce(11, b.hash())).await;
+            h.msg(p2, announce(11, b.hash())).await;
+        }
+        assert!(drain(&mut rx1).is_empty() && drain(&mut rx2).is_empty());
+        // ...and never re-validated, while the scan moves on above it.
+        let start = h.now;
+        tick_for(&mut h, start, MAX_HOLD / 2).await;
+        h.mock.with(|s| s.scanned = Some(40));
+        tick_for(&mut h, start + MAX_HOLD / 2, MAX_HOLD / 3).await;
+        assert_eq!(submitted(&h), 1, "re-validated with nothing changed");
+
+        // A Zcash rollback below it: its record is gone until the scan
+        // comes back, so it waits without an engine round trip...
+        h.mock.with(|s| {
+            s.generation += 1;
+            s.scanned = Some(10);
+            s.statuses.push_back(anchor_hold(11));
+        });
+        h.svc.retry_held(start + Duration::from_secs(1)).await;
+        assert_eq!(submitted(&h), 1, "validated before its record exists");
+        // ...and is validated exactly once against the new record.
+        h.mock.with(|s| s.scanned = Some(12));
+        tick_for(
+            &mut h,
+            start + Duration::from_secs(2),
+            Duration::from_secs(30),
+        )
+        .await;
+        assert_eq!(submitted(&h), 2);
+        assert!(h.mock.with(|s| s.penalized.is_empty()));
+    }
+
+    /// A held block at height N does not hold up N, N+1.. from peers: they
+    /// are fetched, imported and relayed while it waits, and it is not
+    /// re-validated in between.
+    #[tokio::test]
+    async fn a_held_block_does_not_hold_up_newer_blocks() {
+        let mut h = Harness::new();
+        h.mock.with(|s| s.scanned = Some(20));
+        let (p1, mut rx1) = h.connect(1).await;
+        let (_p2, mut rx2) = h.connect(2).await;
+        // The stale sibling (another block for 11), held.
+        let mut stale = reth_ethereum::Block::default();
+        stale.header.number = 11;
+        stale.header.parent_hash = B256::repeat_byte(10);
+        stale.header.timestamp = 1;
+        let mut stale_rlp = Vec::new();
+        stale.encode(&mut stale_rlp);
+        let stale = SealedBlock::seal_slow(stale);
+        hold_one(&mut h, p1, &mut rx1, &stale, Bytes::from(stale_rlp)).await;
+
+        // The good 11 and its descendants, each announced as it is sealed.
+        let mut parent = B256::repeat_byte(10);
+        let mut chain = Vec::new();
+        for n in 11..=14u64 {
+            let (b, rlp) = block(n, parent);
+            parent = b.hash();
+            h.svc.retry_held(h.now + HELD_POLL * n as u32).await;
+            h.msg(p1, announce(n, b.hash())).await;
+            assert_eq!(
+                drain(&mut rx1),
+                vec![get(b.hash())],
+                "height {n} not fetched"
+            );
+            h.msg(p1, SovaMessage::Block(rlp)).await;
+            chain.push(b.hash());
+        }
+        let mut expected = vec![stale.hash()];
+        expected.extend(chain.iter().copied());
+        assert_eq!(h.mock.with(|s| s.submitted.clone()), expected);
+        // Relayed onward, in order.
+        assert_eq!(
+            drain(&mut rx2),
+            chain
+                .iter()
+                .zip(11u64..)
+                .map(|(hash, n)| announce(n, *hash))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// A Zcash rollback re-enables resubmission even when the scan still
+    /// covers the height (a rollback above it, or one that was re-scanned
+    /// within a tick); once accepted, the block is relayed onward and never
+    /// tried again.
+    #[tokio::test]
+    async fn a_zcash_rollback_re_enables_resubmission() {
+        let mut h = Harness::new();
+        h.mock.with(|s| s.scanned = Some(20));
+        let (p1, mut rx1) = h.connect(1).await;
+        let (_p2, mut rx2) = h.connect(2).await;
+        let (b, rlp) = block(11, B256::repeat_byte(10));
+        hold_one(&mut h, p1, &mut rx1, &b, rlp).await;
+        let start = h.now;
+        tick_for(&mut h, start, Duration::from_secs(10)).await;
+        assert_eq!(h.mock.with(|s| s.submitted.len()), 1);
+
+        // Our zebrad flips back to the block's Zcash branch.
+        h.mock.with(|s| s.generation += 1);
+        tick_for(
+            &mut h,
+            start + Duration::from_secs(10),
+            Duration::from_secs(10),
+        )
+        .await;
+        assert_eq!(
+            h.mock.with(|s| s.submitted.clone()),
+            vec![b.hash(), b.hash()]
+        );
+        assert_eq!(drain(&mut rx2), vec![announce(11, b.hash())]);
+        // Accepted: no longer held, so another rollback doesn't resubmit it.
+        h.mock.with(|s| s.generation += 1);
+        tick_for(
+            &mut h,
+            start + Duration::from_secs(20),
+            Duration::from_secs(10),
+        )
+        .await;
+        assert_eq!(h.mock.with(|s| s.submitted.len()), 2);
+    }
+
+    /// A local engine failure is not a consensus verdict: it keeps the
+    /// timed retry.
+    #[tokio::test]
+    async fn an_engine_failure_is_retried_on_a_timer() {
+        let mut h = Harness::new();
+        h.mock.with(|s| {
+            s.scanned = Some(20);
+            s.engine_failures = 1;
+        });
+        let (p1, mut rx1) = h.connect(1).await;
+        let (b, rlp) = block(11, B256::repeat_byte(10));
+        h.msg(p1, announce(11, b.hash())).await;
+        drain(&mut rx1);
+        h.msg(p1, SovaMessage::Block(rlp)).await;
+        h.svc.retry_held(Instant::now()).await;
+        assert_eq!(h.mock.with(|s| s.submitted.len()), 1);
+        h.svc.retry_held(Instant::now() + HOLD_RETRY).await;
+        assert_eq!(h.mock.with(|s| s.submitted.len()), 2);
+        assert!(h.mock.with(|s| s.penalized.is_empty()));
+    }
+
+    /// G3b: our own Zcash rollback drops the candidates above it, after the
+    /// peer that saw it first has re-announced. The blocks we accepted near
+    /// our head are resubmitted so the validator observes them again;
+    /// canonical ones and ones too deep to matter are not.
+    #[tokio::test]
+    async fn a_rollback_resubmits_blocks_whose_candidates_it_dropped() {
+        let mut h = Harness::new();
+        let (p1, mut rx1) = h.connect(1).await;
+        async fn accept(
+            h: &mut Harness,
+            peer: PeerId,
+            rx: &mut mpsc::Receiver<SovaMessage>,
+            n: u64,
+            parent: B256,
+        ) -> (SealedBlock<reth_ethereum::Block>, Bytes) {
+            let (b, rlp) = block(n, parent);
+            h.msg(peer, announce(n, b.hash())).await;
+            drain(rx);
+            h.msg(peer, SovaMessage::Block(rlp.clone())).await;
+            (b, rlp)
+        }
+        // Too deep below our head (10) to matter; then 11 and 12 above it.
+        let (deep, _) = accept(&mut h, p1, &mut rx1, 6, B256::repeat_byte(5)).await;
+        let (b11, _) = accept(&mut h, p1, &mut rx1, 11, B256::repeat_byte(10)).await;
+        let (b12, _) = accept(&mut h, p1, &mut rx1, 12, b11.hash()).await;
+        // One that has since become canonical here.
+        let (canon, canon_rlp) = accept(&mut h, p1, &mut rx1, 9, B256::repeat_byte(8)).await;
+        h.mock.with(|s| s.known.insert(canon.hash(), canon_rlp));
+        let before = h.mock.with(|s| s.submitted.len());
+
+        // Our rollback, seen when the next event arrives.
+        h.mock.with(|s| s.generation += 1);
+        h.svc.on_head_tick();
+        h.svc.retry_held(Instant::now()).await;
+        assert_eq!(
+            h.mock.with(|s| s.submitted[before..].to_vec()),
+            vec![b11.hash(), b12.hash()],
+            "lowest first; not {:?} (deep) or {:?} (canonical)",
+            deep.hash(),
+            canon.hash()
+        );
+        // Once.
+        h.svc.retry_held(Instant::now()).await;
+        assert_eq!(h.mock.with(|s| s.submitted.len()), before + 2);
     }
 }

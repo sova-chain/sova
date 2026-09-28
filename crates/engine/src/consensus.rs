@@ -257,6 +257,25 @@ impl HeaderValidator for SovaConsensus {
         parent: &SealedHeader,
     ) -> Result<(), ConsensusError> {
         self.inner.validate_header_against_parent(header, parent)?;
+        // SIP-4 §7: a block built on a parent anchored to a Zcash block our
+        // follower no longer has descends from a block §7 invalidates, so it
+        // is held like the parent would be, whatever its own anchor. The
+        // parent's anchor was checked once, at its own import, possibly
+        // before the Zcash reorg (G2, reorg-stress seed 202;
+        // docs/audits/2026-09-27-follower-stale-block.md). Only a definite
+        // mismatch holds: an unscanned parent height passes, as before.
+        if parent.number() > 0 {
+            let got = parent.header().parent_beacon_block_root();
+            if let AnchorVerdict::Mismatch { expected } =
+                self.expectations.check_anchor(parent.number(), got)
+            {
+                return Err(ConsensusError::other(SettlementError::AnchorMismatch {
+                    height: parent.number(),
+                    expected: B256::from(expected),
+                    got,
+                }));
+            }
+        }
         if (self.sip6)().is_none() || header.number() == 0 {
             return Ok(());
         }
@@ -639,7 +658,6 @@ mod tests {
     /// one), and the sync driver's forkchoice update then made them
     /// canonical with no further check.
     #[test]
-    #[ignore = "G2: see docs/audits/2026-09-27-follower-stale-block.md"]
     fn g2_a_child_of_a_parent_on_an_orphaned_zcash_block_is_held() {
         let e = leak();
         e.insert(5, burnless_record());

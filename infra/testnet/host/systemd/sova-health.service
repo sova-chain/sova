@@ -4,5 +4,7 @@ After=network-online.target
 
 [Service]
 Type=oneshot
+# A pass on a thrashing host must not block the next one (2026-09-27).
+TimeoutStartSec=100
 EnvironmentFile=-/etc/sova/health.env
 ExecStart=/usr/local/lib/sova-infra/health.sh

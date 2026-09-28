@@ -186,6 +186,12 @@ impl ExpectedSettlements {
         self.map.lock().ok()?.get(&height).cloned()
     }
 
+    /// The Zcash block hash a height's epoch closed at, as our follower saw
+    /// it (no clone of the record).
+    fn epoch_hash(&self, height: u64) -> Option<[u8; 32]> {
+        self.map.lock().ok()?.get(&height).map(|r| r.epoch.hash)
+    }
+
     /// Drop expectations above `height` (Zcash reorg: they regenerate
     /// from the replacement chain) and remember `height` as a rollback
     /// floor for [`Self::effective_head`].
@@ -207,8 +213,8 @@ impl ExpectedSettlements {
     /// has there (it was built on a branch Zcash reorged away).
     #[must_use]
     pub fn is_stale(&self, height: u64, canonical_anchor: Option<[u8; 32]>) -> bool {
-        self.record(height)
-            .is_some_and(|r| canonical_anchor != Some(r.epoch.hash))
+        self.epoch_hash(height)
+            .is_some_and(|hash| canonical_anchor != Some(hash))
     }
 
     /// SIP-4 §7: the head the sealer and arbiter should act on. After a
@@ -220,34 +226,49 @@ impl ExpectedSettlements {
     /// blocks out when the replacement becomes head.
     /// `anchor_at(h)` reads the canonical block's `parent_beacon_block_root`.
     ///
-    /// Without a pending rollback (a restart, or an unwind this process
-    /// never saw) the stale tail is found directly: walk down from `head`
-    /// while the canonical block is anchored to a Zcash block our follower
-    /// no longer has. Usually one check. Capped at [`STALE_SCAN_MAX`] blocks,
-    /// beyond Zebra's 99-block reorg limit. (Testnet stall 2026-09-24: a
-    /// restarted keeper treated a stale tip as its head and never re-sealed.)
+    /// Stale blocks are also found directly (a restart, an unwind this
+    /// process never saw, or a stale block buried under fresh ones): the
+    /// lowest canonical block in the last [`STALE_SCAN_MAX`] (beyond Zebra's
+    /// 99-block reorg limit) anchored to a Zcash block our follower no
+    /// longer has makes everything from it up stale, since every block
+    /// above descends from it. The walk goes up from the bottom of the
+    /// window, not down from the head: blocks built on a stale block can
+    /// carry fresh anchors, and stopping at the first of those from the top
+    /// left a stale block buried under them forever (G1, reorg-stress seed
+    /// 202; `docs/audits/2026-09-27-follower-stale-block.md`). (Testnet
+    /// stall 2026-09-24: a restarted keeper treated a stale tip as its head
+    /// and never re-sealed.) Only a block that has an anchor, and a
+    /// different one from our follower's, counts: a header we failed to
+    /// read must not make the whole window stale.
     pub fn effective_head(&self, head: u64, anchor_at: impl Fn(u64) -> Option<[u8; 32]>) -> u64 {
+        let lowest = head.saturating_sub(STALE_SCAN_MAX - 1).max(1);
+        let below_stale = (lowest..=head)
+            .find(|&h| anchor_at(h).is_some_and(|a| self.is_stale(h, Some(a))))
+            .map(|h| h - 1);
         let pending = self.unwound.load(Ordering::SeqCst);
-        if pending == 0 {
-            let mut h = head;
-            while h > 0 && head - h < STALE_SCAN_MAX && self.is_stale(h, anchor_at(h)) {
-                h -= 1;
+        let floor = if pending == 0 {
+            None
+        } else {
+            let floor = pending - 1;
+            let first = floor.saturating_add(1);
+            let resolved = head <= floor
+                || self
+                    .epoch_hash(first)
+                    .is_some_and(|hash| anchor_at(first) == Some(hash));
+            if resolved {
+                let _ =
+                    self.unwound
+                        .compare_exchange(pending, 0, Ordering::SeqCst, Ordering::SeqCst);
+                None
+            } else {
+                Some(floor)
             }
-            return h;
+        };
+        match (below_stale, floor) {
+            (Some(a), Some(b)) => a.min(b),
+            (Some(a), None) | (None, Some(a)) => a,
+            (None, None) => head,
         }
-        let floor = pending - 1;
-        let first = floor.saturating_add(1);
-        let resolved = head <= floor
-            || self
-                .record(first)
-                .is_some_and(|r| anchor_at(first) == Some(r.epoch.hash));
-        if resolved {
-            let _ = self
-                .unwound
-                .compare_exchange(pending, 0, Ordering::SeqCst, Ordering::SeqCst);
-            return head;
-        }
-        floor
     }
 
     /// SIP-4 anchor check: a block at `height` must commit, in
@@ -835,7 +856,15 @@ mod tests {
             })
         };
         assert_eq!(e.effective_head(5, new), 5);
-        assert_eq!(e.effective_head(15, old), 15, "cleared once resolved");
+        // The floor is cleared: a chain on the new branch is not held...
+        assert_eq!(e.effective_head(15, new), 15, "cleared once resolved");
+        // ...but blocks still on the old branch stay stale (G1): the
+        // effective head no longer depends on the floor to find them.
+        assert_eq!(
+            e.effective_head(15, old),
+            4,
+            "old-branch blocks are still stale"
+        );
     }
 
     /// The testnet stall (2026-09-24): after a restart no rollback is
@@ -875,7 +904,6 @@ mod tests {
     /// effective head is the reth head, the sealer never re-seals 376, and
     /// followers never get a replacement to converge on.
     #[test]
-    #[ignore = "G1: see docs/audits/2026-09-27-follower-stale-block.md"]
     fn g1_a_stale_block_buried_under_fresh_ones_is_still_found() {
         let e = ExpectedSettlements::default();
         for h in 1..=20 {

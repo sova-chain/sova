@@ -319,6 +319,7 @@ the gitleaks CI scan.
 | `host/cloud-init.yaml` | First boot: admin user, SSH hardening, ufw, unattended upgrades, journald caps, Docker |
 | `host/byo-bootstrap.py` | Applies that same `cloud-init.yaml` over SSH to a byo host, so it matches a Hetzner one |
 | `test/byo-dry-run.sh` | Offline proof that the optional byo path works (a byo keeper validates, renders and appears in every launch stage) and that the default example is all-Hetzner |
+| `test/null-sealed-stub.sh` | Offline test of the `null_run` rule (`health.sh`) and its `smoke.sh` twin against a local JSON-RPC stub: recent sealed, 50 min old, none within the bound, RPC hiccups, bursts, a slow Zcash, a young chain |
 | `deploy.sh` → `host/setup-host.sh` | Per-role setup over SSH. `deploy.sh check` validates the config, `deploy.sh render` writes and lints every host's files locally |
 | `cloudflare.sh` | DNS, tunnels (incl. the checkout relayer's host on the faucet tunnel), the RPC firewall Worker (with the RPC rate limit), the WAF rate-limit rule (faucet `/drip`, relayer `/reserve` + `/claim`), R2 bucket + domain, teardown |
 | `epoch-base.sh` | Proposes, pins and records the epoch base B |
@@ -342,16 +343,33 @@ project's server limit is the ceiling.
 `sova-health.timer` runs `host/health.sh` every 2 minutes on every host.
 Findings go to the journal (`journalctl -t sova-health`). With
 `deploy.sh alerts`, they also go to Telegram, at most once an hour per
-alert.
+alert and host.
+
+Network findings (`block_age`, `null_run`, `epoch_lag` "NETWORK BEHIND
+ZCASH") look the same from every node, so only two hosts send them:
+`HEALTH_NETWORK_ALERT_HOSTS` in `config.env` (default: the rpc server and
+the first seed, `sova-rpc-1` and `sova-seed-1`; deploy.sh renders
+`HEALTH_NETWORK_ALERTS=1` on those, 0 elsewhere). Two, so one dead host
+can't silence them: on 2026-09-27 the rpc host, then the only sender, ran
+out of memory and nothing was sent. Expect the same network alert twice,
+one from each. The other hosts log network findings only. `deploy.sh
+check` warns if only one host is named.
+
+Every host also gets a `SWAP_GB` (default 4; 0 = none) `/swapfile`, in
+`/etc/fstab`, and `vm.swappiness=10` (`/etc/sysctl.d/60-sova-swap.conf`).
+An active `/swapfile` (such as the ones made by hand on 2026-09-27) is left
+as it is, whatever its size; `deploy.sh` logs `swap: /swapfile already
+active`.
 
 | Alert | Fires when | Meaning |
 | --- | --- | --- |
+| `mem_low` | `MemAvailable` under `MEM_ALERT_MB` (300) on 2 passes in a row (~2 min), any host | The alert lists swap use and the top 3 processes by RSS. `sova` near the top: reth's caches (the 2026-09-27 stall was its 4 GiB state cache, capped since v0.1.12). Restart the unit or resize the box (`hcloud server change-type`). |
 | `disk_*` | `/` or `/var/lib/sova` ≥ 80% | Grow the volume (`hcloud volume resize`, then `resize2fs`; an optional byo keeper on AWS: `docs/ops/keeper-aws.md`, "Operating it") |
 | `zebrad_down`, `zebrad_lag` | RPC dead, or more than 20 blocks behind `estimatedheight` | Our Zcash view is stale, so C5 stalls |
 | `sova_down` | Unit or RPC down | |
 | `epoch_lag` | (zebrad tip − B + 1) − sova head > 10 epochs (~12 min) | **"WE LAG (infra)"**: the reference node (public RPC) is ahead of us, so it's our problem. **"NETWORK STALLED (miner matter)"**: the reference is stuck too, and nobody is sealing. That's not an infra failure; check the keeper. On `rpc-1` itself there is no reference, so the alert says it can't tell. |
-| `block_age` | The newest Sova block is older than `BLOCK_AGE_ALERT_MIN` (10 min) | A block's time is its Zcash block's. The alert says whether zebrad's tip is old too (**Zcash is slow**; Sova waits for it, nothing to fix) or not (**SOVA STUCK**: look at the keeper and `epoch_lag`). A 5-minute gap is normal. |
-| `null_run` | The last `NULL_RUN_ALERT` (20) blocks are all SIP-6 null blocks | Heights advance but nobody is burning, so no transaction can be mined. Check `sova-keeper` (a spent per-run budget, `KEEPER_BUDGET_ZAT`, stopped it on 2026-09-25) and restart it. |
+| `block_age` | The newest Sova block is older than `BLOCK_AGE_ALERT_MIN` (10 min) | A block's time is its Zcash block's. The alert says whether zebrad's tip is old too (**Zcash is slow**; Sova waits for it, nothing to fix) or not (**SOVA STUCK**: look at the keeper and `epoch_lag`). A 5-minute gap is normal. Sent by the `HEALTH_NETWORK_ALERT_HOSTS`. |
+| `null_run` | No SIP-6 sealed block for more than `NULL_SEALED_MAX_MIN` (45) minutes. The check walks back from the head to the newest sealed block and times it by its block time (its Zcash block's); it stops once the null blocks span the limit (an alert), or at 1800 blocks (60 min of 2 s blocks), where a shorter span is logged and judged on a later pass. If the RPC doesn't answer every block, the pass is skipped | Heights advance on null blocks but nobody is burning, so no transaction can be mined. Check `sova-keeper` (a spent per-run budget, `KEEPER_BUDGET_ZAT`, stopped it on 2026-09-25 and every block was null for an hour) and restart it. Timed, not counted: a demand-mode keeper seals only for pending transactions plus a heartbeat every `KEEPER_HEARTBEAT_SECS` (30 min; 45 = 1.5×), and a Zcash burst of 3 s blocks is hundreds of null blocks. When no Sova block at all has come for that long, it is only logged: that is `block_age`'s finding (Zcash slow, or Sova stuck). `smoke.sh edge` fails on the same rule; it walks at most 600 blocks through the public edge and prints an uncounted `note` when a burst makes those span less than the limit. `NULL_RUN_ALERT` (the old block count) is ignored, with a warning. Sent by the `HEALTH_NETWORK_ALERT_HOSTS`. |
 | `c5_reject` | Any `settlement mismatch` in the last 3 minutes | A peer offered a block that contradicts our zebrad. Investigate: a doctored snapshot, a Zcash fork, or a bad sealer. |
 | `faucet_down`, `faucet_dry`, `faucet_over` | `/status` dead, not accepting drips, or the hot wallet is over its limit | Top up (plain transfer), or stop topping up |
 | `checkout_down`, `checkout_low`, `checkout_refusing` | The checkout relayer's `/status` is dead; its SOVA is under `CHECKOUT_RELAYER_ALERT_BALANCE_WEI` (1 SOVA); or it refuses new orders (under the 0.1 SOVA floor, or at its open-order cap) | Top it up (below); a cap that stays full for an hour is someone holding orders open: see "Checkout relayer" |

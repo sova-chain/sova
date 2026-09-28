@@ -4,7 +4,8 @@
 #   ./smoke.sh edge        from THIS machine, as a stranger would: public
 #                          RPC answers chain 82330 and a moving head; the
 #                          latest block is SIP-6 sealed (97-byte extraData)
-#                          or null (empty) when SOVA_SIP6=1; block 0 is
+#                          or null (empty) when SOVA_SIP6=1, and some block
+#                          was sealed within NULL_SEALED_MAX_MIN; block 0 is
 #                          the published genesis hash (seeds.json); with
 #                          SOVA_SIP7=1, ZcashBlocks.latest() at the head
 #                          is its anchored Zcash height (head + B - 1) and
@@ -50,6 +51,7 @@ validate_servers
 validate_edge_config
 validate_sip6
 validate_checkout_config
+validate_health_config
 need_cmd jq
 need_cmd curl
 PASS=0
@@ -60,6 +62,79 @@ bad() { FAIL=$((FAIL + 1)); printf 'FAIL  %s\n' "$*"; }
 pub_rpc() { # method [params-json]
   curl -fsS --max-time 15 -H 'Content-Type: application/json' \
     --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$1\",\"params\":${2:-[]}}" "https://${RPC_HOST}/"
+}
+
+# last_sealed <head> <limit-secs>: host/health.sh's walk, through the public
+# RPC: back from <head> (at most NULL_SEALED_WALK blocks, never to genesis)
+# to the newest sealed block (97-byte extraData), in batches of the edge's
+# cap (10), paced under its per-IP limit. Stops early at a null block more
+# than <limit-secs> older than the head: the verdict is known then, and the
+# walk stays short.
+# Sets LS_HEAD_TS, LS_NUM/LS_TS (empty: none found), LS_OLDEST/LS_OLDEST_TS.
+# Returns 1 unless every block asked for came back readable.
+NULL_SEALED_WALK=600
+last_sealed() {
+  local head="$1" limit="$2" lo hi b i hex req rows want num x ts
+  LS_HEAD_TS="" LS_NUM="" LS_TS="" LS_OLDEST="" LS_OLDEST_TS=""
+  lo=$((head - NULL_SEALED_WALK + 1))
+  ((lo < 1)) && lo=1
+  for ((hi = head; hi >= lo; hi = b - 1)); do
+    ((hi < head)) && sleep 0.5 # <= 20 calls per 10 s, under the edge's 50
+    b=$((hi - 9))
+    ((b < lo)) && b=${lo}
+    req=""
+    for ((i = hi; i >= b; i--)); do
+      printf -v hex '0x%x' "${i}"
+      req+="${req:+,}{\"jsonrpc\":\"2.0\",\"id\":${i},\"method\":\"eth_getBlockByNumber\",\"params\":[\"${hex}\",false]}"
+    done
+    rows="$(curl -fsS --max-time 15 -H 'Content-Type: application/json' --data "[${req}]" "https://${RPC_HOST}/" 2>/dev/null |
+      jq -r 'sort_by(-.id)[] | "\(.id) \(.result.extraData // "-") \(.result.timestamp // "-")"' 2>/dev/null)" || return 1
+    want=${hi}
+    while read -r num x ts; do
+      [[ "${num}" == "${want}" && "${x}" =~ ^0x[0-9a-fA-F]*$ && "${ts}" =~ ^0x[0-9a-fA-F]+$ ]] || return 1
+      want=$((want - 1))
+      ((num == head)) && LS_HEAD_TS=$((ts))
+      if ((${#x} == 196)); then
+        LS_NUM=${num} LS_TS=$((ts))
+        return 0
+      fi
+      LS_OLDEST=${num} LS_OLDEST_TS=$((ts))
+    done <<<"${rows}"
+    ((want == b - 1)) || return 1 # fewer answers than asked
+    ((LS_HEAD_TS - LS_OLDEST_TS > limit)) && return 0
+  done
+  return 0
+}
+
+# A null block (empty extraData, SIP-6) carries no transactions; only a
+# sealed block (a burn's sealer) does. A head that advances on null blocks
+# alone looks live but accepts nothing (2026-09-25: the keeper's per-run
+# burn budget ran out and ~70 null blocks in a row followed). Judged by
+# time, as host/health.sh does: a demand-mode keeper seals only for pending
+# transactions plus a heartbeat (KEEPER_HEARTBEAT_SECS, 30 min), and Zcash
+# bursts make long null runs that are no fault. Times are the blocks' own
+# (their Zcash blocks'), measured back from the head.
+check_null_sealed() { # head (a number)
+  local head="$1" limit=$((NULL_SEALED_MAX_MIN * 60)) now
+  if [[ "${SOVA_SIP6}" != 1 ]] || ((head < 1)); then
+    return 0
+  fi
+  now="$(date +%s)"
+  if ! last_sealed "${head}" "${limit}"; then
+    bad "rpc: could not read the blocks back from ${head} to find the newest sealed one (edge limit? retry)"
+  elif [[ -n "${LS_NUM}" ]] && ((LS_HEAD_TS - LS_TS <= limit)); then
+    ok "rpc: newest sealed block ${LS_NUM} is $(((now - LS_TS) / 60)) min old, $((head - LS_NUM)) null after it (fail over ${NULL_SEALED_MAX_MIN} min)"
+  elif [[ -n "${LS_NUM}" ]]; then
+    bad "rpc: no sealed block for $(((now - LS_TS) / 60)) min (newest ${LS_NUM}; fail over ${NULL_SEALED_MAX_MIN} min): no one is burning (is sova-keeper running?), so no transaction can be mined"
+  elif [[ "${LS_OLDEST}" == 1 ]] && ((LS_HEAD_TS - LS_OLDEST_TS <= limit)); then
+    ok "rpc: no sealed block yet, but the chain is $(((now - LS_OLDEST_TS) / 60)) min old (fail over ${NULL_SEALED_MAX_MIN} min)"
+  elif ((LS_HEAD_TS - LS_OLDEST_TS > limit)); then
+    bad "rpc: no sealed block for over ${NULL_SEALED_MAX_MIN} min (blocks ${LS_OLDEST}..${head} are all null, back to $(((now - LS_OLDEST_TS) / 60)) min ago): no one is burning (is sova-keeper running?), so no transaction can be mined"
+  else
+    # The walk's cap, inside the limit (a Zcash burst): not judged, neither
+    # a pass nor a failure. host/health.sh walks further.
+    printf 'note  %s\n' "rpc: no sealed block in the last ${NULL_SEALED_WALK} blocks, but they span only $(((LS_HEAD_TS - LS_OLDEST_TS) / 60)) min (a Zcash burst); not judged, fail over ${NULL_SEALED_MAX_MIN} min"
+  fi
 }
 
 port_open() { nc -z -w 5 "$1" "$2" >/dev/null 2>&1; }
@@ -75,19 +150,7 @@ cmd_edge() {
     h2="$(pub_rpc eth_blockNumber | jq -r .result)"
     [[ "${h2}" =~ ^0x ]] && (( h2 > h1 )) && ok "rpc: head advanced to $((h2)) in 90 s" ||
       bad "rpc: head did not advance in 90 s ($((h1)) -> ${h2}); epochs are ~75 s, retry once before worrying"
-    # A null block (empty extraData, SIP-6) carries no transactions; only a
-    # sealed block (a burn's sealer) does. A head that advances on null
-    # blocks alone looks live but accepts nothing (2026-09-25: the keeper's
-    # per-run burn budget ran out and ~70 null blocks in a row followed).
-    if [[ "${SOVA_SIP6}" == 1 && "${h2}" =~ ^0x ]]; then
-      local i x sealed=0
-      for ((i = 0; i < 20; i++)); do
-        x="$(pub_rpc eth_getBlockByNumber "[\"$(printf '0x%x' $((h2 - i)))\",false]" | jq -r '.result.extraData // ""')"
-        ((${#x} == 196)) && sealed=$((sealed + 1))
-      done
-      ((sealed > 0)) && ok "rpc: ${sealed} of the last 20 blocks sealed (can carry transactions)" ||
-        bad "rpc: the last 20 blocks are all null: no one is burning (is sova-keeper running?), so no transaction can be mined"
-    fi
+    [[ "${h2}" =~ ^0x ]] && check_null_sealed $((h2))
   else
     bad "rpc: eth_blockNumber gave '${h1}'"
   fi
