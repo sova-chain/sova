@@ -87,6 +87,8 @@ export const repo = {
   docs: `${REPO}/tree/main/docs`,
   issues: `${REPO}/issues`,
   discussions: `${REPO}/discussions`,
+  /** The SIPs category of Discussions, where a SIP starts as an idea. */
+  sipIdeas: `${REPO}/discussions/categories/sips`,
   contributing: `${REPO}/blob/main/CONTRIBUTING.md`,
   securityPolicy: `${REPO}/blob/main/SECURITY.md`,
   reportVulnerability: `${REPO}/security/advisories/new`,
@@ -160,10 +162,11 @@ export const readLinks = [
 ] as const;
 
 // The homepage's table of contents (/ and /v/cover), Rob's order of
-// 2026-09-23: Why first, then Mine, then the other doors and links, then the
+// 2026-09-23, with Testnet first (Rob, 2026-09-28): Testnet, Why, then Mine, then the other doors and links, then the
 // Whitepaper, the SIPs last. `where` is the right-hand column: the path, the
 // repo without its scheme, or the file name for a file in the repo.
 export const coverToc = [
+  { href: '/testnet', label: 'Testnet' },
   { href: '/why', label: 'Why' },
   ...doors.map((d) => ({ href: d.href, label: d.h })),
   ...readLinks,
@@ -187,9 +190,10 @@ export const testnetStats = [
 // Every indexable page besides the landing page at `/`, in the homepage's
 // order (Rob, 2026-09-23): Why, Mine, the rest, then the Whitepaper and the
 // SIPs, then the press kit. `nav` is the short label in the Site.astro header
-// (nine items; /press is footer-only). The paper's title block and margin
+// (ten items, testnet first (Rob, 2026-09-28); /press is footer-only). The paper's title block and margin
 // list, every footer and the sitemap use the full list.
 export const sitePages = [
+  { href: '/testnet', label: 'Testnet', nav: 'testnet' },
   { href: '/why', label: 'Why Sova', nav: 'why' },
   { href: '/mine', label: 'Mine', nav: 'mine' },
   { href: '/node', label: 'Run a node', nav: 'node' },
@@ -200,7 +204,6 @@ export const sitePages = [
   { href: '/paper', label: 'Whitepaper', nav: 'whitepaper' },
   { href: '/sips', label: 'SIPs', nav: 'sips' },
   { href: '/press', label: 'Press kit', nav: '' },
-  { href: '/testnet', label: 'Testnet', nav: '' },
 ] as const;
 
 // Ashwings species (contracts/src/Ashwings.sol `SPECIES_W`, `SPECIES_RGB`):
@@ -235,8 +238,8 @@ export const owlSamples = [
 export const footerLinks: readonly { key: string; label: string; href?: string }[] = [
   { key: 'source-repo', label: 'Source', href: repo.root },
   { key: 'sips', label: 'Specs', href: repo.sips },
-  { key: 'docs', label: 'Docs', href: repo.docs },
-  { key: 'testnet', label: 'Join guide', href: repo.blob(TESTNET.guide) },
+  { key: 'docs', label: 'Docs', href: 'https://docs.sova.io/' },
+  { key: 'testnet', label: 'Join guide', href: 'https://docs.sova.io/start/quickstart/' },
   { key: 'explorer', label: 'Explorer', href: TESTNET.explorer },
   { key: 'telegram', label: 'Telegram', href: SOCIAL.telegram },
   { key: 'x', label: 'X', href: SOCIAL.x },

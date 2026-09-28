@@ -292,6 +292,22 @@ impl HeaderValidator for SovaConsensus {
                 },
             ));
         };
+        // The timestamp rule reads our Zcash block's time for this epoch, so
+        // it only judges a block that commits to that same Zcash block. A
+        // block anchored elsewhere (our zebrad and the sealer's saw different
+        // Zcash blocks at this height, e.g. mid-reorg) is held, like the
+        // anchor check in `check_settlements` would hold it: judging its
+        // timestamp against the wrong Zcash time would cache a valid block as
+        // invalid and ban its sealer (2026-09-28, block 22439:
+        // docs/audits/2026-09-28-null-timestamp-split.md).
+        let got = header.header().parent_beacon_block_root();
+        if let AnchorVerdict::Mismatch { expected } = self.expectations.check_anchor(height, got) {
+            return Err(ConsensusError::other(SettlementError::AnchorMismatch {
+                height,
+                expected: B256::from(expected),
+                got,
+            }));
+        }
         crate::seal::check_against_parent(
             header.header(),
             parent.header(),
@@ -700,6 +716,51 @@ mod tests {
             err.as_ref()
                 .is_some_and(|e| c.is_transient_error(e) && e.to_string().contains(HOLD_MARKER)),
             "a child of a stale-anchored parent must be held, got {err:?}"
+        );
+    }
+
+    /// 2026-09-28, block 22439: a null block's timestamp is its Zcash
+    /// block's time. Mid-reorg, the sealer and this node saw different Zcash
+    /// blocks at the epoch's height, one second apart, so the timestamp
+    /// disagreed with our record. The timestamp was judged first, cached as
+    /// invalid and the sealer banned; the block was valid on the Zcash chain
+    /// that won. A block anchored to a Zcash block we don't have must be
+    /// held; with our anchor, a wrong timestamp stays permanently invalid.
+    #[test]
+    fn a_null_block_anchored_elsewhere_is_held_not_judged_on_its_timestamp() {
+        let e = leak();
+        e.insert(5, burnless_record()); // our Zcash time for epoch 5: 0
+        let c = consensus(e).with_sip6(|| Some(82330));
+        let mut p = dev_header(b"");
+        p.number = 4;
+        p.timestamp = 100;
+        let parent = SealedHeader::seal_slow(p);
+        let null_at = |ts: u64, anchor: [u8; 32]| {
+            let mut h = dev_header(b"");
+            h.parent_hash = parent.hash();
+            h.timestamp = ts;
+            h.parent_beacon_block_root = Some(B256::from(anchor));
+            SealedHeader::seal_slow(h)
+        };
+        // Control: our anchor, the exact timestamp max(parent + 1, 0).
+        let ok = c.validate_header_against_parent(&null_at(101, ANCHOR), &parent);
+        assert!(ok.is_ok(), "{ok:?}");
+        // The sealer's Zcash block had a later time and another hash.
+        let err = c
+            .validate_header_against_parent(&null_at(102, [0xEE; 32]), &parent)
+            .err();
+        assert!(
+            err.as_ref()
+                .is_some_and(|e| c.is_transient_error(e) && e.to_string().contains(HOLD_MARKER)),
+            "a block anchored to another Zcash block must be held, got {err:?}"
+        );
+        // Our own Zcash block and a wrong timestamp: provably invalid.
+        let err = c
+            .validate_header_against_parent(&null_at(102, ANCHOR), &parent)
+            .err();
+        assert!(
+            err.as_ref().is_some_and(|e| !c.is_transient_error(e)),
+            "a wrong timestamp under our anchor stays invalid, got {err:?}"
         );
     }
 

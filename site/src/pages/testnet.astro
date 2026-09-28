@@ -24,7 +24,7 @@ import { TESTNET, SOCIAL, REPO, repo } from '../data/sova';
 
     <p>Sova is an EVM sidechain that runs beside Zcash. Every Sova node runs a full EVM beside its own Zcash node, so a contract can check a ZEC payment against Zcash itself, and the ZEC stays where it was paid. Its gas, SOVA, is issued only by burning ZEC. One Sova block per Zcash block.</p>
 
-    <p>A public testnet has been running since 24 September, mined with testnet ZEC.</p>
+    <p>A public testnet has been running since 24 September, mined with testnet ZEC. Start with the <a href={repo.blob(TESTNET.guide)}>join guide</a>.</p>
 
     <h2>How it works</h2>
     <p><strong>Mining is burning.</strong> Send ZEC to a script nobody can spend from, in an ordinary Zcash transaction that names your EVM address. The matching Sova block mints SOVA to you. Everyone who burned in that Zcash block splits the reward by weight, and the top burner seals the block. Any amount from 1,000 zatoshis.</p>
@@ -33,38 +33,38 @@ import { TESTNET, SOCIAL, REPO, repo } from '../data/sova';
 
     <h2>Fair launch</h2>
     <p>No premine. No allocation to investors, the team or anyone. Nothing in escrow.</p>
-    <p>The only way SOVA comes into existence is by producing blocks: burn ZEC, seal a block, earn SOVA. Whoever burns and seals earns it.</p>
+    <p>SOVA comes into existence only when someone burns ZEC and seals a block, and whoever does earns it.</p>
 
     <h2>Where it came from</h2>
     <p>Sova began as a venture-backed project to bring Bitcoin into an EVM. We decided not to go ahead with that plan, and set it aside. The company turned to other work, mostly intent-based solving, and much of that was Zcash on NEAR.</p>
     <p>Most sidechains for Bitcoin have been built by companies and depend on them. Zcash leaves room to try the other way: a chain that belongs to no company, launched fairly and run by the people who use it. Sova came back in that form, as a public-good experiment in support of the Zcash network. <a href="/story">The full story</a>.</p>
 
     <h2>Join the testnet</h2>
-    <p>Chain ID {TESTNET.chainId}. Public RPC at <a href={TESTNET.rpc}><code>rpc.testnet.sova.io</code></a>. Release v0.1.13 ships prebuilt binaries for Linux x86_64 and Apple Silicon, a zebrad snapshot shortens the Zcash sync from hours to minutes, and the faucet at <a href={`${TESTNET.faucet}/status`}><code>faucet.testnet.sova.io</code></a> sends 0.1 testnet ZEC a day per address, enough for a few hundred burns. Blocks and transactions are on the explorer at <a href={TESTNET.explorer}><code>explorer.testnet.sova.io</code></a>.</p>
-    <p>The <a href={repo.blob(TESTNET.guide)}>join guide</a> goes from nothing to a synced Zcash node, a Sova node that checks the genesis hash, a funded miner, and sealing blocks with your own key if you want to.</p>
+    <ul class="bul">
+      <li><strong>The <a href={repo.blob(TESTNET.guide)}>join guide</a></strong> goes from nothing to a synced Zcash node, a Sova node that checks the genesis hash, a funded miner, and sealing blocks with your own key if you want to.</li>
+      <li><strong>Release v0.1.14</strong> ships prebuilt binaries for Linux x86_64 and Apple Silicon.</li>
+      <li><strong>A zebrad snapshot</strong> shortens the Zcash sync from hours to minutes.</li>
+      <li><strong>The faucet</strong> at <a href={`${TESTNET.faucet}/status`}><code>faucet.testnet.sova.io</code></a> sends 0.1 testnet ZEC a day per address, enough for a few hundred burns.</li>
+      <li><strong>The explorer</strong> at <a href={TESTNET.explorer}><code>explorer.testnet.sova.io</code></a> shows blocks and transactions.</li>
+      <li><strong>Chain ID {TESTNET.chainId}.</strong> Public RPC at <code>rpc.testnet.sova.io</code>.</li>
+    </ul>
     <p>To try it with no network at all, <code>./box/up.sh</code> in a clone of the repo runs a Zcash regtest node, a Sova node and a miner on your laptop.</p>
-    <p>The specs are the <a href="/sips">SIPs</a>. The design is in <a href="/paper">the whitepaper</a>. Simulations run every night against a real Zcash node: several nodes, the sealer ladder, a late joiner, a Zcash reorg.</p>
 
     <h2>Ashwings</h2>
     <p><a href="/ashwings">Ashwings</a> are 10,000 pixel owls drawn by their own contract on Sova. The testnet mint is open: 625 SOVA, or 0.05 testnet ZEC from any testnet Zcash wallet, with the contract checking the payment on Zcash itself. Testnet owls go away when the testnet resets.</p>
 
-    <h2>The plan</h2>
-    <ul class="bul">
-      <li><strong>Now.</strong> The public testnet, mined with testnet ZEC.</li>
-      <li><strong>Q1 2027.</strong> Mainnet, expected.</li>
-    </ul>
-    <p>Dates are targets.</p>
-
     <h2>An experiment</h2>
-    <p>Sova is experimental and a work in progress. Pre-release and unaudited. The code and the specs still change, and testnet state gets reset. Burned ZEC is gone for good. Don’t put in money you can’t afford to lose.</p>
+    <p>Sova is pre-release and unaudited. Mainnet is expected in Q1 2027; dates are targets. The code and the specs still change, and testnet state gets reset. Burned ZEC is gone for good. Don’t put in money you can’t afford to lose.</p>
 
-    <h2>Join</h2>
+    <h2>Links</h2>
     <ul class="bul">
       <li>Telegram: <a href={SOCIAL.telegram}>t.me/sovazec</a></li>
       <li>X: <a href={SOCIAL.x}>@sovazec</a></li>
       <li>Source: <a href={REPO}>github.com/sova-chain/sova</a></li>
+      <li>Specs: <a href="/sips">the SIPs</a></li>
+      <li>Design: <a href="/paper">the whitepaper</a></li>
     </ul>
-    <p>Run a node, mine the testnet, and tell us where it breaks. Propose a change with a SIP.</p>
+    <p>Tell us where it breaks. Propose changes with a SIP.</p>
   </div>
 
   <p class="next"><a href={repo.blob(TESTNET.guide)}>Join the testnet</a><a href="/mine">Mine SOVA</a><a href="/paper">Read the whitepaper</a></p>

@@ -1,0 +1,26 @@
+---
+// Header links: sova.io and the explorer as text, then Starlight's own
+// social icons (GitHub, Telegram) from the `social` config.
+import Default from '@astrojs/starlight/components/SocialIcons.astro';
+
+const links = [
+  { label: 'sova.io', href: 'https://sova.io' },
+  { label: 'Explorer', href: 'https://explorer.testnet.sova.io' },
+];
+---
+
+{links.map(({ label, href }) => <a class="sova-hlink" href={href}>{label}</a>)}
+<Default />
+
+<style>
+  .sova-hlink {
+    font-family: var(--sova-mono);
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-2);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .sova-hlink:hover {
+    color: var(--sl-color-accent-high);
+  }
+</style>

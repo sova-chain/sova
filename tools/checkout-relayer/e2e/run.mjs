@@ -13,9 +13,20 @@
 //   B  injected wallet reserves -> watcher finds the payment on "zebrad"
 //      (payee output at vout 1) and claims -> page shows the owl untouched
 //   C  phone width; wrong amount paid -> page says so
-//   D  /ashwings/mint: injected wallet mints for SOVA; gallery shows owls
+//   D  /ashwings/mint, a newcomer: a wallet on Ethereum that has never seen
+//      Sova and holds no SOVA. Connect: the switch fails the MetaMask-mobile
+//      way (-32603 wrapping 4902), the page adds the chain, the user says no
+//      -> "try again" -> added (this wallet adds without switching, so the
+//      page switches too) -> step 2: the relayer's drip -> step 3: mint.
+//      The wallet wanders off to another network -> "switch" -> back.
+//      A second wallet (odd error code on switch) uses "+ add Sova testnet"
+//      before connecting, then mints for SOVA; the gallery shows the owls
 //   E  /ashwings/market: wallet D lists (approve + list), wallet E buys
 //      (1% fee booked for the treasury), D lists and cancels another
+//
+// anvil runs as chain 82330 so the pages treat it as the public testnet
+// (the wallet is asked to add "Sova testnet" with the explorer); its RPC
+// is still the local one (?rpc=).
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import http from 'node:http';
@@ -41,9 +52,12 @@ const SHOTS = process.env.SHOTS || join(HERE, 'shots');
 const ZCASH = '0x0000000000000000000000000000000000005a00';
 const MNEMONIC = 'test test test test test test test test test test test junk'; // anvil's public dev mnemonic
 const acct = (i) => mnemonicToAccount(MNEMONIC, { addressIndex: i });
-const [deployer, treasury, relayer, buyerA, buyerB, buyerC, buyerD, buyerE] = [0, 1, 2, 5, 6, 7, 8, 9].map(acct);
+const [deployer, treasury, relayer, newcomer, buyerA, buyerB, buyerC, buyerD, buyerE] = [0, 1, 2, 3, 5, 6, 7, 8, 9].map(acct);
 const PRICE_WEI = 10n ** 19n; // 10 SOVA
 const PRICE_ZAT = 25_000_000n; // 0.25 ZEC
+const CHAIN = { ...foundry, id: 82330 }; // the public testnet's id (infra/testnet/deployments/sova-testnet.json)
+const SOVA_HEX = '0x1419a';
+const EXPLORER = 'https://explorer.testnet.sova.io';
 
 const children = [];
 const servers = [];
@@ -121,13 +135,13 @@ async function main() {
 
   step('anvil');
   const anvilPort = await freePort();
-  const anvil = spawn('anvil', ['--port', String(anvilPort), '--silent'], { stdio: 'ignore' });
+  const anvil = spawn('anvil', ['--port', String(anvilPort), '--chain-id', String(CHAIN.id), '--silent'], { stdio: 'ignore' });
   children.push(anvil);
   const RPC = `http://127.0.0.1:${anvilPort}`;
   const transport = viemHttp(RPC);
-  const pub = createPublicClient({ chain: foundry, transport, pollingInterval: 100 });
+  const pub = createPublicClient({ chain: CHAIN, transport, pollingInterval: 100 });
   await waitFor(() => pub.getChainId(), 'anvil up');
-  const wallet = (account) => createWalletClient({ chain: foundry, transport, account });
+  const wallet = (account) => createWalletClient({ chain: CHAIN, transport, account });
   const dep = wallet(deployer);
   const mined = async (hash) => {
     const r = await pub.waitForTransactionReceipt({ hash });
@@ -187,6 +201,7 @@ async function main() {
       ...process.env, SOVA_RPC_URL: RPC, CHECKOUT: coAddr, RELAYER_KEY: toHex(relayer.getHdKey().privateKey),
       PORT: String(relPort), ZCASH_RPC_URL: `http://127.0.0.1:${zPort}`, ZCASH_NET: 'test', POLL_MS: '1000',
       RPC_POLL_MS: '250', RPC_PER_10S: '1000', // anvil has no per-IP limit
+      DRIP: '1', // the testnet SOVA drip for the mint page (chain 82330)
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -336,34 +351,171 @@ async function main() {
   assert(bad.status === 400, 'relayer rejects a zero recipient');
 
   // ---- Flow D ------------------------------------------------------------
-  step('D: /ashwings/mint — injected wallet mints for SOVA');
-  const Q = `rpc=${encodeURIComponent(RPC)}&ashw=${ashwAddr}&market=${mktAddr}`;
+  step('D: /ashwings/mint — a newcomer: connect (add + switch, reject, retry), drip, mint');
+  const Q = `rpc=${encodeURIComponent(RPC)}&ashw=${ashwAddr}&market=${mktAddr}&relayer=${encodeURIComponent(RELAYER)}`;
   const MINT = `http://127.0.0.1:${sitePort}/ashwings/mint/?${Q}`;
   const MKT = `http://127.0.0.1:${sitePort}/ashwings/market/?${Q}`;
   const walletOf = (account) => ({ fn: shim.fn, arg: { rpc: RPC, account: account.address } });
   const stHas = (p, t, ms) =>
     p.waitForFunction((x) => document.querySelector('#status .st').textContent.includes(x), t, { timeout: ms ?? 20000 });
+  const stepIs = (p, id, want) => p.waitForFunction(([i, w]) => document.getElementById(i).dataset.s === w, [id, want], { timeout: 20000 });
   const ashwRead = (functionName, args = []) => pub.readContract({ address: ashwAddr, abi: ashw.abi, functionName, args });
   const mktRead = (functionName, args = []) => pub.readContract({ address: mktAddr, abi: mkt.abi, functionName, args });
 
-  const d = await newPage({}, walletOf(buyerD));
+  /**
+   * A browser wallet that behaves like the real ones: its own chain list and
+   * current chain, chainChanged/accountsChanged events, a configurable
+   * "unknown chain" error on switch, and a user who can say no. Every call
+   * lands in window.__walletLog.
+   */
+  const mockWallet = {
+    fn: (o) => {
+      const listeners = {};
+      const emit = (ev, v) => (listeners[ev] || []).forEach((f) => f(v));
+      const st = { chain: o.start, known: new Set(o.known), connected: false, rejectAdd: o.rejectAdd || 0 };
+      const log = (window.__walletLog = []);
+      const fwd = async (method, params) => {
+        const r = await fetch(o.rpc, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
+        const j = await r.json();
+        if (j.error) throw j.error;
+        return j.result;
+      };
+      window.__wallet = { st, goTo: (id) => { st.chain = id; emit('chainChanged', id); } };
+      window.ethereum = {
+        isMetaMask: true,
+        on: (ev, f) => (listeners[ev] ||= []).push(f),
+        removeListener: () => {},
+        async request({ method, params = [] }) {
+          log.push({ method, params });
+          switch (method) {
+            case 'eth_chainId':
+              return st.chain;
+            case 'eth_accounts':
+              return st.connected ? [o.account] : [];
+            case 'eth_requestAccounts':
+              st.connected = true;
+              emit('accountsChanged', [o.account]);
+              return [o.account];
+            case 'wallet_switchEthereumChain': {
+              const id = params[0].chainId;
+              if (!st.known.has(id)) throw o.switchError;
+              if (st.chain !== id) window.__wallet.goTo(id);
+              return null;
+            }
+            case 'wallet_addEthereumChain':
+              if (st.rejectAdd > 0) {
+                st.rejectAdd--;
+                throw { code: 4001, message: 'User rejected the request.' };
+              }
+              st.known.add(params[0].chainId);
+              if (o.addSwitches) window.__wallet.goTo(params[0].chainId);
+              return null;
+            case 'eth_sendTransaction':
+              if (st.chain !== o.sova) throw { code: -32603, message: `sent on chain ${st.chain}` };
+              return fwd(method, params);
+            default:
+              return fwd(method, params);
+          }
+        },
+      };
+    },
+  };
+  const walletLog = (p) => p.evaluate(() => window.__walletLog);
+
+  // The newcomer: an anvil account emptied to 0, so it holds no SOVA.
+  await pub.request({ method: 'anvil_setBalance', params: [newcomer.address, '0x0'] });
+  const d = await newPage({}, {
+    fn: mockWallet.fn,
+    arg: {
+      rpc: RPC, account: newcomer.address, sova: SOVA_HEX, start: '0x1', known: ['0x1'], rejectAdd: 1, addSwitches: false,
+      // MetaMask mobile: an internal error that wraps 4902.
+      switchError: { code: -32603, message: 'Unrecognized chain ID "0x1419a".', data: { originalError: { code: 4902 } } },
+    },
+  });
   await d.goto(MINT);
-  await stHas(d, 'ready');
+  await stHas(d, 'ready · connect');
   assert((await d.textContent('#n')) === '2', 'supply 2 (the two ZEC owls)');
   assert((await d.textContent('#p-sova')) === '10' && (await d.textContent('#p-zec')) === '0.25', 'prices 10 SOVA / 0.25 ZEC from the contract');
-  assert((await d.getAttribute('#go-zec', 'href')).toLowerCase().includes(`co=${coAddr}`.toLowerCase()), 'ZEC button hands off to /ashwings/buy with the checkout');
+  assert((await d.getAttribute('#go-zec', 'href')).toLowerCase().includes(`co=${coAddr}`.toLowerCase()), 'no-wallet link hands off to /ashwings/buy with the checkout');
+  assert(await d.isVisible('#b-connect.go') && await d.isVisible('#b-add'), 'step 1: connect (primary) and "+ add Sova testnet"');
+  assert(await d.isDisabled('#go-sova'), 'step 3 waits');
   await d.waitForSelector('#grid li:nth-child(2) img[src^="data:image/svg+xml"]');
   await d.waitForTimeout(600);
-  await shot(d, '10-mint-page');
+  await shot(d, '10-mint-start');
+
+  await d.click('#b-connect');
+  await stHas(d, 'rejected in wallet');
+  await d.waitForFunction(() => document.getElementById('b-connect').textContent.trim() === 'try again');
+  const added = (await walletLog(d)).find((c) => c.method === 'wallet_addEthereumChain');
+  assert(added, 'switch failed with -32603/4902, so the page asked to add the chain');
+  assert(JSON.stringify(added.params[0]) === JSON.stringify({
+    chainId: SOVA_HEX, chainName: 'Sova testnet', nativeCurrency: { name: 'SOVA', symbol: 'SOVA', decimals: 18 }, rpcUrls: [RPC], blockExplorerUrls: [EXPLORER],
+  }), `add params: ${JSON.stringify(added.params[0])}`);
+  assert((await d.textContent('#i1')).includes('another network'), 'step 1 shows the wrong network');
+  await shot(d, '11-rejected-try-again');
+
+  await d.click('#b-connect');
+  await stepIs(d, 's1', 'done');
+  const log1 = (await walletLog(d)).map((c) => c.method);
+  assert(log1.filter((m) => m === 'wallet_addEthereumChain').length === 2, 'retry added the chain');
+  assert(log1.lastIndexOf('wallet_switchEthereumChain') > log1.lastIndexOf('wallet_addEthereumChain'), 'added without switching, so the page switched after');
+  assert((await d.evaluate(() => window.__wallet.st.chain)) === SOVA_HEX, 'wallet on chain 82330');
+  await stepIs(d, 's2', 'cur');
+  await d.waitForSelector('#b-drip.go:not([hidden])');
+  assert((await d.textContent('#b-drip')).includes('get 10 test SOVA'), 'step 2: get 10 test SOVA');
+  await shot(d, '12-connected-get-sova');
+
+  await d.click('#b-drip');
+  await stHas(d, 'now mint');
+  const got = await pub.getBalance({ address: newcomer.address });
+  assert(got === PRICE_WEI + 10n ** 17n, `drip: newcomer holds ${got} wei = price + 0.1 SOVA`);
+  await stepIs(d, 's3', 'cur');
+  await shot(d, '13-got-sova');
+
+  await d.evaluate(() => window.__wallet.goTo('0x1'));
+  await stepIs(d, 's1', 'cur');
+  await d.waitForFunction(() => document.getElementById('b-connect').textContent.includes('switch to Sova testnet'));
+  assert(await d.isDisabled('#go-sova'), 'wrong network: mint waits');
+  await shot(d, '14-wrong-network');
+  await d.click('#b-connect');
+  await stepIs(d, 's3', 'cur');
+
   await d.click('#go-sova');
   await stHas(d, 'minted');
-  await d.waitForSelector('#new-img[src^="data:image/svg+xml"]');
-  assert((await owner(3n)).toLowerCase() === buyerD.address.toLowerCase(), 'Ashwing #3 minted to wallet D for SOVA');
+  await d.waitForSelector('#hero.mine #hero-img[src^="data:image/svg+xml"]');
+  assert((await owner(3n)).toLowerCase() === newcomer.address.toLowerCase(), 'Ashwing #3 minted to the newcomer, paid with dripped SOVA');
   assert((await pub.getBalance({ address: ashwAddr })) === PRICE_WEI, 'exactly 10 SOVA collected by Ashwings');
-  assert((await d.textContent('#n')) === '3', 'supply 3');
+  assert((await d.textContent('#hero-cap')) === '#3 · yours', 'the hero shows the new owl');
+  assert((await d.getAttribute('#i3 a', 'href')).startsWith(`${EXPLORER}/tx/0x`), 'link to the mint tx on the explorer');
   await d.waitForSelector('#grid li:nth-child(3)');
   await d.waitForTimeout(700);
-  await shot(d, '11-minted-sova');
+  await shot(d, '15-minted');
+  const again = await fetch(`${RELAYER}/drip`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ address: newcomer.address }) });
+  assert(again.status === 429, 'the drip gives an address one top-up per day');
+
+  step('D2: "+ add Sova testnet" before connecting, then mint for SOVA');
+  const d2 = await newPage({}, {
+    fn: mockWallet.fn,
+    arg: {
+      rpc: RPC, account: buyerD.address, sova: SOVA_HEX, start: '0x2105', known: ['0x1', '0x2105'], addSwitches: true,
+      // A wallet with its own idea of an error code for "unknown chain".
+      switchError: { code: -32000, message: 'Chain 0x1419a is not supported' },
+    },
+  });
+  await d2.goto(MINT);
+  await stHas(d2, 'ready · connect');
+  await d2.click('#b-add');
+  await stHas(d2, 'Sova testnet is in your wallet');
+  assert((await d2.evaluate(() => window.__wallet.st.chain)) === SOVA_HEX && !(await d2.evaluate(() => window.__wallet.st.connected)), 'added and switched, no account shared yet');
+  await d2.click('#b-connect');
+  await stepIs(d2, 's3', 'cur');
+  assert((await walletLog(d2)).filter((c) => c.method === 'wallet_addEthereumChain').length === 1, 'connect needed no second add');
+  assert((await d2.textContent('#i2')).includes('SOVA'), 'step 2 done: already holds SOVA');
+  await d2.click('#go-sova');
+  await stHas(d2, 'minted');
+  assert((await owner(4n)).toLowerCase() === buyerD.address.toLowerCase(), 'Ashwing #4 minted to wallet D for SOVA');
+  assert((await d2.textContent('#n')) === '4', 'supply 4');
+  await d2.waitForSelector('#grid li:nth-child(4)');
 
   // ---- Flow E ------------------------------------------------------------
   step('E: /ashwings/market — list (approve + list), buy (1% fee), cancel');
@@ -371,51 +523,58 @@ async function main() {
   await e1.goto(MKT);
   await stHas(e1, 'connect a wallet');
   await e1.click('#connect');
-  await e1.waitForSelector('#mine li[data-id="3"] input');
-  await e1.fill('#mine li[data-id="3"] input', '25');
-  await e1.click('#mine li[data-id="3"] button');
+  await e1.waitForSelector('#mine li[data-id="4"] input');
+  await e1.fill('#mine li[data-id="4"] input', '25');
+  await e1.click('#mine li[data-id="4"] button');
   await stHas(e1, 'done');
-  assert(await mktRead('isLive', [3n]), 'owl #3 listed and live');
-  const [, listed] = await mktRead('listings', [3n]);
+  assert(await mktRead('isLive', [4n]), 'owl #4 listed and live');
+  const [, listed] = await mktRead('listings', [4n]);
   assert(listed === 25n * 10n ** 18n, 'listed at 25 SOVA');
-  await e1.waitForSelector('#sale li[data-id="3"]');
+  await e1.waitForSelector('#sale li[data-id="4"]');
   await e1.waitForTimeout(600);
-  await shot(e1, '12-listed');
+  await shot(e1, '16-listed');
 
   const e2 = await newPage({}, walletOf(buyerE));
   await e2.goto(MKT);
-  await e2.waitForSelector('#sale li[data-id="3"] button.go');
+  await e2.waitForSelector('#sale li[data-id="4"] button.go');
   const dBefore = await pub.getBalance({ address: buyerD.address });
-  await e2.click('#sale li[data-id="3"] button.go');
+  await e2.click('#sale li[data-id="4"] button.go');
   await stHas(e2, 'done');
-  assert((await owner(3n)).toLowerCase() === buyerE.address.toLowerCase(), 'wallet E owns #3');
+  assert((await owner(4n)).toLowerCase() === buyerE.address.toLowerCase(), 'wallet E owns #4');
   assert((await pub.getBalance({ address: buyerD.address })) - dBefore === 2475n * 10n ** 16n, 'seller got exactly 24.75 SOVA');
   assert((await mktRead('feesOwed')) === 25n * 10n ** 16n, '0.25 SOVA (1%) booked for the treasury');
   await e2.click('#connect');
-  await e2.waitForSelector('#mine li[data-id="3"]');
+  await e2.waitForSelector('#mine li[data-id="4"]');
   await e2.waitForTimeout(600);
-  await shot(e2, '13-bought');
+  await shot(e2, '17-bought');
 
   await mined(await wallet(buyerD).writeContract({ address: ashwAddr, abi: ashw.abi, functionName: 'mint', value: PRICE_WEI }));
   await e1.reload();
   await e1.click('#connect');
-  await e1.waitForSelector('#mine li[data-id="4"] input');
-  await e1.fill('#mine li[data-id="4"] input', '5');
-  await e1.click('#mine li[data-id="4"] button');
+  await e1.waitForSelector('#mine li[data-id="5"] input');
+  await e1.fill('#mine li[data-id="5"] input', '5');
+  await e1.click('#mine li[data-id="5"] button');
   await stHas(e1, 'done');
-  assert(await mktRead('isLive', [4n]), 'owl #4 listed');
-  await e1.waitForSelector('#mine li[data-id="4"] .price');
-  await e1.click('#mine li[data-id="4"] button');
-  await stHas(e1, 'canceling #4 · done');
-  assert(!(await mktRead('isLive', [4n])), 'owl #4 canceled');
+  assert(await mktRead('isLive', [5n]), 'owl #5 listed');
+  await e1.waitForSelector('#mine li[data-id="5"] .price');
+  await e1.click('#mine li[data-id="5"] button');
+  await stHas(e1, 'canceling #5 · done');
+  assert(!(await mktRead('isLive', [5n])), 'owl #5 canceled');
 
-  const f = await newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true });
+  const f = await newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
   await f.goto(MINT);
-  await f.waitForSelector('#grid li:nth-child(4) img[src^="data:image/svg+xml"]');
+  await f.waitForSelector('#grid li:nth-child(5) img[src^="data:image/svg+xml"]');
+  await f.waitForFunction(() => document.getElementById('i1').textContent.includes('no wallet in this browser'));
+  assert((await f.getAttribute('#i1 a', 'href')).startsWith('https://metamask.app.link/dapp/'), 'phone, no wallet: open this page in a wallet app');
   await f.waitForTimeout(600);
-  await shot(f, '14-mobile-mint');
+  await shot(f, '18-mobile-mint');
   assert((await f.evaluate(() => document.documentElement.scrollWidth)) <= 390, 'no horizontal scroll at 390px');
-  assert((await ashwRead('totalSupply')) === 4n, 'supply 4');
+  assert((await ashwRead('totalSupply')) === 5n, 'supply 5');
+
+  const g = await newPage();
+  await g.goto(`http://127.0.0.1:${sitePort}/ashwings/`);
+  assert((await g.getAttribute('a.mint', 'href')) === '/ashwings/mint', '/ashwings: one primary button to the mint');
+  await shot(g, '19-ashwings');
 
   await browser.close();
   const real = errors.filter((e) => !/favicon/.test(e));

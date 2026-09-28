@@ -60,36 +60,6 @@ export async function rpc<T = any>(url: string, method: string, params: unknown[
   return j.result as T;
 }
 
-type Eth = { request(a: { method: string; params?: unknown[] }): Promise<any> };
-
-/**
- * Put the wallet on the chain `rpcUrl` serves: switch to it, or add it first
- * (EIP-3085) when the wallet doesn't know it yet (error 4902). The public
- * testnet (`testnetChainId`, 82330 from the deploy record) is added as "Sova
- * testnet" with the public RPC; any other chain (a ?rpc= override) is added
- * under its own RPC URL. The currency is SOVA either way.
- */
-export async function useChain(eth: Eth, rpcUrl: string, testnetChainId?: number): Promise<void> {
-  const chain = await rpc<string>(rpcUrl, 'eth_chainId');
-  if ((await eth.request({ method: 'eth_chainId' })) === chain) return;
-  try {
-    await eth.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: chain }] });
-  } catch (e: any) {
-    // Some wallets wrap the 4902 (MetaMask mobile: data.originalError.code).
-    if ((e?.code ?? e?.data?.originalError?.code) !== 4902) throw e;
-    const testnet = testnetChainId !== undefined && BigInt(chain) === BigInt(testnetChainId);
-    await eth.request({
-      method: 'wallet_addEthereumChain',
-      params: [{
-        chainId: chain,
-        chainName: testnet ? 'Sova testnet' : `Sova (${new URL(rpcUrl).host})`,
-        nativeCurrency: { name: 'SOVA', symbol: 'SOVA', decimals: 18 },
-        rpcUrls: [rpcUrl],
-      }],
-    });
-  }
-}
-
 // ---- waiting for a block ----------------------------------------------------
 
 /** The one line shown while a sent transaction waits for its block. */

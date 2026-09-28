@@ -188,9 +188,11 @@ tunnel_for_role() {
   log "${server}: cloudflared has its token and is running"
 }
 
-# Checkout relayer paths: /reserve, /claim, /status and /status/<order>.
-# Its /health and anything else stay loopback-only.
-CHECKOUT_PATHS='^/(reserve|claim|status(/[0-9]{1,30})?)$'
+# Checkout relayer paths: /reserve, /claim, /drip (the testnet SOVA drip,
+# when CHECKOUT_RELAYER_DRIP=1; the WAF rule's "/drip" covers it on this
+# host too), /status and /status/<order>. Its /health and anything else
+# stay loopback-only.
+CHECKOUT_PATHS='^/(reserve|claim|drip|status(/[0-9]{1,30})?)$'
 
 step_tunnels() {
   tunnel_for_role rpc "${RPC_HOST}" "http://127.0.0.1:${SOVA_HTTP_PORT}" '^/$'

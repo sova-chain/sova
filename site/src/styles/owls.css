@@ -36,9 +36,41 @@
 .meter i { display: block; height: 100%; width: 0; background: repeating-linear-gradient(90deg, var(--g) 0 6px, transparent 6px 8px); transition: width 1.2s cubic-bezier(0.2, 0.8, 0.2, 1); }
 .supply .dim { font-size: 12.5px; }
 
-.pay2 { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 14px; }
-.pay2 .go, .pay2 .btn { font-size: 15px; padding: 10px 16px; }
-.pay2 b { font-weight: 700; }
+/* /ashwings/mint: the hero owl (the samples in turn, then yours). */
+.hero { display: flex; gap: 12px 28px; align-items: flex-start; justify-content: space-between; max-width: none !important; }
+.hero-t { flex: 1 1 auto; min-width: 0; }
+.hero-t .supply { margin-bottom: 4px; }
+.hero-owl { flex: 0 0 auto; margin: 10px 0 0; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.hero-owl img { display: block; width: 176px; height: 176px; image-rendering: pixelated; border: 1px solid var(--line); background: #110e09; }
+.hero-owl.mine img { border-color: var(--g); box-shadow: 0 0 24px rgba(244, 183, 40, 0.3); animation: rise 0.6s ease-out; }
+.hero-owl figcaption { color: var(--g); font-size: 13px; }
+
+/* /ashwings/mint: three steps, one button each ([ ] todo, [>] now, [x] done). */
+.steps { list-style: none; padding: 0; margin: 14px 0 14px; max-width: none !important; }
+.steps > li { display: flex; gap: 12px; padding: 10px 0; border-top: 1px dashed var(--line); max-width: none !important; margin: 0; }
+.steps > li:last-child { border-bottom: 1px dashed var(--line); }
+.steps .n { flex: 0 0 auto; white-space: pre; color: var(--g3); }
+.steps .n::before { content: '[ ]'; }
+.steps li[data-s='cur'] .n { color: var(--g); }
+.steps li[data-s='cur'] .n::before { content: '[>]'; }
+.steps li[data-s='done'] .n { color: var(--g2); }
+.steps li[data-s='done'] .n::before { content: '[x]'; }
+.steps .body { flex: 1 1 auto; min-width: 0; }
+.steps p { margin: 0 !important; max-width: none !important; }
+.steps .what { color: var(--g3); }
+.steps li[data-s='cur'] .what { color: var(--cream); font-weight: 700; }
+.steps li[data-s='done'] .what { color: var(--g2); }
+.steps .act { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin: 6px 0 4px !important; }
+.steps .act:not(:has(button:not([hidden]))) { display: none; }
+.steps .go { font-size: 15px; padding: 9px 16px; }
+.steps .info { font-size: 13px; color: var(--g3); overflow-wrap: anywhere; }
+.steps .info .me { color: var(--g); }
+.steps .info .bad { color: var(--ember); }
+.owls-ui button.lnk { border: 0; padding: 4px 0; color: var(--g2); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: rgba(244, 183, 40, 0.45); }
+.owls-ui button.lnk:hover:not(:disabled) { color: var(--cream); }
+.alt { font-size: 13px; margin-top: 4px; }
+details.cfg summary { cursor: pointer; width: max-content; }
+details.cfg p { margin: 6px 0 0; }
 
 .grid { list-style: none; padding: 0; margin: 0 0 16px; display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: 14px; max-width: none !important; }
 .owl { margin: 0; max-width: none !important; animation: rise 0.5s ease-out both; }
@@ -56,15 +88,15 @@
 .grid:empty::after { content: attr(data-empty); color: var(--g3); font-size: 13px; }
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
 
-figure.new { margin: 16px 0 10px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
-figure.new img { width: 192px; height: 192px; image-rendering: pixelated; border: 1px solid var(--g); box-shadow: 0 0 24px rgba(244, 183, 40, 0.25); animation: rise 0.6s ease-out; }
-figure.new figcaption { color: var(--g); }
 .cfg { font-size: 11.5px; margin-top: 36px; overflow-wrap: anywhere; }
 
 @media (prefers-reduced-motion: reduce) {
-  .cur, .owl, figure.new img { animation: none; }
+  .cur, .owl, .hero-owl.mine img { animation: none; }
   .meter i { transition: none; }
 }
 @media (max-width: 600px) {
+  .hero { flex-direction: column-reverse; }
+  .hero-owl { margin: 0; align-items: flex-start; }
+  .hero-owl img { width: 112px; height: 112px; }
   .grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
 }

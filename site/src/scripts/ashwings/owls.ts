@@ -1,5 +1,6 @@
 // Shared by /ashwings/mint and /ashwings/market: config, batched JSON-RPC
-// reads, an injected-wallet sender, and the owl card. No library: the
+// reads, the wallet (checkout/wallet.ts: connect puts it on Sova, adding
+// the chain if needed), a sender, and the owl card. No library: the
 // selectors are precomputed (`cast sig` / `cast keccak`) and the art is the
 // contract's own tokenURI.
 //
@@ -7,10 +8,11 @@
 // (defaults: the public testnet, contracts from
 // infra/testnet/deployments/sova-testnet.json).
 import {
-  RpcError, rpc, useChain, u256, addrWord, calldata, words, num, asAddr, dynBytes, utf8, waitingForBlock, stopWaiting,
+  RpcError, rpc, u256, addrWord, calldata, words, num, asAddr, dynBytes, utf8, waitingForBlock, stopWaiting,
 } from '../checkout/chain';
+import { type Eip1193, WalletError, chainSpec, connectWallet, ensureChain, findWallet } from '../checkout/wallet';
 
-export type Cfg = { rpc: string; chainId?: number; ashw: string; market: string; relayer: string };
+export type Cfg = { rpc: string; chainId?: number; explorer?: string; ashw: string; market: string; relayer: string };
 export type Owl = { id: bigint; name: string; image: string; traits: string; owner: string };
 export type Sale = { id: bigint; seller: string; price: bigint };
 
@@ -51,6 +53,7 @@ const ERRORS: Record<string, string> = {
 
 /** Readable revert reason: market custom errors, "ASHW: ..." strings, wallet messages. */
 export function why(e: unknown): string {
+  if (e instanceof WalletError) return e.message;
   const data = e instanceof RpcError ? e.data : (e as any)?.data?.data ?? (e as any)?.data;
   const msg = e instanceof Error ? e.message : String((e as any)?.message ?? e);
   const hex = (typeof data === 'string' ? data : msg.match(/0x[0-9a-f]{8}/i)?.[0] || '').replace(/^0x/, '').slice(0, 8).toLowerCase();
@@ -58,6 +61,7 @@ export function why(e: unknown): string {
   const ashw = msg.match(/ASHW: [a-z ]+/);
   if (ashw) return ashw[0].replace('ASHW: ', '');
   if ((e as any)?.code === 4001) return 'rejected in wallet';
+  if (/insufficient funds/i.test(msg)) return 'not enough SOVA for this and its gas';
   return msg.replace(/^execution reverted:?\s*/i, '').slice(0, 160) || 'reverted';
 }
 
@@ -67,9 +71,10 @@ export function config(root: HTMLElement): Cfg {
   return {
     rpc: q.get('rpc') || base.rpc,
     chainId: base.chainId,
+    explorer: base.explorer,
     ashw: q.get('ashw') || base.ashw,
     market: q.get('market') || base.market,
-    relayer: q.get('relayer') || base.relayer || '',
+    relayer: q.get('relayer') === 'none' ? '' : (q.get('relayer') || base.relayer || '').replace(/\/$/, ''),
   };
 }
 
@@ -159,14 +164,15 @@ export async function ownedBy(c: Cfg, who: string): Promise<bigint[]> {
 
 // ---- wallet -------------------------------------------------------------------
 
-type Eth = { request(a: { method: string; params?: unknown[] }): Promise<any> };
-export const eth = (window as any).ethereum as Eth | undefined;
+let eth: Eip1193 | undefined;
+/** The browser's wallet (window.ethereum or EIP-6963), found once. */
+export async function wallet(): Promise<Eip1193 | undefined> {
+  return (eth ??= await findWallet());
+}
 
+/** Connect: an account, and the wallet on Sova (added first if it doesn't know it). */
 export async function connect(c: Cfg): Promise<string> {
-  if (!eth) throw new Error('no wallet in this browser');
-  const [a] = await eth.request({ method: 'eth_requestAccounts' });
-  await useChain(eth, c.rpc, c.chainId);
-  return a;
+  return connectWallet(await wallet(), await chainSpec(c));
 }
 
 /**
@@ -177,7 +183,17 @@ export async function connect(c: Cfg): Promise<string> {
 export async function send(c: Cfg, from: string, to: string, data: string, value = 0n, onSent?: () => void) {
   const tx = { from, to, data, value: '0x' + value.toString(16) };
   await rpc(c.rpc, 'eth_call', [tx, 'latest']); // a revert surfaces here, with its reason
-  const hash: string = await eth!.request({ method: 'eth_sendTransaction', params: [tx] });
+  const w = await wallet();
+  if (!w) throw new WalletError('no-wallet', 'no wallet in this browser');
+  // The wallet may have moved to another network since connecting.
+  await ensureChain(w, await chainSpec(c));
+  let hash: string;
+  try {
+    hash = await w.request({ method: 'eth_sendTransaction', params: [tx] });
+  } catch (e) {
+    if ((e as any)?.code === 4001 || /user (rejected|denied)/i.test(String((e as any)?.message))) throw new WalletError('rejected', 'rejected in wallet');
+    throw e;
+  }
   onSent?.();
   for (let i = 0; i < 400; i++) {
     const r = await rpc<any>(c.rpc, 'eth_getTransactionReceipt', [hash]);

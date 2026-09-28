@@ -1,58 +1,92 @@
 ---
-// /ashwings/mint: mint an Ashwing for SOVA (injected wallet) or ZEC (hands
-// off to /ashwings/buy), and the gallery of minted owls. Listed since the
-// testnet mint opened (2026-09-25); linked from /ashwings, not in sitePages.
-// Logic: src/scripts/ashwings/. Contracts: contracts/src/Ashwings.sol.
+// /ashwings/mint: the newcomer's path to an owl, three steps with one
+// button each: 1 connect (adds and switches to Sova testnet), 2 get SOVA
+// (the relayer's testnet drip: tools/checkout-relayer POST /drip), 3 mint.
+// No browser wallet: pay TAZ on /ashwings/buy. Then the gallery of minted
+// owls. Listed since the testnet mint opened (2026-09-25); linked from
+// /ashwings, not in sitePages. Logic: src/scripts/ashwings/mint.ts.
+// Contracts: contracts/src/Ashwings.sol. Claims: site/README.md.
 import Site from '../../layouts/Site.astro';
-import { SOVA_RPC, TESTNET, CONTRACTS } from '../../data/sova';
+import { SOVA_RPC, TESTNET, CONTRACTS, owlSamples } from '../../data/sova';
 import '../../styles/owls.css';
 
-// Defaults target the public testnet: its RPC and the contracts in
-// infra/testnet/deployments/sova-testnet.json. Override per visit, e.g. the
-// local box after box/deploy-dapps.sh: ?rpc=&ashw=&market=&relayer=
+// Defaults target the public testnet: its RPC, explorer, the contracts in
+// infra/testnet/deployments/sova-testnet.json and the project's relayer
+// (its drip). Override per visit, e.g. the local box after
+// box/deploy-dapps.sh: ?rpc=&ashw=&market=&relayer=<url|none>
 const config = {
   rpc: SOVA_RPC,
   chainId: TESTNET.chainId,
+  explorer: TESTNET.explorer,
   ashw: CONTRACTS.ashwings,
   market: CONTRACTS.market,
-  relayer: '',
+  relayer: 'https://checkout.testnet.sova.io',
 };
+const samples = owlSamples.map(([n]) => `/ashwings/onchain-${n}.svg`);
 ---
 <Site
   title="Mint an Ashwing"
-  description="10,000 on-chain owls. Pay in SOVA or ZEC."
+  description="Mint an on-chain pixel owl on the Sova testnet: connect a wallet, get test SOVA, mint."
   current="/ashwings"
   cmd="./mint-owl"
   status="testnet mint"
 >
-  <div id="mint" class="owls-ui" data-config={JSON.stringify(config)}>
-    <h1>Mint an owl.</h1>
-    <p class="lead">10,000 ever. Pay in SOVA or ZEC.</p>
-
-    <section class="supply" aria-label="Supply">
-      <p><span id="n" class="num">…</span> <span class="of">/ <span id="max">10,000</span> minted</span></p>
-      <div class="meter" aria-hidden="true"><i id="fill"></i></div>
-      <p class="dim"><span id="held"></span></p>
-    </section>
-
-    <div class="pay2">
-      <button id="go-sova" type="button" class="go">mint · <b id="p-sova">…</b> SOVA</button>
-      <a id="go-zec" class="btn" href="/ashwings/buy">pay <b id="p-zec">…</b> TAZ →</a>
+  <div id="mint" class="owls-ui" data-config={JSON.stringify(config)} data-samples={JSON.stringify(samples)}>
+    <div class="hero">
+      <div class="hero-t">
+        <h1>Mint an owl.</h1>
+        <p class="lead">10,000 pixel owls, drawn by their own contract.</p>
+        <section class="supply" aria-label="Supply">
+          <p><span id="n" class="num">…</span> <span class="of">/ <span id="max">10,000</span> minted</span></p>
+          <div class="meter" aria-hidden="true"><i id="fill"></i></div>
+        </section>
+      </div>
+      <figure class="hero-owl" id="hero">
+        <img id="hero-img" src={samples[4]} width="176" height="176" alt="An Ashwing" />
+        <figcaption id="hero-cap" hidden></figcaption>
+      </figure>
     </div>
+
+    <ol class="steps" aria-label="Mint in three steps">
+      <li id="s1" data-s="cur">
+        <span class="n" aria-hidden="true"></span>
+        <div class="body">
+          <p class="what">1 connect</p>
+          <p class="act">
+            <button id="b-connect" type="button" class="go">connect wallet</button>
+            <button id="b-add" type="button" class="lnk">+ add Sova testnet to wallet</button>
+          </p>
+          <p id="i1" class="info"></p>
+        </div>
+      </li>
+      <li id="s2" data-s="todo">
+        <span class="n" aria-hidden="true"></span>
+        <div class="body">
+          <p class="what">2 get SOVA</p>
+          <p class="act"><button id="b-drip" type="button">get <b class="need">…</b> test SOVA</button></p>
+          <p id="i2" class="info"></p>
+        </div>
+      </li>
+      <li id="s3" data-s="todo">
+        <span class="n" aria-hidden="true"></span>
+        <div class="body">
+          <p class="what">3 mint</p>
+          <p class="act"><button id="go-sova" type="button">mint · <b id="p-sova">…</b> SOVA</button></p>
+          <p id="i3" class="info"></p>
+        </div>
+      </li>
+    </ol>
 
     <p id="status" class="status" data-k="wait" role="status" aria-live="polite"><span class="st">loading</span><span class="clock" aria-hidden="true" hidden></span><span class="cur" aria-hidden="true"></span><span class="note" hidden></span></p>
 
-    <figure id="new" class="new" hidden>
-      <img id="new-img" width="192" height="192" alt="" />
-      <figcaption><span id="new-name"></span> · yours</figcaption>
-    </figure>
+    <p class="alt dim">no browser wallet? <a id="go-zec" href="/ashwings/buy">pay <b id="p-zec">…</b> TAZ from a Zcash testnet wallet →</a></p>
 
     <h2>owls</h2>
     <p id="empty" class="dim" hidden># none yet. be the first.</p>
     <ul id="grid" class="grid" aria-live="polite"></ul>
     <p><button id="more" type="button" hidden>older ↓</button> <a id="to-market" href="/ashwings/market">market →</a></p>
 
-    <p id="cfg" class="dim cfg"></p>
+    <details class="cfg dim"><summary>network</summary><p id="cfg"></p></details>
   </div>
 </Site>
 

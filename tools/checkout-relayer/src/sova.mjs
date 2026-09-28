@@ -38,7 +38,12 @@ export const CHECKOUT_ABI = parseAbi([
 ]);
 
 const ZCASH_ABI = parseAbi(['function anchor() view returns (uint64 height, bytes32 hash)']);
-const ASHWINGS_ABI = parseAbi(['function zecCheckout() view returns (address)']);
+const ASHWINGS_ABI = parseAbi([
+  'function zecCheckout() view returns (address)',
+  'function priceWei() view returns (uint256)',
+  'function balanceOf(address) view returns (uint256)',
+]);
+const CHECKOUT_ASHWINGS_ABI = parseAbi(['function ashwings() view returns (address)']);
 
 /** Custom error name of a revert, or null if it wasn't a contract revert. */
 export function errorName(e) {
@@ -120,6 +125,25 @@ export async function connectSova(cfg) {
     return { hash, result, mined };
   }
 
+  /**
+   * A plain SOVA transfer (the drip), serialized with every other send.
+   * Returns once broadcast; `mined` resolves with the receipt.
+   */
+  async function transfer(to, value) {
+    const hash = await locked(() => wallet.sendTransaction({ to, value }));
+    const mined = pub.waitForTransactionReceipt({ hash, timeout: cfg.receiptTimeoutMs ?? 300_000 }).then((receipt) => {
+      if (receipt.status !== 'success') throw new Error(`transfer reverted in ${hash}`);
+      return receipt;
+    });
+    mined.catch(() => {});
+    return { hash, mined };
+  }
+
+  // The Ashwings the drip serves: ASHWINGS, else the checkout's own.
+  let ashwings = cfg.ashwings || null;
+  const ashwingsAddr = async () =>
+    (ashwings ??= await pub.readContract({ address: checkout, abi: CHECKOUT_ASHWINGS_ABI, functionName: 'ashwings' }));
+
   /** broadcast() and wait for the receipt. */
   async function send(functionName, args) {
     const { hash, result, mined } = await broadcast(functionName, args);
@@ -134,7 +158,13 @@ export async function connectSova(cfg) {
     pub,
     broadcast,
     send,
+    transfer,
     balance: () => pub.getBalance({ address: account.address }),
+    balanceOf: (address) => pub.getBalance({ address }),
+    ashwings: ashwingsAddr,
+    priceWei: async () => pub.readContract({ address: await ashwingsAddr(), abi: ASHWINGS_ABI, functionName: 'priceWei' }),
+    owlsOf: async (owner) =>
+      pub.readContract({ address: await ashwingsAddr(), abi: ASHWINGS_ABI, functionName: 'balanceOf', args: [owner] }),
     receipt: async (hash) => {
       const receipt = await pub.getTransactionReceipt({ hash }).catch(() => null);
       if (!receipt) return null;

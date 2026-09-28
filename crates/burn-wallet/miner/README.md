@@ -49,34 +49,20 @@ there.
 
 ## Budgets
 
-`--budget-zat` is **per-invocation**: each `mine` run declares its own
-budget and only its own spend counts against it, regardless of what
-earlier runs already spent against this keystore. A fresh `mine`
-invocation always has its full declared budget available, even
-immediately after a prior run exhausted its own — this matches what
-"budget for this run" means to everyone who reads the flag's help text,
-and it's the behavior `mine` has as of D5 (earlier builds checked this
-flag against the keystore's lifetime total instead, which surprised the
-`box/sim` harness — see `box/sim/README.md`'s "script bug found and
-fixed").
+`--budget-zat` caps one `mine` run. Only that run's spend counts, so every
+new run starts with its full budget.
 
-`--lifetime-budget-zat` is an optional *additional* cap, checked against
-the keystore's cumulative spend across every `mine` invocation it has
-ever made — the old lifetime-accounting behavior, opt-in for anyone who
-wants a hard ceiling that survives across runs. It's declared fresh each
-invocation exactly like `--budget-zat` (omitting it on a later run clears
-any cap a previous run set, rather than silently carrying one forward),
-and it gates independently: a generous `--budget-zat` this run does not
-override a tighter `--lifetime-budget-zat`, and vice versa. Lifetime
-totals (`total burned`/`total fees`/`total spent`, plus the lifetime cap
-and its remaining headroom if one is set) are always visible in `sova-miner
-report`, whether or not `--lifetime-budget-zat` is in use.
+`--lifetime-budget-zat` is an optional extra cap on this keystore's spend
+across every run. It is set per run like `--budget-zat`: leaving it out
+on a later run clears it. The two caps apply independently.
+`sova-miner report` always shows the lifetime totals, and the lifetime
+cap and its headroom when one is set.
 
 ## Funding
 
 `mine` finds its funding with zebrad's `getaddressutxos` for its own
-t-address (zebrad answers it from its address index, well under a second
-even at testnet's ~3.9M blocks). Nothing scans the chain. These
+t-address (zebrad answers it from its address index in well under a
+second). Nothing scans the chain. These
 confirmed outputs paying the t-address can fund burns:
 
 - **Ordinary transfers** (a faucet drip, a z→t deshield, a top-up from
@@ -299,8 +285,8 @@ matters on regtest: block timestamps there are deterministic and a box
 re-funds the same keys the same way, so a recreated chain starts as a
 near-replay of the old one, with byte-identical txids.
 
-If either check fails -- a regtest node recreated under a surviving data
-dir, or `--rpc` pointed at a node on another network -- `mine` logs `zcash
+If either check fails (a regtest node recreated under a surviving data
+dir, or `--rpc` pointed at a node on another network), `mine` logs `zcash
 chain RESET detected`, moves the tracked UTXOs and epoch history into
 `retired_chains` in `state.json`, re-anchors to the node's chain,
 rediscovers its funding there, and numbers epochs from 1 again. Without
@@ -308,7 +294,7 @@ this, every burn would try to spend inputs from the dead chain and fail
 with `could not find transparent input UTXO`.
 
 Kept across a reset: the keystore (same t-address and EVM address) and the
-lifetime totals, which still include the retired chain's spend -- they back
+lifetime totals, which still include the retired chain's spend: they back
 `--lifetime-budget-zat`, a safety ceiling that should not forget spend.
 Nothing is deleted: retired outpoints stay in `state.json`. `report` shows
 the current chain's anchor and epochs, and `report --verify-rpc` compares
@@ -319,16 +305,14 @@ mining against an unsynced node doesn't work anyway.
 
 ## Anonymous funding
 
-The burn itself is always transparent — SIP-1 requires the eater output to
-be visible on-chain, and `sova-miner` has no shielded code at all (it never
-touches Orchard or Sapling). What *can* be unlinkable to you is where the
-ZEC you burn came from.
+The burn itself is always transparent: SIP-1 requires the burn output to
+be visible on-chain, and `sova-miner` has no shielded code. What can be
+unlinkable to you is where the ZEC you burn came from.
 
 ### The flow
 
-1. Hold ZEC in your own shielded wallet — Zodl or any other shielded-capable
-   wallet. It doesn't need to be, and shouldn't be, anything connected to
-   this miner.
+1. Hold ZEC in your own shielded wallet (Zodl or any other). Keep it
+   separate from this miner.
 2. Run `sova-miner init` and note the t-address it prints ("t-addr to
    fund").
 3. From your shielded wallet, send a z→t deshielding transaction to that
@@ -338,19 +322,16 @@ ZEC you burn came from.
 4. Run `sova-miner mine` normally. Each SIP-1 burn spends UTXOs from that
    deshielded balance.
 
-The identity link breaks at the shielded pool: a z→t transaction has no
-visible input, so the t-address's funding source is unlinkable on the
-transparent chain. That's the whole mechanism — it happens before you fund
-the miner, not inside it.
+The link breaks at the shielded pool: a z→t transaction has no visible
+input, so the t-address's funding source is unlinkable on the transparent
+chain. It happens before the miner is funded, not inside it.
 
 ### What this doesn't buy you
 
 - **Burns from one miner address are linkable to each other.** The
   t-address is a persistent pseudonym for as long as you fund and mine
-  from it, not a fresh identity per burn. Anyone can group all of its
-  burns together and see its total volume and cadence — they just can't
-  tie the address to you. This is unlinkability of funding, not per-burn
-  anonymity.
+  from it. Anyone can group its burns and see their total volume and
+  cadence; they can't tie the address to you.
 - **The deshielding transaction is itself visible.** Its output address,
   amount, and block height are all public. A round or otherwise
   distinctive amount, or a deshield immediately followed by a burn, gives
@@ -359,14 +340,10 @@ the miner, not inside it.
 - **Reward payouts are public.** The EVM address set at `init` (default:
   the keystore key's own Ethereum address; override with `--evm-address`)
   is the address SIP-1 credits in the burn payload and the address epoch
-  rewards are paid to. It's a plain EVM account — its balance and
-  activity are exactly as visible as any other address on the chain. It
-  is linked to your t-address either way: every burn names it next to the
-  t-address's inputs.
-- **This is funding unlinkability, not private execution.** Sova's EVM is
-  fully transparent; every contract call and state change is public. Don't
-  describe this as "private mining" or "anonymous contracts" — only the
-  funding source is unlinkable.
+  rewards are paid to. It's a plain EVM account, as visible as any other,
+  and every burn names it next to the t-address's inputs.
+- **Execution is public.** Sova's EVM is transparent: every contract call
+  and state change is public. Only the funding source is unlinkable.
 
 ### Practical guidance
 
@@ -375,7 +352,7 @@ the miner, not inside it.
   This bounds the persistent-pseudonym problem above to one session's
   burns instead of your entire mining history.
 - Avoid round or distinctive deshield amounts, and vary them between
-  sessions — don't fund every session with an identical, memorable number.
+  sessions.
 - Never reuse a miner's t-address for anything else. Every other use
   (receiving unrelated payments, consolidating other UTXOs) is another
   chance to link it back to you.

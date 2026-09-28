@@ -3,6 +3,7 @@
 //
 //   POST /reserve {listingId, recipient}       reserve for a buyer; relayer pays gas
 //   POST /claim   {reservationId, txid, vout}  claim a paid order (dry-run first)
+//   POST /drip    {address}                    testnet only (DRIP=1): SOVA for a first owl
 //   GET  /status                               relayer summary (no secrets)
 //   GET  /status/:id                           what the watcher found for an order
 //   GET  /health                               liveness (local; not routed publicly)
@@ -18,11 +19,16 @@
 // rate limits, a balance floor below which it takes no new orders), the owl
 // supply (at most MAX_OPEN_RESERVATIONS of its own unpaid orders at once,
 // one per recipient), and its RPC budget (one throttle for every Sova call).
+// The drip (DRIP=1, testnet chains only) is the one path that gives SOVA
+// away: it tops a new address up to one Ashwings mint plus gas, under
+// per-address, per-IP, hourly and daily limits, and keeps DRIP_KEEP_WEI
+// back for reserve/claim gas (drip.mjs).
 // Config is env only (see README.md); nothing secret is committed, logged
 // or served.
 import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import { formatEther } from 'viem';
+import { DripBook } from './drip.mjs';
 import { clientKey, windows } from './limits.mjs';
 import { connectSova, describe, errorName, outOfFunds } from './sova.mjs';
 import { startWatcher } from './watcher.mjs';
@@ -89,6 +95,18 @@ const cfg = {
   pollMs: int('POLL_MS', 5000),
   startBlock: BigInt(env('START_BLOCK', '0')),
   dropAfter: int('DROP_AFTER_BLOCKS', 20),
+  // The SOVA drip (README.md, "Drip"). Off unless DRIP=1, and then only on
+  // the chains in DRIP_CHAIN_IDS (the public testnet and anvil).
+  drip: env('DRIP', '0') === '1',
+  dripChainIds: env('DRIP_CHAIN_IDS', '82330,31337').split(',').map((s) => Number(s.trim())),
+  dripGasWei: BigInt(env('DRIP_GAS_WEI', '100000000000000000')), // 0.1 SOVA over the price
+  dripKeepWei: BigInt(env('DRIP_KEEP_WEI', '1000000000000000000')), // 1 SOVA kept for reserve/claim gas
+  dripFirstOwlOnly: env('DRIP_FIRST_OWL_ONLY', '1') === '1',
+  dripAddressCooldownSecs: int('DRIP_ADDRESS_COOLDOWN_SECS', 86_400),
+  dripPerIpPerDay: int('DRIP_PER_IP_PER_DAY', 2),
+  dripPerHour: int('DRIP_PER_HOUR', 20),
+  dripPerDay: int('DRIP_PER_DAY', 100),
+  dripTriesPerIpPerHour: int('DRIP_TRIES_PER_IP_PER_HOUR', 20),
 };
 // The key only ever lives in cfg.relayerKey; keep it out of the environment
 // that child processes, crash dumps or a stray `env` would see.
@@ -96,6 +114,17 @@ delete process.env.RELAYER_KEY;
 
 const log = (m) => console.log(`${new Date().toISOString()} ${m}`);
 const sova = await connectSova(cfg);
+if (cfg.drip && !cfg.dripChainIds.includes(sova.chainId)) {
+  throw new Error(`DRIP=1 is for test networks: chain ${sova.chainId} is not in DRIP_CHAIN_IDS (${cfg.dripChainIds.join(',')})`);
+}
+// The mint price is fixed at deploy (Ashwings: no setters): read it once.
+const dripPrice = cfg.drip ? await sova.priceWei() : 0n;
+const drips = new DripBook({
+  addressCooldownMs: cfg.dripAddressCooldownSecs * 1000,
+  perIpPerDay: cfg.dripPerIpPerDay,
+  perHour: cfg.dripPerHour,
+  perDay: cfg.dripPerDay,
+});
 const W = windows();
 const HOUR = 3_600_000;
 const MIN = 60_000;
@@ -127,7 +156,8 @@ function loadState() {
         quoteZat: o.quoteZat != null ? BigInt(o.quoteZat) : undefined,
       });
     }
-    log(`state: ${orders.size} open order(s) from ${cfg.stateFile}`);
+    drips.load(s.drips);
+    log(`state: ${orders.size} open order(s), ${drips.log.length} recent drip(s) from ${cfg.stateFile}`);
   } catch (e) {
     if (e.code !== 'ENOENT') log(`state: ${cfg.stateFile} unreadable (${e.message}); starting empty`);
   }
@@ -135,7 +165,7 @@ function loadState() {
 function saveState() {
   if (!cfg.stateFile) return;
   const tmp = `${cfg.stateFile}.tmp`;
-  writeFileSync(tmp, json({ orders: [...orders.values()] }), { mode: 0o600 });
+  writeFileSync(tmp, json({ orders: [...orders.values()], drips }), { mode: 0o600 });
   renameSync(tmp, cfg.stateFile);
 }
 
@@ -313,6 +343,28 @@ function limit(key, n, ms, message) {
 
 const openCount = () => orders.size;
 
+/** What one drip gives at most, and whether the pot can pay one now. */
+function dripStatus(wei) {
+  if (!cfg.drip) return null;
+  const maxWei = dripPrice + cfg.dripGasWei;
+  const why = wei < maxWei + cfg.dripKeepWei ? 'empty' : drips.since(24 * HOUR) >= cfg.dripPerDay ? 'daily cap reached' : null;
+  return {
+    accepting: !why,
+    reason: why,
+    // Tops an address up to one mint plus gas: price + gas.
+    priceWei: dripPrice,
+    maxWei,
+    firstOwlOnly: cfg.dripFirstOwlOnly,
+    today: drips.since(24 * HOUR),
+    limits: {
+      addressCooldownSecs: cfg.dripAddressCooldownSecs,
+      perIpPerDay: cfg.dripPerIpPerDay,
+      perHour: cfg.dripPerHour,
+      perDay: cfg.dripPerDay,
+    },
+  };
+}
+
 async function status() {
   const wei = await balance();
   const accepting = wei >= cfg.minBalanceWei && openCount() < cfg.maxOpen;
@@ -331,6 +383,7 @@ async function status() {
     maxOpenReservations: cfg.maxOpen,
     zcashAnchor: anchor,
     watching: Boolean(watcher),
+    drip: dripStatus(wei),
     limits: {
       reservePerIpPerHour: cfg.reservePerIpHour,
       reservePerHour: cfg.reservePerHour,
@@ -394,6 +447,66 @@ async function claim(req) {
   return [200, { itemId: r.itemId, txHash: hash }];
 }
 
+// ---- the drip -----------------------------------------------------------------
+const dripping = new Map(); // address -> { txHash, amountWei } while in flight
+
+async function drip(req) {
+  if (!cfg.drip) throw new HttpError(404, 'not found');
+  const b = await readJson(req);
+  if (!isAddr(b.address)) throw new HttpError(400, 'need {address}: a 0x address');
+  const addr = b.address.toLowerCase();
+  const ip = clientKey(req, cfg.proxyHeader);
+  limit(`d:${ip}`, cfg.dripTriesPerIpPerHour, HOUR, 'too many requests from your network: try again later');
+  const busy = dripping.get(addr);
+  if (busy) return [202, { ...busy, pending: true, existing: true }];
+  const no = drips.check(addr, ip);
+  if (no) throw new HttpError(429, no.error, { 'retry-after': String(no.retryAfter) });
+
+  const [has, owls] = await Promise.all([sova.balanceOf(b.address), cfg.dripFirstOwlOnly ? sova.owlsOf(b.address) : 0n]);
+  if (owls > 0n) throw new HttpError(409, 'this address already has an owl: the drip is for a first owl');
+  const target = dripPrice + cfg.dripGasWei;
+  if (has >= target) throw new HttpError(409, 'this address already has enough SOVA to mint');
+  const amount = target - has;
+  if ((await balance(0)) < amount + cfg.dripKeepWei) {
+    throw new HttpError(503, 'the drip is empty for now: try later, or pay with TAZ', { 'retry-after': '3600' });
+  }
+
+  // Re-check with nothing awaited before recording: two tabs can't both pass.
+  const again = drips.check(addr, ip);
+  if (again) throw new HttpError(429, again.error, { 'retry-after': String(again.retryAfter) });
+  if (dripping.has(addr)) return [202, { ...dripping.get(addr), pending: true, existing: true }];
+  const entry = drips.record(addr, ip);
+  dripping.set(addr, { txHash: null, amountWei: amount });
+  let sent;
+  try {
+    sent = await sova.transfer(b.address, amount);
+  } catch (e) {
+    drips.forget(entry, ip);
+    dripping.delete(addr);
+    throw e;
+  }
+  entry.txHash = sent.hash;
+  dripping.set(addr, { txHash: sent.hash, amountWei: amount });
+  saveState();
+  bal.at = 0;
+  log(`drip: ${formatEther(amount)} SOVA to ${addr} in ${sent.hash}`);
+  const done = sent.mined.then(
+    () => 'mined',
+    (e) => {
+      // Not mined (timed out or failed): the address may ask again.
+      log(`drip ${sent.hash} failed: ${describe(e)}`);
+      drips.forget(entry, ip);
+      saveState();
+      return 'failed';
+    },
+  );
+  done.finally(() => dripping.delete(addr));
+  const r = await within(done, cfg.respondWaitMs);
+  if (r === 'failed') throw new HttpError(502, 'the drip transaction did not go through: try again');
+  if (!r) return [202, { txHash: sent.hash, amountWei: amount, pending: true }];
+  return [200, { txHash: sent.hash, amountWei: amount }];
+}
+
 async function handle(req, res) {
   const url = new URL(req.url, 'http://x');
   if (req.method === 'OPTIONS') return send(req, res, 204, null);
@@ -410,6 +523,7 @@ async function handle(req, res) {
 
   if (req.method === 'POST' && url.pathname === '/reserve') return send(req, res, ...(await reserve(req)));
   if (req.method === 'POST' && url.pathname === '/claim') return send(req, res, ...(await claim(req)));
+  if (req.method === 'POST' && url.pathname === '/drip') return send(req, res, ...(await drip(req)));
 
   send(req, res, 404, { error: 'not found' });
 }
@@ -438,7 +552,8 @@ server.listen(cfg.port, cfg.host, () => {
     `checkout relayer ${sova.address} on http://${cfg.host}:${cfg.port} · chain ${sova.chainId} · checkout ${sova.checkout}` +
       ` · listings ${cfg.listings ? [...cfg.listings].join(',') : 'any'} · cors ${cfg.corsOrigins.join(',')}` +
       ` · client ip ${cfg.proxyHeader || 'socket'} · max open ${cfg.maxOpen} · floor ${formatEther(cfg.minBalanceWei)} SOVA` +
-      ` · watcher ${watcher ? 'on' : 'off'}`,
+      ` · watcher ${watcher ? 'on' : 'off'}` +
+      (cfg.drip ? ` · drip on (${formatEther(dripPrice + cfg.dripGasWei)} SOVA max, ${cfg.dripPerDay}/day)` : ' · drip off'),
   );
 });
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { watcher?.stop(); server.close(); process.exit(0); });

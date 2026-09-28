@@ -1,0 +1,26 @@
+---
+title: Sova docs
+description: Documentation for Sova, the EVM that reads Zcash. Join the testnet, run it locally, build contracts that read Zcash, and read the specs.
+template: splash
+hero:
+  title: The EVM that reads Zcash.
+  tagline: Mined by burning ZEC. One Sova block per Zcash block. Every node checks every mint against its own Zcash node.
+  actions:
+    - text: Join the testnet
+      link: /start/quickstart/
+      icon: right-arrow
+    - text: Build on Sova
+      link: /build/reading-zcash/
+      variant: minimal
+---
+
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+<CardGrid>
+  <LinkCard title="What is Sova" description="The chain in two minutes." href="/start/what-is-sova/" />
+  <LinkCard title="Quickstart" description="Zcash node, Sova node, miner. Burn TAZ, earn SOVA." href="/start/quickstart/" />
+  <LinkCard title="Run it locally" description="One command. A private Zcash, a Sova node and a miner." href="/start/local/" />
+  <LinkCard title="Read Zcash from a contract" description="The IZcash precompile, ZcashLib and the rules." href="/build/reading-zcash/" />
+  <LinkCard title="Connect a wallet" description="Chain ID 82330, RPC, explorer, faucet." href="/build/network/" />
+  <LinkCard title="Specs" description="The SIPs: burns, epochs, emission, precompile, sealing." href="/specs/" />
+</CardGrid>

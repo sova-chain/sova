@@ -2,9 +2,10 @@
 // (list: approve this owl for the market, then list; cancel).
 // Listings are found from the market's Listed logs and checked live.
 import {
-  type Owl, type Sale, SEL, config, owls, sales, listedIds, ownedBy, eth, connect, send, sentFor, why, sova, parseSova,
-  card, setStatus, one,
+  type Owl, type Sale, SEL, config, owls, sales, listedIds, ownedBy, wallet, connect, send, sentFor, why, sova, parseSova,
+  card, setStatus, one, short,
 } from './owls';
+import { chainSpec, watchWallet } from '../checkout/wallet';
 import { u256, addrWord, calldata, words, asAddr } from '../checkout/chain';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -104,24 +105,51 @@ async function load() {
 }
 
 async function doConnect() {
-  S.wallet = await connect(cfg);
-  $('connect').textContent = 'wallet ' + S.wallet.slice(0, 6) + '…' + S.wallet.slice(-4);
+  try {
+    S.wallet = await connect(cfg);
+  } catch (e) {
+    $('connect').textContent = 'try again';
+    throw e;
+  }
+  $('connect').textContent = 'wallet ' + short(S.wallet) + ' · sova';
 }
 
 $('cfg').textContent = `rpc ${cfg.rpc} · ashwings ${cfg.ashw} · market ${cfg.market}`;
 $('to-mint').setAttribute('href', `/ashwings/mint${location.search}`);
-if (eth) {
+const found = wallet().then(async (w) => {
+  if (!w) return false;
   $('connect').hidden = false;
   $('connect').addEventListener('click', () =>
     doConnect()
       .then(load)
-      .then(() => setStatus(status, 'ok', 'wallet connected'))
+      .then(() => setStatus(status, 'ok', 'wallet connected · on Sova testnet'))
       .catch((e) => setStatus(status, 'err', why(e))),
   );
-}
+  // A wallet that leaves Sova, or changes account, has to connect again.
+  const want = await chainSpec(cfg).then((c) => c.chainId, () => '');
+  watchWallet(w, {
+    chain: (id) => {
+      if (!S.wallet) return;
+      if (id === want) {
+        $('connect').textContent = 'wallet ' + short(S.wallet) + ' · sova';
+        return;
+      }
+      $('connect').textContent = 'switch to Sova testnet';
+      setStatus(status, 'err', 'wallet on another network · switch to Sova testnet');
+    },
+    account: (a) => {
+      if (S.wallet && a.toLowerCase() !== S.wallet.toLowerCase()) {
+        S.wallet = '';
+        $('connect').textContent = 'connect wallet';
+        load().catch(() => {});
+      }
+    },
+  });
+  return true;
+});
 load()
-  .then(() => {
-    setStatus(status, 'wait', eth ? 'connect a wallet to buy or list' : 'read-only · no wallet in this browser');
+  .then(async () => {
+    setStatus(status, 'wait', (await found) ? 'connect a wallet to buy or list' : 'read-only · no wallet in this browser');
     if (location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView();
   })
   .catch((e) => setStatus(status, 'err', `${why(e)} · rpc ${cfg.rpc}`));

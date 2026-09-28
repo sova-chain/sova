@@ -1,8 +1,8 @@
 # Security Policy
 
-Sova is pre-release software under active construction. It has not been
-audited. There is no mainnet; the only networks are local devnets
-(`./box/up.sh`) and, from M1, a public testnet whose coins have no value.
+Sova is pre-release software. It has not been audited. There is no
+mainnet. The networks are local devnets (`./box/up.sh`) and the public
+testnet, whose coins have no value.
 
 ## Reporting a vulnerability
 
@@ -30,20 +30,21 @@ There is no bug bounty at this stage.
 
 ## Scope
 
-In scope -- this repository's code and the artifacts built from it:
+In scope: this repository's code and the artifacts built from it.
 
 - **Consensus**: the burn-to-mine rules and everything that decides what
-  nodes accept -- Zcash follower and burn parsing (SIP-1), epoch ranking
-  and sealing, block validation and re-derivation of every mint
-  (`crates/consensus`, `crates/engine`, `bin/sova`), and the `sova/1` P2P
-  protocol. For example: a block other nodes accept that they should not,
+  nodes accept. Zcash follower and burn parsing (SIP-1), epoch ranking
+  and sealing, block validation and re-derivation of every mint, the
+  Zcash precompile's answers (SIP-4, SIP-7), and the `sova/1` P2P
+  protocol (`crates/consensus`, `crates/engine`, `crates/evm`,
+  `bin/sova`). For example: a block other nodes accept that they should not,
   a mint without a matching burn, a way to split honest nodes, or a remote
   crash.
-- **Settlement and emission**: how settled epochs become SOVA -- the
+- **Settlement and emission**: how settled epochs become SOVA: the
   withdrawals-channel mint, reward splits and tips, the emission schedule
   (SIP-2, SIP-3; `crates/evm`, `crates/chainspec`).
 - **Miner and faucet keys**: anything that leaks, weakens or misuses a
-  key -- the `sova-miner` keystore and burn-transaction builder
+  key: the `sova-miner` keystore and burn-transaction builder
   (`crates/burn-wallet`, `crates/miner`, `bin/sova-miner`, `mcp/`), and
   the TAZ faucet's hot key (`crates/burn-wallet/faucet`; see its
   testnet-only guards in `docs/ops/faucet.md`). Also a burn that is not

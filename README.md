@@ -6,10 +6,10 @@
   </picture>
 </p>
 
-<h3 align="center">The programmable edge of the shielded pool.</h3>
+<h3 align="center">The EVM that reads Zcash.</h3>
 
 <p align="center">
-  An EVM chain that reads Zcash. Mined by burning ZEC.
+  Mined by burning ZEC.
 </p>
 
 <p align="center">
@@ -19,7 +19,9 @@
 
 <p align="center">
   <a href="https://sova.io">sova.io</a> ·
-  <a href="#quickstart">Quickstart</a> ·
+  <a href="https://docs.sova.io">Docs</a> ·
+  <a href="docs/guides/testnet.md">Join the testnet</a> ·
+  <a href="#run-it-locally">Run it locally</a> ·
   <a href="sips/">SIPs</a> ·
   <a href="docs/ROADMAP.md">Roadmap</a> ·
   <a href="SECURITY.md">Security</a>
@@ -27,36 +29,42 @@
 
 ---
 
-Sova is an EVM chain that reads Zcash: contracts verify real ZEC payments
-on Zcash itself. SOVA, the gas token, is mined by burning ZEC, one Sova block
-per Zcash block. Every node verifies every mint against its own Zcash node.
-Permissionless, verifiable, self-custody.
+Sova is an EVM chain that runs beside Zcash. Every Sova node runs its own
+Zcash node, so contracts can check real ZEC payments and every node checks
+every mint. SOVA, the gas coin, is minted only by burning ZEC. One Sova block
+follows each Zcash block.
 
-> **Status: pre-release and unaudited.** A public testnet is live, mined
-> with testnet ZEC ([join it](docs/guides/testnet.md)); the same stack runs
-> locally with `./box/up.sh` ([roadmap](docs/ROADMAP.md)). Read [`SECURITY.md`](SECURITY.md) before
-> relying on it, and to report a vulnerability.
+> **Status: pre-release and unaudited.** The public testnet runs on Zcash
+> testnet, so mining costs only testnet ZEC. Read [`SECURITY.md`](SECURITY.md)
+> before relying on it, and to report a vulnerability.
 
-## Quickstart
+## Get started
 
-Run a full local burn-to-mine devnet (a Zcash regtest node, a Sova node and a
-miner) with one command. You need Docker running, and a Rust toolchain while
-the first run builds from source. Details in [`box/README.md`](box/README.md).
+- **Join the public testnet.** Run a node and mine with testnet ZEC:
+  [the join guide](docs/guides/testnet.md). Chain ID 82330. Look around first
+  in the [explorer](https://explorer.testnet.sova.io); get testnet ZEC from
+  the [faucet](https://faucet.testnet.sova.io); public RPC
+  `https://rpc.testnet.sova.io`.
+- **Run it locally.** One command starts a private Zcash regtest node, a Sova
+  node and a miner ([below](#run-it-locally)).
+- **Read the specs.** The protocol is written down as SIPs in
+  [`sips/`](sips/) ([list below](#sova-improvement-proposals)).
+
+## Run it locally
+
+You need Docker running. Clone the latest release tag, so the box can
+download prebuilt binaries (Linux x86_64 and Apple Silicon):
 
 ```bash
-git clone https://github.com/sova-chain/sova && cd sova
-./box/up.sh          # up; the first run gets the node and miner binaries
+git clone --branch v0.1.14 https://github.com/sova-chain/sova && cd sova
+./box/up.sh          # up; mining in under a minute with prebuilt binaries
 ./box/up.sh status   # block height, the miner's SOVA balance, settled epochs
 ./box/up.sh down     # clean teardown
 ```
 
-How long the first run takes depends on where the binaries come from. From a
-checkout of a tagged release, it downloads prebuilt binaries and the box is
-mining in under a minute (Linux x86_64 and Apple Silicon; see the
-[latest release](https://github.com/sova-chain/sova/releases/latest)). Elsewhere
-the first run builds from source: about 11 minutes on an idle Apple Silicon
-laptop, up to about 25 on a busy one. Later runs reuse the binaries and take under a
-minute.
+On other platforms, or from an untagged checkout, the first run builds from
+source with a Rust toolchain: about 11 minutes on an idle Apple Silicon
+laptop, up to 25 on a busy one. Details in [`box/README.md`](box/README.md).
 
 ## How it works
 
@@ -99,11 +107,12 @@ Protocol changes go through SIPs, in [`sips/`](sips/).
 | SIP | Title | Status |
 | --- | --- | --- |
 | [SIP-1](sips/sip-1.md) | The Burn Transaction Format | Frozen |
-| [SIP-2](sips/sip-2.md) | Epochs, Rewards, and Settlement | Draft: implemented, proven on regtest |
+| [SIP-2](sips/sip-2.md) | Epochs, Rewards, and Settlement | Draft: live on the testnet |
 | [SIP-3](sips/sip-3.md) | Emission Schedule | Accepted |
 | [SIP-4](sips/sip-4-draft-zcash-state-precompile.md) | Zcash State Precompile | Draft: build approved, live on the testnet |
 | [SIP-6](sips/sip-6-draft-sealer-signatures.md) | Sealer Signatures | Accepted: live on the testnet |
 | [SIP-7](sips/sip-7-draft-zcash-events.md) | Zcash Pool State and Events | Accepted: live on the testnet |
+| [SIP-8](sips/sip-8-draft-anchored-burns.md) | Anchored Burns | Accepted: not active on any network yet |
 
 ## Repository layout
 

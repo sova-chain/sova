@@ -1,34 +1,21 @@
 # sova-in-a-box
 
-One command that brings up a `zebrad` regtest node, a Sova node (mine
-mode), and a continuous miner together, so anyone can run a full local
-burn-to-mine devnet and watch it mine.
+One command starts a local burn-to-mine devnet: a Zcash regtest node
+(`zebrad`, in Docker), a Sova node and a miner. You watch real ZEC burns
+become SOVA on your own machine.
 
 ```bash
-./box/up.sh          # up
+./box/up.sh           # up
 ./box/up.sh status    # block height, miner's SOVA balance, settled epochs
 ./box/up.sh down      # clean teardown
 ```
 
-See [`box/up/README.md`](up/README.md) for the full quickstart, what
-you're seeing, tunables, and evidence from a real cold run.
+From a checkout of a release tag (`git clone --branch v0.1.14
+https://github.com/sova-chain/sova`), `./box/up.sh` downloads that
+release's prebuilt binaries for Linux x86_64 or Apple Silicon and reaches
+the first mint in under a minute. Anywhere else, the first run builds from
+source: about 11 minutes on an idle Apple Silicon laptop, about 25 on a
+busy one. Later runs reuse the binaries and take under a minute.
 
-**How long the first run takes.** With prebuilt binaries, `./box/up.sh`
-reaches the first mint in under a minute (35-42s measured). Those come from
-a checkout of a tagged release, which downloads that release's CI-built
-binaries with plain `curl` and no GitHub login (`box/up/README.md`,
-"Prebuilt binaries"). Anywhere else (an untagged checkout, or a platform
-without prebuilt binaries) the first run builds from source: about 11
-minutes on an idle Apple Silicon laptop, and about 25 on a busy one. Later runs reuse the binaries
-and take under a minute.
-
-v1 is a **hybrid** stack: `zebrad` runs in Docker (reusing
-[`box/regtest`](regtest); only its port and container name became
-overridable), while `bin/sova` and `sova-miner` run
-as host processes in release mode -- see `box/up/README.md`'s "Why hybrid"
-section for the disk/host-shape reasoning. Full containerization (a
-Dockerfile + compose stack for all three) is a tracked follow-up. E1's
-acceptance bar is "one command, cold to a visibly mining chain in under 10
-minutes". From a tagged release checkout, which downloads prebuilt binaries,
-it is met: the first mint comes in under a minute. Building from source misses
-it (12m54s cold in `docs/reports/e1-stranger-test.md`).
+[`box/up/README.md`](up/README.md) has the prerequisites, what you're
+seeing, the dapp demo, tunables and troubleshooting.

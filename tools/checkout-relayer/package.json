@@ -10,7 +10,7 @@
   },
   "scripts": {
     "start": "node src/server.mjs",
-    "test": "node --test --test-concurrency=1 test/unit.test.mjs test/limits.test.mjs",
+    "test": "node --test --test-concurrency=1 test/unit.test.mjs test/drip.test.mjs test/limits.test.mjs",
     "e2e": "node e2e/run.mjs"
   },
   "dependencies": {

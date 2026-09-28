@@ -18,6 +18,7 @@ import { SOVA_RPC, TESTNET, CONTRACTS } from '../../data/sova';
 const config = {
   rpc: SOVA_RPC,
   chainId: TESTNET.chainId,
+  explorer: TESTNET.explorer,
   ashw: CONTRACTS.ashwings,
   checkout: '',
   listing: 1,
@@ -34,7 +35,8 @@ const config = {
 >
   <div id="buy" data-config={JSON.stringify(config)}>
     <h1>Pay ZEC. Get an owl.</h1>
-    <p class="lead">This is the testnet: pay in testnet ZEC (TAZ) from a Zcash wallet running on testnet that can pay a t-address. A mainnet wallet will refuse the address. TAZ comes from the <a href="https://github.com/sova-chain/sova/blob/main/docs/guides/testnet.md#3b-get-taz-from-the-faucet">testnet faucet</a>. Sova verifies the payment on Zcash itself; you need no SOVA.</p>
+    <p class="lead">Testnet ZEC (TAZ) in, owl out. No SOVA needed.</p>
+    <p class="dim"># needs a Zcash testnet wallet that pays a t-address (tested: <code>zcash-devtool</code>). TAZ from the <a href="https://github.com/sova-chain/sova/blob/main/docs/guides/testnet.md#3b-get-taz-from-the-faucet">faucet</a>.<br /># have a browser wallet? <a href="/ashwings/mint">mint with test SOVA</a>.</p>
 
     <ol class="track" aria-label="Progress">
       <li data-s="cur">reserve</li>

@@ -10,7 +10,7 @@
 // README.md (license). Every claim is in site/README.md.
 import Site from '../layouts/Site.astro';
 import Tag from '../components/Tag.astro';
-import { repo, CLONE } from '../data/sova';
+import { repo, CLONE, TESTNET } from '../data/sova';
 import testnet from '../../../infra/testnet/deployments/sova-testnet.json';
 
 // The testnet's Multicall3, from the deploy record.
@@ -39,7 +39,7 @@ const patterns = [
 >
   <h1>Build on Sova</h1>
   <p class="lead">A Sova contract can read Zcash. Every node answers from its own Zcash node, and every node gives the same answer.</p>
-  <p class="tags">SIP-4 · <Tag k="draft" /> build approved · built · <Tag k="testnet" /></p>
+  <p class="tags">SIP-4 <Tag k="draft" /> · live on the public testnet</p>
 
   <h2>what a contract can read</h2>
   <dl class="kv methods">
@@ -55,13 +55,13 @@ interface IZcash {'{'}
     function anchor() external view returns (uint64 height, bytes32 hash);
     function blockAt(uint64 h) external view returns (uint8 status, bytes32 hash, uint32 time);
     function txInfo(bytes32 txid) external view returns (uint8 status, uint64 height,
-        uint32 index, uint64 confirmations, uint16 nOut, uint32 version);
+        uint32 index, uint64 confirmations, uint32 nOut, uint32 version);
     function txOutput(bytes32 txid, uint32 vout) external view
         returns (uint8 status, uint64 valueZat, bytes memory script);
     function burnInfo(bytes32 txid) external view
         returns (uint8 status, address credited, uint32 signal, uint64 weightZat);
 {'}'}
-<span class="c">// status: OK 0 · NOT_FOUND 1 · NOT_YET 2 · OUT_OF_RANGE 3 · NO_SUCH_OUTPUT 4</span></code></pre>
+<span class="c">// status: OK 0 · NOT_FOUND 1 · NOT_YET 2 · OUT_OF_RANGE 3 · NO_SUCH_OUTPUT 4 · NOT_A_BURN 5</span></code></pre>
   <p>Most contracts use <code>ZcashLib</code>, which turns a check into one call:</p>
   <pre class="sh"><code><span class="c">// paid at least `price` zatoshis to the seller, 3 or more blocks deep?</span>
 ZcashLib.Payment memory p = ZcashLib.requireOutputPays(
@@ -95,7 +95,15 @@ ZcashLib.Payment memory p = ZcashLib.requireOutputPays(
       <li id={p.id}><Tag k={p.k} /><p><b>{p.h}</b> {p.t} <span class="dim">{p.src}</span></p></li>
     ))}
   </ul>
-  <p>The first demo runs on a local devnet today: buy an Ashwing with ZEC from any Zcash wallet.</p>
+  <p>The first demo is live on the public testnet: <a href="/ashwings">buy an Ashwing</a> with testnet ZEC from any testnet Zcash wallet.</p>
+
+  <h2 id="testnet">on the testnet</h2>
+  <dl class="kv urls">
+    <dt>chain ID</dt><dd><code>{TESTNET.chainId}</code>, currency SOVA</dd>
+    <dt>RPC</dt><dd><code>{TESTNET.rpc}</code></dd>
+    <dt>explorer</dt><dd><a href={TESTNET.explorer}><code>{TESTNET.explorer}</code></a></dd>
+    <dt>gas</dt><dd>SOVA comes only from burning ZEC: <a href="/mine#testnet">mine some</a>.</dd>
+  </dl>
 
   <h2 id="try">try it locally <Tag k="local" /></h2>
   <p>The contracts, a stand-in for the precompile, the checkout page and its relayer, all on your machine. Needs Foundry, Node 22 and a Chromium (<code>CHROME=/path</code>).</p>
@@ -111,7 +119,7 @@ ZcashLib.Payment memory p = ZcashLib.requireOutputPays(
   <p>Sova is open source, MIT or Apache-2.0 at your option. The repository is on GitHub: <a href={repo.root}>sova-chain/sova</a>. Start with <a href={repo.contributing}><code>CONTRIBUTING.md</code></a>.</p>
   <dl class="kv">
     <dt>run a node</dt><dd><a href="/node">One command</a>. “It didn’t work on my machine” is a useful issue.</dd>
-    <dt>change the protocol</dt><dd>Float the idea in the SIPs category of <a href={repo.discussions}>Discussions</a>, then open the SIP as a pull request to <code>sips/</code>. <a href="/sips">The SIPs</a>.</dd>
+    <dt>change the protocol</dt><dd>Float the idea in the <a href={repo.sipIdeas}>SIPs category of Discussions</a>, then open the SIP as a pull request to <code>sips/</code>. <a href="/sips">The SIPs</a>.</dd>
     <dt>send code</dt><dd>Human and AI pairs are the default; the author explains the change. Consensus code merges with simulation coverage in <code>box/sim</code>.</dd>
     <dt>report a bug</dt><dd>Issue templates, in the repository: <a href={repo.issues}>Issues</a>.</dd>
     <dt>security</dt><dd>Report privately, through <a href={repo.reportVulnerability}>GitHub’s private vulnerability reporting</a> or the security address in <a href={repo.securityPolicy}><code>SECURITY.md</code></a>. Public issues are for everything else.</dd>
@@ -129,6 +137,7 @@ ZcashLib.Payment memory p = ZcashLib.requireOutputPays(
   .pats li { display: grid; grid-template-columns: 10ch 1fr; gap: 10px; margin: 0 0 10px; max-width: none; }
   .pats p { margin: 0; }
   .pats b { color: var(--cream); }
+  .urls code { overflow-wrap: anywhere; }
   :global(.page) h2 .st { font-weight: 400; margin-left: 6px; }
   @media (max-width: 600px) {
     .pats li { grid-template-columns: 1fr; gap: 0; }

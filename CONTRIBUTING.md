@@ -1,12 +1,10 @@
 # Contributing to Sova
 
-## Human + AI pair contributions are the default
+## AI-assisted changes
 
-We expect most changes here to be written by a human and an AI coding
-assistant working together, and that's fine — it's the expected default, not
-an exception that needs disclosing. What matters is the result: tests pass,
-and the author (human) can explain what the change does and why it's
-correct. If you can't explain it, it's not ready to submit.
+Most changes here are written by a person working with an AI coding
+assistant. No disclosure is needed. Tests must pass, and the author must be
+able to explain what the change does and why it is correct.
 
 ## Consensus code needs simulation-harness coverage
 
@@ -21,11 +19,11 @@ or extend a scenario there, and say in the PR which one covers the change.
 ## SIPs govern protocol changes
 
 Changes to the protocol itself (consensus rules, transaction formats, the
-burn mechanism, etc.) are governed by Sova Improvement Proposals (SIPs).
-Open an SIP before sending a PR that changes protocol behavior. SIPs live
-in [`sips/`](sips) in this repository: float the idea first in the SIPs
-category of GitHub Discussions, then open the SIP itself as a pull request
-adding or changing a file in `sips/`.
+burn mechanism) go through Sova Improvement Proposals (SIPs), in
+[`sips/`](sips). Float the idea in the
+[SIPs category of Discussions](https://github.com/sova-chain/sova/discussions/categories/sips),
+then open the SIP as a pull request to `sips/` before sending code that
+changes protocol behavior.
 
 ## Issues and pull requests
 

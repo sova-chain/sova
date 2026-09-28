@@ -2,7 +2,8 @@
 
 Reserves and claims orders on `AshwingsZecCheckout` for buyers who hold no
 SOVA, and can watch the seller's Zcash t-address to claim paid orders
-automatically. Design and flow: `docs/design/ashwing-zec-checkout.md`.
+automatically. On a test network it can also drip SOVA to new addresses,
+enough for one Ashwings mint (`DRIP=1`; `/ashwings/mint` step 2). Design and flow: `docs/design/ashwing-zec-checkout.md`.
 The project runs it publicly at `https://checkout.testnet.sova.io`, which
 is the default relayer of `/ashwings/buy`. The testnet kit deploys it on
 the faucet host (`CHECKOUT_RELAYER=1`; `docs/ops/testnet-launch.md`,
@@ -21,6 +22,7 @@ npm run e2e                # anvil + mock precompile + headless browser
 |---|---|
 | `POST /reserve {listingId, recipient}` | Reserve for `recipient`; the relayer pays the gas. `200 {reservationId, quoteZat, txHash}` once mined, or `202 {txHash, pending: true}` if that takes over `RESPOND_WAIT_MS` (the caller reads the `Reserved` event from the receipt). If this relayer already has an open order for `recipient` with time left, it returns that one (`existing: true`) |
 | `POST /claim {reservationId, txid, vout}` | Claim a paid order. Dry-run first, so a claim that would revert costs nothing (`400` with the contract error). `200 {itemId, txHash}` or `202 {txHash, pending: true}`; a second claim for the same order while one is in flight gets the same tx |
+| `POST /drip {address}` | Testnet only (`DRIP=1`). Tops `address` up to one mint plus gas (`priceWei + DRIP_GAS_WEI`). `200 {txHash, amountWei}` once mined, or `202 {txHash, amountWei, pending: true}`. `409` if the address already holds enough SOVA or an owl, `429` a limit (with `Retry-After`), `503` the pot is empty, `404` with the drip off |
 | `GET /status` | Relayer address, chain, checkout, listing ids, SOVA balance, the floor, open orders / the cap, whether it takes new orders (and why not), the limits. No secrets |
 | `GET /status/:id` | What the watcher found for an order (`detected` txid/vout, `claim` state) |
 | `GET /health` | Liveness. Local only: the public tunnel doesn't route it |
@@ -60,6 +62,20 @@ Environment variables only. Put them in a local `.env` (gitignored) and run
 | `PRUNE_MS` | 30000 | How often open orders are re-checked (Zcash anchor, filled) |
 | `LOG_CHUNK` | 1000 | `eth_getLogs` block range per call (the public RPC caps it at 1,000) |
 
+The SOVA drip (off unless `DRIP=1`):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DRIP` | 0 | `1` turns on `POST /drip` |
+| `DRIP_CHAIN_IDS` | `82330,31337` | The drip refuses to start on any other chain (the public testnet, anvil) |
+| `DRIP_GAS_WEI` | 1e17 (0.1 SOVA) | Given over the mint price, for gas |
+| `DRIP_KEEP_WEI` | 1e18 (1 SOVA) | Never drips below this: gas for reserve and claim |
+| `DRIP_FIRST_OWL_ONLY` | 1 | Refuse addresses that already hold an Ashwing |
+| `DRIP_ADDRESS_COOLDOWN_SECS` | 86400 | One drip per address per this long (kept in `STATE_FILE`) |
+| `DRIP_PER_IP_PER_DAY` | 2 | Per client IP (memory only; IPs are never written to disk) |
+| `DRIP_PER_HOUR`, `DRIP_PER_DAY` | 20, 100 | All clients together (kept in `STATE_FILE`) |
+| `DRIP_TRIES_PER_IP_PER_HOUR` | 20 | Requests per IP, refused ones included |
+
 Optional payment watcher (finds payments on the seller's t-address and
 claims them):
 
@@ -91,6 +107,11 @@ orders hold, and its RPC budget. The defaults above are the public ones:
   own IP blocked at the edge.
 - **Browsers.** Strict CORS; POSTs must be `application/json` (no simple
   cross-site form posts); small bodies; slow clients time out.
+
+The drip is the one path that gives SOVA away. What it can lose is bounded
+by `DRIP_PER_DAY` × (price + gas) a day; on the testnet that SOVA has no
+value, and the per-address, per-IP and first-owl rules hold a visitor
+to about one owl a day.
 
 The key: `node src/keygen.mjs /path/key.env` (0600, created once, prints
 the address). To move its SOVA out before a rotation, run

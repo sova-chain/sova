@@ -1,0 +1,255 @@
+/* docs.sova.io theme: sova.io's gold on warm black (site/src/layouts/Site.astro),
+   made for long reading. Roboto Mono for the chrome, headings and code; the
+   system sans for body text. Light mode keeps the same warmth with deep gold. */
+
+@font-face {
+  font-family: 'Roboto Mono';
+  font-style: normal;
+  font-weight: 100 700;
+  font-display: swap;
+  src: url('/fonts/roboto-mono-latin-wght.woff2') format('woff2-variations');
+}
+
+:root {
+  --sova-mono: 'Roboto Mono', ui-monospace, Menlo, Consolas, monospace;
+  --sl-font-mono: var(--sova-mono);
+
+  /* sova.io palette (dark) */
+  --sova-bg: #0c0a07;
+  --sova-panel: #110e09;
+  --sova-line: #3a2f18;
+  --sova-gold: #f4b728;
+  --sova-gold-2: #cf9d2a;
+  --sova-gold-3: #8a6a1f;
+  --sova-cream: #fbf3dc;
+  --sova-text: #e8dcbc;
+  --sova-ember: #e0703f;
+  --sova-code-bg: #110e09;
+  --sova-code-bar: #17130c;
+
+  --sl-color-white: var(--sova-cream);
+  --sl-color-gray-1: #efe4c8;
+  --sl-color-gray-2: var(--sova-text);
+  --sl-color-gray-3: #b3a585;
+  --sl-color-gray-4: #7d7059;
+  --sl-color-gray-5: #3a2f18;
+  --sl-color-gray-6: #17130c;
+  --sl-color-black: var(--sova-bg);
+
+  --sl-color-accent-low: #3a2c0c;
+  --sl-color-accent: var(--sova-gold);
+  --sl-color-accent-high: #fbd98a;
+
+  --sl-color-text: var(--sova-text);
+  --sl-color-text-accent: var(--sova-gold);
+  --sl-color-text-invert: var(--sova-bg);
+  --sl-color-bg: var(--sova-bg);
+  --sl-color-bg-nav: var(--sova-panel);
+  --sl-color-bg-sidebar: var(--sova-panel);
+  --sl-color-bg-inline-code: rgba(244, 183, 40, 0.08);
+  --sl-color-bg-accent: var(--sova-gold);
+  --sl-color-hairline-light: var(--sova-line);
+  --sl-color-hairline: #241d10;
+  --sl-color-hairline-shade: #000;
+
+  --sl-color-orange: var(--sova-ember);
+  --sl-color-orange-low: #3b1d10;
+  --sl-color-orange-high: #f3b597;
+}
+
+:root[data-theme='light'] {
+  --sova-bg: #fdfaf2;
+  --sova-panel: #f6efdc;
+  --sova-line: #e3d6b3;
+  --sova-code-bg: #f8f2e2;
+  --sova-code-bar: #efe6cd;
+
+  --sl-color-white: #1c1914;
+  --sl-color-gray-1: #2a251c;
+  --sl-color-gray-2: #3b342a;
+  --sl-color-gray-3: #5f5543;
+  --sl-color-gray-4: #8a7d62;
+  --sl-color-gray-5: #d9cba6;
+  --sl-color-gray-6: #efe6cd;
+  --sl-color-gray-7: #f6efdc;
+  --sl-color-black: var(--sova-bg);
+
+  --sl-color-accent-low: #f3e3b8;
+  --sl-color-accent: #b0841d;
+  --sl-color-accent-high: #6f5212;
+
+  --sl-color-text: #2e2920;
+  --sl-color-text-accent: #8a6614;
+  --sl-color-text-invert: #fdfaf2;
+  --sl-color-bg: var(--sova-bg);
+  --sl-color-bg-nav: var(--sova-panel);
+  --sl-color-bg-sidebar: var(--sova-panel);
+  --sl-color-bg-inline-code: rgba(176, 132, 29, 0.1);
+  --sl-color-bg-accent: #b0841d;
+  --sl-color-hairline-light: var(--sova-line);
+  --sl-color-hairline: #eadfc2;
+  --sl-color-hairline-shade: #d9cba6;
+
+  --sl-color-orange: #c25a33;
+  --sl-color-orange-low: #f7dccf;
+  --sl-color-orange-high: #7a3417;
+}
+
+::selection {
+  background: var(--sl-color-accent);
+  color: var(--sl-color-text-invert);
+}
+
+/* Chrome in mono: header, sidebar, table of contents, pagination, buttons. */
+.site-title,
+.sidebar-content,
+starlight-toc,
+mobile-starlight-toc,
+.pagination-links,
+.sl-link-button,
+.action,
+site-search button,
+.meta {
+  font-family: var(--sova-mono);
+}
+
+/* The wordmark, then "docs" in dim gold, like a path. */
+.site-title img {
+  height: 1rem;
+}
+.site-title::after {
+  content: 'docs';
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--sl-color-gray-3);
+  margin-left: -0.35rem;
+}
+
+/* Sidebar: group labels as dim section heads, the current page as a gold bar. */
+.sidebar-content .group-label .large {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--sova-gold-3);
+}
+:root[data-theme='light'] .sidebar-content .group-label .large {
+  color: #8a6614;
+}
+.sidebar-content a {
+  font-size: 0.86rem;
+}
+.sidebar-content a[aria-current='page'],
+.sidebar-content a[aria-current='page']:hover {
+  background: var(--sl-color-accent);
+  color: var(--sl-color-text-invert);
+  font-weight: 600;
+  border-radius: 0;
+}
+
+/* Headings: mono, gold h1, cream sections. */
+.sl-markdown-content :is(h1, h2, h3, h4, h5, h6),
+h1#_top {
+  font-family: var(--sova-mono);
+  letter-spacing: -0.01em;
+}
+h1#_top {
+  color: var(--sl-color-accent);
+  font-weight: 700;
+}
+:root:not([data-theme='light']) h1#_top {
+  text-shadow: 0 0 1px rgba(244, 183, 40, 0.5), 0 0 14px rgba(244, 183, 40, 0.18);
+}
+.sl-markdown-content h2 {
+  font-size: 1.35rem;
+  color: var(--sl-color-white);
+}
+.sl-markdown-content .sl-heading-wrapper.level-h2 {
+  border-bottom: 1px solid var(--sl-color-hairline-light);
+  padding-bottom: 0.3rem;
+}
+.sl-markdown-content h3 {
+  font-size: 1.1rem;
+  color: var(--sl-color-white);
+}
+
+/* Body links: gold, underline on a quiet line. */
+.sl-markdown-content a:not(.card):not(.sl-link-card a) {
+  color: var(--sl-color-text-accent);
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+}
+.sl-markdown-content a:hover {
+  text-decoration-color: currentColor;
+}
+
+/* Inline code in cream on a faint gold tint, square corners. */
+.sl-markdown-content :not(pre) > code {
+  color: var(--sl-color-white);
+  border-radius: 0;
+  padding: 0.1em 0.3em;
+  overflow-wrap: anywhere;
+}
+
+/* Tables: dense, hairlines, mono header. */
+.sl-markdown-content table {
+  font-size: 0.9em;
+  display: block;
+  overflow-x: auto;
+}
+.sl-markdown-content th {
+  font-family: var(--sova-mono);
+  font-size: 0.85em;
+  color: var(--sl-color-white);
+  background: var(--sl-color-gray-6);
+}
+.sl-markdown-content :is(th, td) {
+  border-color: var(--sl-color-hairline-light);
+}
+
+/* Asides and cards: square, gold edge. */
+.starlight-aside {
+  border-radius: 0;
+}
+.card,
+.sl-link-card {
+  border-radius: 0 !important;
+  border-color: var(--sl-color-hairline-light) !important;
+  background: var(--sl-color-gray-6) !important;
+}
+.sl-link-card:hover {
+  border-color: var(--sl-color-accent) !important;
+}
+.sl-link-card .title {
+  font-family: var(--sova-mono);
+  color: var(--sl-color-white);
+}
+
+/* Splash hero on the home page. */
+.hero h1 {
+  font-family: var(--sova-mono);
+  color: var(--sl-color-accent);
+  letter-spacing: -0.02em;
+}
+.hero .tagline {
+  color: var(--sl-color-gray-2);
+}
+.sl-link-button {
+  border-radius: 0 !important;
+}
+
+/* <details> blocks (long interfaces). */
+.sl-markdown-content details {
+  border: 1px solid var(--sl-color-hairline-light);
+  padding: 0.5rem 0.9rem;
+}
+.sl-markdown-content summary {
+  cursor: pointer;
+  color: var(--sl-color-text-accent);
+}
+
+/* Header: keep the extra text links from crowding small screens. */
+@media (max-width: 50rem) {
+  .sova-hlink {
+    display: none;
+  }
+}

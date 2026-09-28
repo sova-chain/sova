@@ -30,7 +30,6 @@ const sova = [
   'Contracts read Zcash itself: every node runs its own Zcash node.',
   'Self-custody. ZEC stays on Zcash, and SOVA is created by destroying ZEC.',
   'Blocks follow Zcash’s proof-of-work, one for one.',
-  'Every node recomputes every mint from its own Zcash node.',
 ];
 
 const fair = [
@@ -46,7 +45,6 @@ const plan = [
 
 const grassroots = [
   { h: 'Anyone can mine, in any amount.', t: 'From 1,000 zatoshis up. Mining is burning.' },
-  { h: 'Every node verifies every mint.', t: 'Against its own Zcash node, history included.' },
   { h: 'Rules change in the open.', t: 'Through SIPs, in the repository.' },
   { h: 'Runs on a laptop and an SSD.', t: 'A full Zcash node and a full Sova node, on one machine.' },
 ];
@@ -90,7 +88,7 @@ const fresh = [
     <p class="dh new">Sova</p>
     <ul>{sova.map((t) => <li class="new"><span class="mk">+</span><p>{t}</p></li>)}</ul>
   </div>
-  <p>Contracts that read Zcash: <Tag k="testnet" /> built, in review. Contracts that watch Zcash’s value pools: <Tag k="planned" /> <a href="/sips#sip-7">SIP-7</a>.</p>
+  <p>Contracts that read Zcash (<a href="/sips#sip-4">SIP-4</a>) and its shielded pools (<a href="/sips#sip-7">SIP-7</a>) are live on the public testnet.</p>
 
   <h2>open</h2>
   <ul class="rows">
@@ -121,9 +119,7 @@ const fresh = [
   </ol>
   <p class="note"># Dates are targets.</p>
 
-  <p>Where Sova came from: <a href="/story">the story</a>.</p>
-
-  <p class="next"><a href="/paper">Read the whitepaper</a><a href="/build">Build</a><a href="/mine">Mine</a><a href="/story">The story</a></p>
+  <p class="next"><a href="/testnet">Join the testnet</a><a href="/paper">Read the whitepaper</a><a href="/build">Build</a><a href="/mine">Mine</a><a href="/story">The story</a></p>
 </Site>
 
 <style>

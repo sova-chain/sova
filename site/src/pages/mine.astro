@@ -23,14 +23,15 @@ const tools = [
   status="pre-release · public testnet live"
 >
   <h1>Mine SOVA</h1>
-  <p class="why1">Mining issues SOVA, the gas that runs every contract on Sova, including the ones that verify ZEC payments.</p>
-  <p class="lead">Burn ZEC on Zcash. The next Sova block pays you SOVA. That’s mining: any amount, from a laptop.</p>
+  <p class="why1">Mining issues SOVA, the gas every Sova contract runs on.</p>
+  <p class="lead">Burn ZEC on Zcash. The next Sova block pays you SOVA. Any amount, from a laptop.</p>
+  <p>Mining the public testnet? The commands are <a href="#testnet">below</a>.</p>
 
   <h2>the flow</h2>
   <ol class="flow">
     <li><span class="tag">[1] get ZEC</span><span>Fund a transparent address your miner controls. For privacy, fund it from your own shielded wallet (below).</span></li>
     <li><span class="tag">[2] burn</span><span><code>sova-miner</code> sends one burn per Zcash block: at least {MIN_BURN_ZAT} zatoshis to a script nobody can spend, with your EVM address in the OP_RETURN.</span></li>
-    <li><span class="tag">[3] SOVA</span><span>That epoch’s Sova block pays every burner, split by ZEC burned: {REWARD_SOVA} SOVA per epoch, flat on the testnet; mainnet reaches it after a slow start. The top burner seals the block and takes a one-tenth tip.</span></li>
+    <li><span class="tag">[3] SOVA</span><span>The matching Sova block pays every burner, split by ZEC burned: {REWARD_SOVA} SOVA per epoch (one Zcash block), flat on the testnet; mainnet reaches it after a slow start. The top burner seals the block and takes a one-tenth tip.</span></li>
   </ol>
 
   <h2>by hand</h2>

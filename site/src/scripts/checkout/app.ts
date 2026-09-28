@@ -5,11 +5,12 @@
 // The order id and txid live in the URL (?r=&tx=) so a reload resumes.
 import { qrSvg } from './qr';
 import {
-  ZCASH, ZERO_ADDR, SEL, TOPIC, rpc, useChain, reason, u256, addrWord, b32, calldata, words, num, asAddr,
+  ZCASH, ZERO_ADDR, SEL, TOPIC, rpc, reason, u256, addrWord, b32, calldata, words, num, asAddr,
   dynBytes, utf8, payeeScript, tAddr, zec, waitingForBlock, stopWaiting,
 } from './chain';
+import { type Eip1193, WalletError, chainSpec, ensureChain, findWallet, isRejected, watchWallet } from './wallet';
 
-type Cfg = { rpc: string; chainId?: number; ashw: string; checkout: string; listing: number; relayer: string; net: 'test' | 'main' };
+type Cfg = { rpc: string; chainId?: number; explorer?: string; ashw: string; checkout: string; listing: number; relayer: string; net: 'test' | 'main' };
 type Resv = {
   recipient: string; quote: bigint; minConf: number; p2sh: boolean; filled: boolean;
   hash: string; reservedAt: bigint; window: bigint;
@@ -22,13 +23,14 @@ const base = JSON.parse(root.dataset.config || '{}') as Cfg;
 const cfg: Cfg = {
   rpc: q.get('rpc') || base.rpc,
   chainId: base.chainId,
+  explorer: base.explorer,
   ashw: q.get('ashw') || base.ashw,
   checkout: q.get('co') || base.checkout,
   listing: Number(q.get('listing') || base.listing),
   relayer: q.get('relayer') === 'none' ? '' : (q.get('relayer') || base.relayer).replace(/\/$/, ''),
   net: (q.get('net') as Cfg['net']) || base.net,
 };
-const eth = (window as any).ethereum as { request(a: { method: string; params?: unknown[] }): Promise<any> } | undefined;
+let eth: Eip1193 | undefined;
 
 const S = {
   rid: q.get('r') ? BigInt(q.get('r')!) : 0n,
@@ -95,7 +97,7 @@ async function receipt(hash: string) {
 const waiting = (label: string) => waitingForBlock($('status'), $('st'), `${label} · sent, waiting for a block`);
 
 async function walletSend(data: string, label: string) {
-  await useChain(eth!, cfg.rpc, cfg.chainId);
+  await ensureChain(eth!, await chainSpec(cfg));
   const hash = await eth!.request({ method: 'eth_sendTransaction', params: [{ from: S.wallet, to: cfg.checkout, data }] });
   waiting(label);
   return receipt(hash);
@@ -339,14 +341,24 @@ function setTxid() {
   tick();
 }
 
+// Connect: the account fills the address, then the wallet goes on Sova
+// (added first if it doesn't know it). If the switch is refused, the
+// address stays and the relayer sends for it instead.
 async function connect() {
+  const btn = $<HTMLButtonElement>('connect');
   try {
     const [a] = await eth!.request({ method: 'eth_requestAccounts' });
-    S.wallet = a;
     $<HTMLInputElement>('addr').value = a;
-    $('connect').textContent = 'wallet ' + short(a);
+    btn.textContent = 'wallet ' + short(a);
+    await ensureChain(eth!, await chainSpec(cfg));
+    S.wallet = a;
+    btn.textContent = 'wallet ' + short(a) + ' · sova';
+    status('wait', 'wallet on Sova testnet · reserve');
   } catch (e) {
-    status('err', reason(e));
+    S.wallet = '';
+    const no = isRejected(e) || (e instanceof WalletError && e.kind === 'rejected');
+    btn.textContent = 'try again';
+    status('err', no ? 'rejected in wallet · the relayer can still reserve for this address' : e instanceof Error ? e.message : reason(e));
   }
 }
 
@@ -356,10 +368,20 @@ $('reserve').addEventListener('click', doReserve);
 $('claim').addEventListener('click', doClaim);
 $('check').addEventListener('click', setTxid);
 $('txid').addEventListener('keydown', (e) => e.key === 'Enter' && setTxid());
-if (eth) {
+findWallet().then((w) => {
+  if (!w) return;
+  eth = w;
   $('connect').hidden = false;
   $('connect').addEventListener('click', connect);
-}
+  watchWallet(w, {
+    account: (a) => {
+      if (S.wallet && a.toLowerCase() !== S.wallet.toLowerCase()) {
+        S.wallet = '';
+        $('connect').textContent = 'connect wallet';
+      }
+    },
+  });
+});
 document.querySelectorAll<HTMLButtonElement>('[data-copy]').forEach((b) =>
   b.addEventListener('click', async () => {
     await navigator.clipboard.writeText($(b.dataset.copy!).textContent || '').catch(() => {});

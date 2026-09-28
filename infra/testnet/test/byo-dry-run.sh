@@ -140,12 +140,15 @@ for h in sova-seed-1 sova-rpc-1 sova-keeper-1 sova-faucet-1; do
   check "render: ${h} renders no NULL_RUN_ALERT" lacks '^NULL_RUN_ALERT=' "$(cat "${TMP}/out/render/${h}/host.env" "${TMP}/out/render/${h}/etc/sova/host.env")"
 done
 check "render: faucet health knows the relayer" grep -qx 'CHECKOUT_RELAYER_PORT=18791' "${F}/etc/sova/host.env"
+check "render: the relayer's SOVA drip is on, for chain 82330 only" \
+  grep -qx 'DRIP=1' "${F}/etc/sova/checkout-relayer.env"
+check "render: ... DRIP_CHAIN_IDS=82330" grep -qx 'DRIP_CHAIN_IDS=82330' "${F}/etc/sova/checkout-relayer.env"
 for h in sova-seed-1 sova-rpc-1 sova-keeper-1; do
   check "render: no checkout relayer on ${h}" test ! -e "${TMP}/out/render/${h}/etc/systemd/system/sova-checkout-relayer.service"
 done
 out="$(cd "${KIT}" && kit ./cloudflare.sh --dry-run tunnels ratelimit 2>&1)"
 check "cloudflare.sh tunnels: checkout host on the faucet tunnel, relayer paths only" \
-  hasF '{"hostname":"checkout.testnet.sova.io","path":"^/(reserve|claim|status(/[0-9]{1,30})?)$","service":"http://127.0.0.1:18791"' "${out}"
+  hasF '{"hostname":"checkout.testnet.sova.io","path":"^/(reserve|claim|drip|status(/[0-9]{1,30})?)$","service":"http://127.0.0.1:18791"' "${out}"
 check "cloudflare.sh tunnels: faucet routes unchanged" \
   hasF '{"hostname":"faucet.testnet.sova.io","path":"^/(drip|status)$","service":"http://127.0.0.1:18790"' "${out}"
 check "cloudflare.sh tunnels: proxied CNAME for the checkout host" \
