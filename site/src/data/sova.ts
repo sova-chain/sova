@@ -13,12 +13,14 @@ export const SOVA_RPC = 'https://rpc.testnet.sova.io';
 
 // The public testnet (docs/ops/testnet-launch.md; seeds.json `courtesy`;
 // docs/guides/testnet.md). Project-run conveniences, never load-bearing.
-// No block explorer yet.
+// The explorer is Otterscan (github.com/sova-chain/otterscan, branch `sova`)
+// on Vercel, reading SOVA_RPC.
 export const TESTNET = {
   chainId: testnetDeployments.chainId, // 82330
   rpc: SOVA_RPC,
   faucet: 'https://faucet.testnet.sova.io',
   downloads: 'https://dl.testnet.sova.io',
+  explorer: 'https://explorer.testnet.sova.io',
   guide: 'docs/guides/testnet.md',
 } as const;
 
@@ -94,8 +96,7 @@ export const repo = {
   tree: (path: string) => `${REPO}/tree/main/${path}`,
 };
 
-// The SIPs (sips/*.md; SIP-5 is withdrawn, its text kept as
-// sips/sip-5-withdrawn.md). `st` is the status
+// The SIPs (sips/*.md; number 5 is unused). `st` is the status
 // word shown as a tag; `note` is the status detail; `file` is the text in
 // sips/ (linked on GitHub). Rendered by /sips and the landing page.
 export const sips = [
@@ -118,11 +119,6 @@ export const sips = [
     n: 4, id: 'sip-4', file: 'sip-4-draft-zcash-state-precompile.md', title: 'Zcash state precompile', st: 'draft',
     sum: 'Contracts read transparent Zcash state, as of the Zcash block each Sova block commits to.',
     note: 'Built; live on the public testnet.',
-  },
-  {
-    n: 5, id: 'sip-5', file: 'sip-5-withdrawn.md', title: 'Wrapped ZEC', st: 'withdrawn',
-    sum: 'Wrapped ZEC is a custodial product operated by Sova Labs at wz.cash, not a rule every node runs.',
-    note: 'Withdrawn: moved out of the protocol.',
   },
   {
     n: 6, id: 'sip-6', file: 'sip-6-draft-sealer-signatures.md', title: 'Sealer signatures', st: 'accepted',
@@ -204,6 +200,7 @@ export const sitePages = [
   { href: '/paper', label: 'Whitepaper', nav: 'whitepaper' },
   { href: '/sips', label: 'SIPs', nav: 'sips' },
   { href: '/press', label: 'Press kit', nav: '' },
+  { href: '/testnet', label: 'Testnet', nav: '' },
 ] as const;
 
 // Ashwings species (contracts/src/Ashwings.sol `SPECIES_W`, `SPECIES_RGB`):
@@ -239,7 +236,8 @@ export const footerLinks: readonly { key: string; label: string; href?: string }
   { key: 'source-repo', label: 'Source', href: repo.root },
   { key: 'sips', label: 'Specs', href: repo.sips },
   { key: 'docs', label: 'Docs', href: repo.docs },
-  { key: 'testnet', label: 'Testnet', href: repo.blob(TESTNET.guide) },
+  { key: 'testnet', label: 'Join guide', href: repo.blob(TESTNET.guide) },
+  { key: 'explorer', label: 'Explorer', href: TESTNET.explorer },
   { key: 'telegram', label: 'Telegram', href: SOCIAL.telegram },
   { key: 'x', label: 'X', href: SOCIAL.x },
 ];

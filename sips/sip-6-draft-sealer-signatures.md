@@ -2,11 +2,9 @@
 
 - Status: **Accepted** (Rob, 2026-09-23: recommended defaults in §10); **implemented** (2026-09-23, `crates/engine/src/{seal,signer}.rs`, consensus, tracker and sealer; on with `SOVA_SIP6=1`), switched on at the testnet reset, from genesis. Not yet built: post-emission burn epochs (reward 0) still get the null block rather than a signed one. Earlier: **Draft, design only**. Needs Rob's
   calls in "Decisions for Rob" (§10) before a build is dispatched.
-- Numbering: **SIP-6, not SIP-5.** `sips/` held SIP-1 to SIP-4, and
-  SIP-5 was then reserved for the wZEC peg (since withdrawn: wrapped ZEC is
-  a Sova Labs product, `docs/design/wz-cash.md`) (`docs/WORKPLAN.md` row z-2,
-  `docs/design/zec-peg-v2.md` §4.1, `docs/design/zec-on-sova-options.md`).
-  The peg doc's "needs its own SIP" for block signing
+- Numbering: **SIP-6.** SIP-5 is unused: it was set aside for a wrapped-ZEC
+  rule that never became one (wrapped ZEC is a Sova Labs product,
+  `docs/design/wz-cash.md`). The peg doc's "needs its own SIP" for block signing
   (`zec-peg-v2.md` §1.4(a)) is this one.
 - Implementation: none. Planned homes are `crates/engine/src/consensus.rs`
   (header and block rules), `crates/engine/src/validator.rs` (payload
@@ -821,7 +819,7 @@ a fork-height rule.
 
 ## 10. Decisions for Rob
 
-1. **Number.** This is SIP-6, because SIP-5 is the wZEC peg.
+1. **Number.** This is SIP-6 (SIP-5 is unused).
    *Recommend: yes.*
 2. **Seal key.** The key of the EVM address the burn credits, with no
    delegation in v1. A certificate-based delegation is the v1.1 path if

@@ -205,7 +205,7 @@ to bound the key-holder:
 
 | Option | UX | Custody/regulatory exposure (flag, not advice) | Effort (est.) | Positioning fit | Testnet / mainnet |
 |---|---|---|---|---|---|
-| **A1** | Deposit from any wallet; transparent withdrawals | **High.** Signers custody user funds (money-transmission or custodial-service questions; EU AMLR bars CASPs from handling anonymity-enhancing coins from July 2027) | Contracts ~2 wks; signer tooling 3–4 wks; SIP-5 ~1 wk | Fits **after** SIP-5 plus review plus audit; mint is not signer-controlled | Testnet: TAZ, capped, after the SIP-5 draft. Mainnet: post-audit, capped |
+| **A1** | Deposit from any wallet; transparent withdrawals | **High.** Signers custody user funds (money-transmission or custodial-service questions; EU AMLR bars CASPs from handling anonymity-enhancing coins from July 2027) | Contracts ~2 wks; signer tooling 3–4 wks; wZEC spec ~1 wk | Fits **after** the wZEC spec plus review plus audit; mint is not signer-controlled | Testnet: TAZ, capped, after the wZEC spec draft. Mainnet: post-audit, capped |
 | **A2** | Private vault | High, plus unverifiable reserves | 4–6 wks | Weak: signers mint | Testnet only |
 | **B** | Like A1; one address plus a tag | Custody is NEAR MPC's; we run the release logic ("control" questions) | Sova side ~2 wks; NEAR side unknown, their roadmap | Fits (NEAR in the architecture, never in consensus) | Gated on NEAR |
 | **C1** | Redeem through operators | Operators are custodians | 3+ months plus an oracle | Fits; the oracle is new trust | Research |
@@ -224,7 +224,7 @@ to bound the key-holder:
   anyway. Hence the recommendation below: an automatic, proof-triggered
   halt only.
 - **No custody before a specified, reviewed peg.** D1 holds no custody
-  and can ship now. A1 and B hold custody, so: SIP-5 is written first,
+  and can ship now. A1 and B hold custody, so: the wZEC spec is written first,
   a TAZ-only testnet run follows, and mainnet waits for review plus
   audit. The roadmap's "no peg at launch" stands.
 - **The Bitcoin-era failure** was one hot BIP32 seed with no real
@@ -244,16 +244,16 @@ to bound the key-holder:
    zero custody. It is also the demo that makes NEAR and Zodl
    conversations possible under the partner-outreach rule. Estimate:
    ~5–7 weeks in total.
-2. **Next: write SIP-5 (the wZEC peg) around A1, with a pluggable
-   custodian.** The Sova contract should not care whether the vault key
+2. **Next: write the wZEC peg spec (planned as a protocol SIP) around
+   A1, with a pluggable custodian.** The Sova contract should not care whether the vault key
    set is a P2SH federation or a NEAR-derived key. That keeps the choice
    between A and B open until the mainnet gate. Run a TAZ-only
    prototype with disclosed volunteer signers and a hard cap, and
-   **only after the SIP-5 draft is public**.
+   **only after the wZEC spec draft is public**.
 3. **Then: open NEAR with the demo in hand**, carrying one question:
    can MPC foreign-chain verification watch wZEC burns on Sova without
    trusting an RPC we operate?
-4. **Mainnet: unchanged.** No peg at launch. wZEC only after SIP-5 is
+4. **Mainnet: unchanged.** No peg at launch. wZEC only after its spec is
    Accepted, an external audit covers the SIP-4 precompile, the peg
    contracts and the signer tooling, and a clean testnet record exists
    with signers disclosed and caps set.
@@ -265,7 +265,7 @@ C2 (a receipt, not ZEC).
 
 1. **Direction.** Approve SIP-4 v1 plus the D1 escrow as the immediate
    Zcash-linkage work? (Recommended: yes.)
-2. **Peg model for SIP-5.** A1 federation / B NEAR / **A1 contract with
+2. **Peg model for the wZEC spec.** A1 federation / B NEAR / **A1 contract with
    a pluggable custodian (recommended)** / defer the peg entirely.
 3. **Signer set.** Who, and how many. Does the project or Rob hold a
    key? (Recommended: independent, disclosed operators; the project
@@ -273,12 +273,12 @@ C2 (a receipt, not ZEC).
 4. **Threshold.** Recommended: testnet 3-of-5; mainnet at least 7-of-11
    (steal needs 7, freeze needs 5; a tagged P2SH allows at most 14 keys).
 5. **Caps.** Recommended: testnet total ≤ 1,000 TAZ. Mainnet starts with
-   a small total cap and a per-deposit cap (numbers set in SIP-5), and
+   a small total cap and a per-deposit cap (numbers set in the wZEC spec), and
    raises them only by SIP.
 6. **Emergency pause.** (a) none, (b) **automatic halt of minting on an
    on-chain theft proof only (recommended)**, or (c) a discretionary
    pause key, which is an admin key.
-7. **Audit gate** before mainnet wZEC. Recommended: SIP-5 Accepted plus
+7. **Audit gate** before mainnet wZEC. Recommended: the wZEC spec Accepted plus
    an external audit of the precompile, contracts and signer tooling,
    plus a testnet record of at least N deposits and withdrawals with
    zero discrepancies.

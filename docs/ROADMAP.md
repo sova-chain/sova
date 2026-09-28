@@ -109,7 +109,7 @@ and no project machine ever holds user funds or a key with consensus power.
   (Chain Signatures) and minted as wZEC on Sova. This is custody, and it is
   disclosed as custody: holding wZEC means trusting NEAR's signer set. Sova
   provides the contracts and monitors the vault from Zcash; the project
-  holds no key. Its own specification (SIP-5), public review and an audit
+  holds no key. Its own specification, public review and an audit
   come first; not at mainnet launch.
 - **Burning from a regular Zcash wallet**, without the CLI. Exploring.
 

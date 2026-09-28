@@ -19,10 +19,10 @@
 >   deposits, Sova plans each payout, pro-rata after a proven theft,
 >   immutable vault, testnet caps, no re-mint of unpaid withdrawals).
 >
-> The text below is the design as drafted (it was written as "SIP-5"); read
-> "SIP-5" as "this product spec".
+> The text below is the design as drafted, when it was planned as a protocol
+> SIP. It is now the wz.cash product spec.
 
-# SIP-5: Wrapped ZEC (wZEC), custodied by NEAR Chain Signatures
+# wz.cash product spec: wrapped ZEC (wZEC), custodied by NEAR Chain Signatures
 
 - Status: **Draft, design only** (2026-09-23). No peg code exists. Needs
   Rob's calls in "Decisions for Rob" (§10) before anything is built.
@@ -787,7 +787,7 @@ The vault learns nothing about deposits. It doesn't need to: every coin it
 spends arrives in a plan, and ZIP-244 makes a wrong coin fail rather than
 steal (§4.1).
 
-### 7.4 What SIP-5 needs from SIP-4 v1.1
+### 7.4 What wZEC needs from SIP-4 v1.1
 
 - `spentBy(txid, vout)` for outputs created at or after the epoch base
   `B`, answered as of `E_N`. It must tell three cases apart: **spent**
@@ -825,7 +825,7 @@ steal (§4.1).
    §4.7. Every surface carries the custody disclosure. A drill: a
    deliberately unplanned spend from a **separate drill deployment**
    whose test key is disclosed must produce a breach proof and a halt.
-2. **Audit gate.** SIP-5 Accepted, and an external audit of:
+2. **Audit gate.** This spec accepted, and an external audit of:
    - the SIP-4 precompile and index, `spentBy` included;
    - the bridge and token;
    - the NEAR vault contract.

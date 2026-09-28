@@ -371,7 +371,7 @@ NEAR is well suited to a light client, because its blocks are signed.
 
 ### 2.5 Recommended monitoring design
 
-1. **Phase 1 (part of SIP-5, required): monitoring from Zcash alone.**
+1. **Phase 1 (part of the wZEC spec, required): monitoring from Zcash alone.**
    It uses SIP-4 v1.1 `spentBy` and needs no NEAR data. It provides a
    theft proof with an automatic mint halt, live reserves, and
    unpaid-request detection. So **`spentBy` must ship before any peg
@@ -514,7 +514,7 @@ design in §1 is the way to bound it.
 
 ## 4. Recommendation
 
-### 4.1 SIP-5 direction: "wZEC, custodied by NEAR Chain Signatures"
+### 4.1 wZEC spec direction: "wZEC, custodied by NEAR Chain Signatures"
 
 **Sova contracts.** Keep the custodian pluggable, as the options paper
 recommended.
@@ -550,7 +550,7 @@ recommended.
 3. **Long term: a Sova light client on NEAR**, once Sova blocks are
    light-client-checkable. That is its own consensus SIP.
 
-**Disclosed plainly in SIP-5:**
+**Disclosed plainly in the wZEC spec:**
 - 11 of 17 MPC operators can sign anything today.
 - TEE is not yet enforced (9 of 17 nodes attested).
 - `v1.signer` can be upgraded instantly by the same 11.
@@ -558,7 +558,7 @@ recommended.
 - The theft proof detects theft; it does not prevent it.
 
 **Gates, unchanged:** no peg at launch; a TAZ-only testnet with a cap
-after the SIP-5 draft is public; mainnet only after an audit of the
+after the wZEC spec draft is public; mainnet only after an audit of the
 SIP-4 precompile, the Sova contracts and the NEAR vault contract.
 
 *Effort (estimate):*
@@ -576,7 +576,7 @@ NEAR's side of (b) runs on NEAR's timeline.
 
 - **Time-locked ZEC credit** is a zero-custody app. Ship it after
   SIP-4 v1, alongside the D1 escrow. It is not a peg, so it stays out
-  of SIP-5, and it gives "ZEC-backed" a use with no custodian at all.
+  of the wZEC spec, and it gives "ZEC-backed" a use with no custodian at all.
 - **2-of-2 collateral vaults** stay research until the Sova→NEAR
   channel exists, and until someone solves re-signing across network
   upgrades.
@@ -585,7 +585,7 @@ NEAR's side of (b) runs on NEAR's timeline.
 
 Rob agreed with this paper's recommendations. Recorded decisions:
 
-- **Wrapped ZEC ships, custodied by NEAR.** SIP-5 targets wZEC held by
+- **Wrapped ZEC ships, custodied by NEAR.** The wZEC spec targets wZEC held by
   NEAR Chain Signatures behind a keyless, immutable NEAR vault contract.
   The custody is **stated plainly wherever wZEC appears**: holding wZEC
   means relying on NEAR's MPC network (11-of-17 today, TEE not yet
@@ -611,7 +611,7 @@ Rob agreed with this paper's recommendations. Recorded decisions:
 
 The original recommendations, for the record:
 
-1. **Custodian for SIP-5: NEAR Chain Signatures behind a keyless,
+1. **Custodian for the wZEC spec: NEAR Chain Signatures behind a keyless,
    immutable NEAR vault contract?** Recommended: **yes.** Accept and
    disclose the 11-of-17 trust with TEE not yet enforced, and keep the
    Sova contract custodian-pluggable.

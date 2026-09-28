@@ -13,4 +13,6 @@ export default defineConfig({
     inlineStylesheets: 'always',
   },
   devToolbar: { enabled: false },
+  // Old URL of the launch post (live 2026-09-28 for an hour before the rename).
+  redirects: { '/announce': '/testnet' },
 });

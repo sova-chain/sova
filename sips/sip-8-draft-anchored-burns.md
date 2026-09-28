@@ -9,8 +9,7 @@
   `finalized` at 100 (Rob, 2026-09-23: 10 was unsafe — reth refuses a head below finalized, and Zcash can reorg up to 99 blocks); once votes count, depth follows
   §2.4 and the confirmation margin of §2.6. The paper keeps SIP-8 as named
   future work until it is built (§11 item 14 applies then).
-- Numbering: **SIP-8.** SIP-5 is withdrawn (wrapped ZEC is a Sova Labs
-  product, `docs/design/wz-cash.md`), SIP-6 is
+- Numbering: **SIP-8.** SIP-5 is unused, SIP-6 is
   sealer signatures, SIP-7 is Zcash pool state. The audit names this SIP
   (`docs/audits/2026-09-23-reorg-and-fork-choice.md` §6.3, remediation
   items 8 and 9).

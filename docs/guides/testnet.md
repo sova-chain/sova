@@ -7,7 +7,10 @@ runs beside its own Zcash node and re-derives every payout from it.
 
 The public testnet is anchored to **Zcash testnet**, so you burn TAZ
 (testnet ZEC). Its chain ID is **82330**. SIP-6 (sealer signatures) and
-SIP-7 (Zcash pool state) are on from its genesis.
+SIP-7 (Zcash pool state) are on from its genesis. To look around first,
+browse blocks, transactions and contracts at
+[explorer.testnet.sova.io](https://explorer.testnet.sova.io) (Otterscan,
+reading the public RPC).
 
 This guide takes you from nothing to:
 

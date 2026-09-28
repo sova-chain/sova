@@ -2,8 +2,7 @@
 
 - Status: **Accepted** (Rob, 2026-09-23: recommended v1.1 scope and decisions); **implemented** (2026-09-23: `crates/consensus/src/pools.rs`, the index, the four precompile reads, the `ZcashBlocks` system call + genesis predeploy in `crates/evm/src/blocks.rs`, the `sova_getZcashBlocks`/`sova_subscribe` feed and `tools/zcash-keeper`; on with `SOVA_SIP7=1`), switched on at the testnet reset. Verified against 262 real testnet blocks (`crates/consensus/tests/sip7_testnet.rs`). Earlier: **Draft, design only**. Needs Rob's calls
   in "Decisions for Rob" (§10) before a build is dispatched.
-- Numbering: **SIP-7.** SIP-5 is reserved for the wZEC peg, and SIP-6 is
-  sealer signatures.
+- Numbering: **SIP-7.** SIP-5 is unused, and SIP-6 is sealer signatures.
 - Author: Sova (orchestrated draft)
 - Depends on: SIP-4 v1 (the anchor `E_N = N + B − 1`, the node-side
   `ZcashIndex`, the `0x…5A00` precompile, the §7 reorg rollback). The v1

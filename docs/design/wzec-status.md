@@ -1,7 +1,7 @@
 # Wrapped ZEC: status (2026-09-23)
 
 **Short answer:** wrapped ZEC is a **Sova Labs product, wZcash at wz.cash**,
-not part of the Sova protocol (SIP-5 withdrawn). It is openly custodial:
+not part of the Sova protocol (the planned wZEC SIP was withdrawn). It is openly custodial:
 NEAR Chain Signatures hold the ZEC, a Sova Labs relayer tells the NEAR vault
 about burns on Sova, and Sova Labs takes a small operating fee. The network
 makes no guarantees about it; sova.io will link it from an ecosystem page.
