@@ -1848,6 +1848,7 @@ dependencies = [
  "clap",
  "consensus",
  "hex",
+ "secp256k1",
  "serde",
  "serde_json",
  "sha3",

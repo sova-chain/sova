@@ -2,7 +2,7 @@
 //!
 //! Speaks RPC only to a `zebrad`-compatible Zcash node -- never links reth
 //! or `crates/evm` types (see `docs/WORKPLAN.md`'s standing rule and this
-//! crate's `Cargo.toml` header comment). Four subcommands:
+//! crate's `Cargo.toml` header comment). Five subcommands:
 //!
 //! - [`init`](Command::Init): create or load the keystore, print the t-addr
 //!   to fund and the EVM address burns credit (by default the keystore
@@ -13,6 +13,9 @@
 //!   loop -- see [`mine::run`].
 //! - [`report`](Command::Report): spend/earnings summary from the local
 //!   state sidecar, optionally cross-checked against the chain.
+//! - [`transfer`](Command::Transfer): send SOVA from the keystore key's EVM
+//!   address, signed in-process -- see [`transfer::run`]. The key is never
+//!   printed.
 
 mod anchor;
 mod chain;
@@ -23,6 +26,7 @@ mod funding;
 mod mine;
 mod node;
 mod state;
+mod transfer;
 mod verify;
 
 use std::path::{Path, PathBuf};
@@ -183,6 +187,40 @@ enum Command {
         /// there is none).
         #[arg(long, requires = "verify_rpc")]
         verify_from_height: Option<u64>,
+    },
+    /// Send SOVA from this keystore key's own EVM address (where mined SOVA
+    /// lands), signing in-process: the key is never printed or exported.
+    ///
+    /// One EIP-1559 value transfer (21,000 gas) on the chain `--sova-rpc`
+    /// reports. Prints a summary and asks for confirmation (or `--yes`),
+    /// then broadcasts and waits for the receipt. Only sends on the Sova
+    /// testnet (82330) and local dev chains (31337, 1337) unless
+    /// `--any-chain` is given.
+    Transfer {
+        /// Recipient EVM address (20 bytes of hex, `0x` optional).
+        #[arg(long, value_name = "0xADDRESS")]
+        to: String,
+        /// Amount in SOVA, as a decimal (up to 18 places), e.g. `1000` or
+        /// `0.25`.
+        #[arg(long, value_name = "SOVA")]
+        amount: String,
+        /// The Sova node's JSON-RPC endpoint, e.g. `http://127.0.0.1:8545`.
+        #[arg(long, value_name = "URL")]
+        sova_rpc: String,
+        /// Send without asking for confirmation.
+        #[arg(long)]
+        yes: bool,
+        /// Allow a chain id other than the Sova testnet and local dev
+        /// chains (e.g. a future mainnet).
+        #[arg(long)]
+        any_chain: bool,
+        /// Refuse if the max fee per gas (2 x base fee + tip) would exceed
+        /// this, in wei.
+        #[arg(long, value_name = "WEI", default_value_t = 100_000_000_000)]
+        max_fee_per_gas: u64,
+        /// How long to wait for the receipt, in seconds.
+        #[arg(long, value_name = "SECS", default_value_t = 600)]
+        wait_secs: u64,
     },
 }
 
@@ -592,6 +630,35 @@ fn cmd_report(
     Ok(())
 }
 
+/// `transfer`: validate the arguments, then [`transfer::run`].
+#[allow(clippy::too_many_arguments)]
+fn cmd_transfer(
+    data_dir: &Path,
+    to: &str,
+    amount: &str,
+    sova_rpc: String,
+    yes: bool,
+    any_chain: bool,
+    max_fee_per_gas: u64,
+    wait_secs: u64,
+) -> Result<(), CliError> {
+    let to = parse_evm_address(to)?;
+    let amount_wei = transfer::parse_sova_amount(amount).map_err(CliError::Message)?;
+    transfer::run(
+        &keystore_path(data_dir),
+        transfer::TransferArgs {
+            to,
+            amount_wei,
+            sova_rpc,
+            yes,
+            any_chain,
+            max_fee_per_gas: u128::from(max_fee_per_gas),
+            wait: std::time::Duration::from_secs(wait_secs),
+        },
+    )
+    .map_err(CliError::Message)
+}
+
 fn main() {
     let cli = Cli::parse();
     let result = match cli.command {
@@ -635,6 +702,24 @@ fn main() {
             verify_from_height,
             cli.rpc_cookie_file.as_deref(),
             cli.sip8_from,
+        ),
+        Command::Transfer {
+            to,
+            amount,
+            sova_rpc,
+            yes,
+            any_chain,
+            max_fee_per_gas,
+            wait_secs,
+        } => cmd_transfer(
+            &cli.data_dir,
+            &to,
+            &amount,
+            sova_rpc,
+            yes,
+            any_chain,
+            max_fee_per_gas,
+            wait_secs,
         ),
     };
 
@@ -815,6 +900,58 @@ mod tests {
         let empty = tempfile::tempdir().unwrap();
         let err = export_evm_key(empty.path(), true).unwrap_err();
         assert!(err.to_string().contains("sova-miner init"), "{err}");
+    }
+
+    /// `transfer` needs `--to`, `--amount` and `--sova-rpc`; confirmation
+    /// and the chain guard are on by default.
+    #[test]
+    fn transfer_flags() {
+        let base = [
+            "sova-miner",
+            "transfer",
+            "--to",
+            "0x000000000000000000000000000000000000dEaD",
+            "--amount",
+            "1.5",
+            "--sova-rpc",
+            "http://127.0.0.1:8545",
+        ];
+        let cli = Cli::try_parse_from(base).unwrap();
+        let Command::Transfer {
+            yes,
+            any_chain,
+            max_fee_per_gas,
+            wait_secs,
+            ..
+        } = cli.command
+        else {
+            panic!("expected transfer");
+        };
+        assert!(!yes && !any_chain);
+        assert_eq!(max_fee_per_gas, 100_000_000_000);
+        assert_eq!(wait_secs, 600);
+        for missing in [2, 4, 6] {
+            let args: Vec<&str> = base
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| *i != missing && *i != missing + 1)
+                .map(|(_, a)| *a)
+                .collect();
+            assert!(Cli::try_parse_from(args).is_err());
+        }
+        // Bad inputs are refused before any keystore or network access.
+        let dir = tempfile::tempdir().unwrap();
+        let rpc = "http://127.0.0.1:1".to_string();
+        let run = |to: &str, amount: &str| {
+            cmd_transfer(dir.path(), to, amount, rpc.clone(), true, false, 1, 1).unwrap_err()
+        };
+        assert!(run("0x1234", "1").to_string().contains("20 bytes"));
+        assert!(run(&"ab".repeat(20), "-1").to_string().contains("amount"));
+        assert!(
+            run(&"ab".repeat(20), "1")
+                .to_string()
+                .contains("sova-miner init")
+        );
     }
 
     #[test]

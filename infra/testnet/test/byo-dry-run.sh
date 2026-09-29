@@ -219,14 +219,51 @@ check "NULL_RUN_ALERT config: renders NULL_SEALED_MAX_MIN=45 and no NULL_RUN_ALE
 CFG="${TMP}/health-bad.env"
 sed 's/^BLOCK_AGE_ALERT_MIN=10$/BLOCK_AGE_ALERT_MIN=0/' "${TMP}/config.env" >"${TMP}/health-bad.env"
 check "deploy.sh check refuses BLOCK_AGE_ALERT_MIN=0" has "BLOCK_AGE_ALERT_MIN must be a positive number" "$(cd "${KIT}" && kit ./deploy.sh check 2>&1)"
-grep -v '^BLOCK_AGE_ALERT_MIN=\|^NULL_SEALED_MAX_MIN=\|^MEM_ALERT_MB=\|^HEALTH_NETWORK_ALERT_HOSTS=\|^SWAP_GB=' "${TMP}/config.env" >"${TMP}/health-old.env"
+grep -v '^BLOCK_AGE_ALERT_MIN=\|^NULL_SEALED_MAX_MIN=\|^MEM_ALERT_MB=\|^HEALTH_NETWORK_ALERT_HOSTS=\|^SWAP_GB=\|^KEEPER_ISOLATED_MIN=' "${TMP}/config.env" >"${TMP}/health-old.env"
 CFG="${TMP}/health-old.env"
 check "deploy.sh check: an older config without the health section still passes" grep -q '^==> config OK' <<<"$(cd "${KIT}" && kit ./deploy.sh check 2>&1)"
 out="$(cd "${KIT}" && kit ./deploy.sh render --out "${TMP}/render-old" 2>&1)"
-check "older config: renders the defaults (SWAP_GB=4, MEM_ALERT_MB=300, NULL_SEALED_MAX_MIN=45)" \
-  bash -c "grep -qx SWAP_GB=4 '${TMP}/render-old/sova-seed-1/host.env' && grep -qx MEM_ALERT_MB=300 '${TMP}/render-old/sova-seed-1/etc/sova/host.env' && grep -qx NULL_SEALED_MAX_MIN=45 '${TMP}/render-old/sova-seed-1/etc/sova/host.env'"
+check "older config: renders the defaults (SWAP_GB=4, MEM_ALERT_MB=300, NULL_SEALED_MAX_MIN=45, KEEPER_ISOLATED_MIN=5)" \
+  bash -c "grep -qx SWAP_GB=4 '${TMP}/render-old/sova-seed-1/host.env' && grep -qx MEM_ALERT_MB=300 '${TMP}/render-old/sova-seed-1/etc/sova/host.env' && grep -qx NULL_SEALED_MAX_MIN=45 '${TMP}/render-old/sova-seed-1/etc/sova/host.env' && grep -qx KEEPER_ISOLATED_MIN=5 '${TMP}/render-old/sova-keeper-1/etc/sova/host.env'"
 check "older config: network alerts from the rpc host and the first seed" \
   test "$(grep -lx HEALTH_NETWORK_ALERTS=1 "${TMP}"/render-old/*/etc/sova/host.env | awk -F/ '{ print $(NF-3) }' | sort | tr '\n' ' ')" == "sova-rpc-1 sova-seed-1 "
+CFG="${TMP}/config.env"
+
+# ---- split alerts: keeper_isolated, rejecting_blocks (2026-09-28 incident) ----
+# Every host's health env carries KEEPER_ISOLATED_MIN (the check itself
+# runs where sova-keeper is enabled) and the keeper's node id from its
+# recorded enode (empty until one is recorded, as in a plain render).
+RR="${TMP}/out/render"
+for h in sova-seed-1 sova-rpc-1 sova-keeper-1 sova-faucet-1; do
+  check "render: ${h} host.env (deploy.sh) has KEEPER_ISOLATED_MIN=5" grep -qx 'KEEPER_ISOLATED_MIN=5' "${RR}/${h}/host.env"
+  check "render: ${h} health has KEEPER_ISOLATED_MIN=5" grep -qx 'KEEPER_ISOLATED_MIN=5' "${RR}/${h}/etc/sova/host.env"
+  check "render: ${h} health has an empty KEEPER_NODE_ID (no keeper enode recorded)" grep -qx 'KEEPER_NODE_ID=' "${RR}/${h}/etc/sova/host.env"
+done
+KID="$(printf 'a1%.0s' $(seq 1 64))"
+mkdir -p "${TMP}/out/servers"
+echo "enode://${KID}@${KEEPER_IP}:30303" >"${TMP}/out/servers/sova-keeper-1.enode"
+out="$(cd "${KIT}" && kit ./deploy.sh render --out "${TMP}/render-kid" 2>&1)"
+check "keeper enode recorded: every host's health env names the keeper's node id" \
+  test "$(grep -lx "KEEPER_NODE_ID=${KID}" "${TMP}"/render-kid/*/etc/sova/host.env | wc -l | tr -d ' ')" == 4
+echo "enode://not-an-id@${KEEPER_IP}:30303" >"${TMP}/out/servers/sova-keeper-1.enode"
+out="$(cd "${KIT}" && kit ./deploy.sh render --out "${TMP}/render-kid-bad" 2>&1)"
+check "a malformed keeper enode: KEEPER_NODE_ID rendered empty" grep -qx 'KEEPER_NODE_ID=' "${TMP}/render-kid-bad/sova-rpc-1/etc/sova/host.env"
+rm -f "${TMP}/out/servers/sova-keeper-1.enode"
+CFG="${TMP}/health-bad.env"
+for v in 0 -5 5m ""; do
+  sed "s/^KEEPER_ISOLATED_MIN=5\$/KEEPER_ISOLATED_MIN=${v}/" "${TMP}/config.env" >"${TMP}/health-bad.env"
+  if [[ -z "${v}" ]]; then # empty: the default, 5
+    out="$(cd "${KIT}" && kit ./deploy.sh render --out "${TMP}/render-kim-empty" 2>&1)"
+    check "KEEPER_ISOLATED_MIN empty: renders the default 5" grep -qx 'KEEPER_ISOLATED_MIN=5' "${TMP}/render-kim-empty/sova-keeper-1/etc/sova/host.env"
+  else
+    check "deploy.sh check refuses KEEPER_ISOLATED_MIN=${v}" has "KEEPER_ISOLATED_MIN must be a positive number of minutes" "$(cd "${KIT}" && kit ./deploy.sh check 2>&1)"
+  fi
+done
+sed 's/^KEEPER_ISOLATED_MIN=5$/KEEPER_ISOLATED_MIN=8/' "${TMP}/config.env" >"${TMP}/health-kim.env"
+CFG="${TMP}/health-kim.env"
+out="$(cd "${KIT}" && kit ./deploy.sh render --out "${TMP}/render-kim" 2>&1)"
+check "KEEPER_ISOLATED_MIN=8: rendered into every host's health env" \
+  test "$(grep -lx KEEPER_ISOLATED_MIN=8 "${TMP}"/render-kim/*/etc/sova/host.env | wc -l | tr -d ' ')" == 4
 CFG="${TMP}/config.env"
 
 # ---- memory: swap on every host, mem_low alert (2026-09-27 incident) ---------

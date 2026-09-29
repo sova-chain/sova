@@ -217,7 +217,7 @@ function cycleHero() {
   heroTimer = window.setInterval(() => {
     i = (i + 1) % samples.length;
     $<HTMLImageElement>('hero-img').src = samples[i];
-  }, 900);
+  }, 2500); // Rob, 2026-09-29: slow enough to see each owl
 }
 function reveal(o: Owl) {
   window.clearInterval(heroTimer);
@@ -259,8 +259,9 @@ async function run(step: Step, fn: () => Promise<void>) {
 const doConnect = () =>
   run('connect', async () => {
     if (!S.wallet) {
-      setStatus(status, 'wait', 'connect · approve in your wallet');
-      S.wallet = await connect(cfg);
+      setStatus(status, 'wait', 'connect · choose or open your wallet');
+      S.wallet = await connect(cfg, $('b-connect'));
+      S.eth = await wallet();
     } else {
       setStatus(status, 'wait', 'switch · approve in your wallet');
       await ensureChain(S.eth!, await chainSpec(cfg));

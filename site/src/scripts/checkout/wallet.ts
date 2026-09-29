@@ -29,26 +29,119 @@ export class WalletError extends Error {
 
 // ---- finding the wallet ------------------------------------------------------
 
-let found: Eip1193 | undefined;
+/** A wallet the page can talk to: its EIP-6963 info, or window.ethereum. */
+export type WalletInfo = { name: string; icon?: string; rdns?: string; provider: Eip1193 };
+
+const PICK_KEY = 'sova.wallet';
+const remembered = () => {
+  try {
+    return localStorage.getItem(PICK_KEY) || '';
+  } catch {
+    return '';
+  }
+};
+const remember = (rdns = '') => {
+  try {
+    if (rdns) localStorage.setItem(PICK_KEY, rdns);
+    else localStorage.removeItem(PICK_KEY);
+  } catch {
+    /* private mode: just don't remember */
+  }
+};
+
+/** Resolves like `p`, or rejects with `msg` after `ms`. */
+export function withTimeout<T>(p: Promise<T>, ms: number, msg: string): Promise<T> {
+  return Promise.race([p, new Promise<T>((_, no) => setTimeout(() => no(new WalletError('failed', msg)), ms))]);
+}
+
+// Wallets announce themselves (EIP-6963) when asked, and some only a moment
+// later, so the page listens for as long as it is open.
+const announced: WalletInfo[] = [];
+if (typeof window !== 'undefined') {
+  window.addEventListener('eip6963:announceProvider', (e: Event) => {
+    const d = (e as CustomEvent).detail;
+    if (!d?.provider) return;
+    const rdns = d.info?.rdns || d.info?.name || '';
+    if (announced.some((w) => w.provider === d.provider || (rdns && w.rdns === rdns))) return;
+    announced.push({ name: d.info?.name || 'wallet', icon: d.info?.icon, rdns, provider: d.provider });
+  });
+  window.dispatchEvent(new Event('eip6963:requestProvider'));
+}
+
 /**
- * The page's wallet: window.ethereum, else the first EIP-6963 announcement
- * (wallets that leave window.ethereum alone). Waits briefly for late
- * announcements; undefined if there is none.
+ * Every wallet in this browser. EIP-6963 announcements first: with several
+ * wallet extensions installed, window.ethereum is whichever won the race
+ * to set it, and may not answer at all (2026-09-28: Rabby + Zerion + Magic
+ * Eden, window.ethereum silent). window.ethereum only when nothing
+ * announces.
  */
-export async function findWallet(waitMs = 350): Promise<Eip1193 | undefined> {
-  if (found) return found;
-  const w = window as any;
-  if (w.ethereum) return (found = w.ethereum as Eip1193);
-  const got: Eip1193[] = [];
-  const on = (e: Event) => {
-    const p = (e as CustomEvent).detail?.provider;
-    if (p) got.push(p);
-  };
-  window.addEventListener('eip6963:announceProvider', on);
+export async function listWallets(waitMs = 400): Promise<WalletInfo[]> {
   window.dispatchEvent(new Event('eip6963:requestProvider'));
   await new Promise((r) => setTimeout(r, waitMs));
-  window.removeEventListener('eip6963:announceProvider', on);
-  return (found = w.ethereum || got[0]);
+  const w = window as any;
+  if (!announced.length && w.ethereum) return [{ name: 'browser wallet', provider: w.ethereum }];
+  return [...announced];
+}
+
+let found: WalletInfo | undefined;
+/**
+ * The wallet to show state from without asking anything: the one chosen
+ * before (remembered), the only one, or the first that answers. Undefined
+ * if there is none.
+ */
+export async function findWallet(): Promise<Eip1193 | undefined> {
+  if (found) return found.provider;
+  const ws = await listWallets();
+  if (!ws.length) return undefined;
+  const mine = ws.find((w) => w.rdns && w.rdns === remembered());
+  if (mine || ws.length === 1) return (found = mine || ws[0]).provider;
+  for (const w of ws) {
+    if (await walletChain(w.provider)) return (found = w).provider;
+  }
+  return (found = ws[0]).provider;
+}
+
+/** The chosen wallet's name, for messages. */
+export const walletName = () => found?.name || 'your wallet';
+
+/**
+ * Ask which wallet to use when there is more than one: a row of buttons
+ * under `anchor`'s row, resolved by a click. One wallet: that one.
+ */
+export async function chooseWallet(anchor?: HTMLElement | null): Promise<Eip1193 | undefined> {
+  const ws = await listWallets();
+  if (ws.length <= 1) return (found = ws[0])?.provider;
+  const host = (anchor?.closest('.row, p, div') as HTMLElement | null) || anchor?.parentElement || document.body;
+  host.parentElement?.querySelector('.wallet-pick')?.remove();
+  const box = document.createElement('div');
+  box.className = 'wallet-pick';
+  box.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0';
+  const label = document.createElement('span');
+  label.textContent = 'choose a wallet:';
+  label.style.opacity = '0.7';
+  box.append(label);
+  const picked = new Promise<WalletInfo>((ok) => {
+    for (const w of ws) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.style.cssText = 'display:inline-flex;align-items:center;gap:6px;background:transparent;color:var(--g,#f4b728);border:1px solid var(--g3,#8a6a1c);padding:5px 10px;font:inherit;cursor:pointer';
+      if (w.icon) {
+        const i = document.createElement('img');
+        i.src = w.icon;
+        i.alt = '';
+        i.width = i.height = 16;
+        b.append(i);
+      }
+      b.append(document.createTextNode(w.name));
+      b.addEventListener('click', () => ok(w));
+      box.append(b);
+    }
+  });
+  host.after(box);
+  const w = await picked;
+  box.remove();
+  remember(w.rdns);
+  return (found = w).provider;
 }
 
 // ---- errors -------------------------------------------------------------------
@@ -107,7 +200,7 @@ export function chainSpec(c: ChainCfg): Promise<ChainSpec> {
 /** The wallet's current chain id as hex, or '' if it won't say. */
 export async function walletChain(eth: Eip1193): Promise<string> {
   try {
-    return '0x' + BigInt(await eth.request({ method: 'eth_chainId' })).toString(16);
+    return '0x' + BigInt(await withTimeout(eth.request({ method: 'eth_chainId' }), 2500, 'no answer')).toString(16);
   } catch {
     return '';
   }
@@ -150,23 +243,39 @@ export async function ensureChain(eth: Eip1193, spec: ChainSpec): Promise<void> 
 }
 
 /** Ask for an account, then put the wallet on the chain. Returns the account. */
-export async function connectWallet(eth: Eip1193 | undefined, spec: ChainSpec): Promise<string> {
+/**
+ * The wallet's account, asked for (a prompt). First checks the wallet
+ * answers at all: a silent one gets a message that names it, not a button
+ * that seems dead.
+ */
+export async function requestAccount(eth: Eip1193 | undefined): Promise<string> {
   if (!eth) throw new WalletError('no-wallet', 'no wallet in this browser');
+  const name = found?.provider === eth ? found.name : 'your wallet';
+  if (!(await walletChain(eth))) {
+    remember();
+    throw new WalletError('failed', `${name} isn't answering: open it (it may be locked), or choose another wallet`);
+  }
   let accounts: string[];
   try {
-    accounts = await eth.request({ method: 'eth_requestAccounts' });
+    accounts = await withTimeout(eth.request({ method: 'eth_requestAccounts' }), 120_000, `no answer from ${name}: open it and approve, or try again`);
   } catch (e) {
     throw wrap(e, 'connect');
   }
   if (!accounts?.[0]) throw new WalletError('failed', 'the wallet shared no account');
-  await ensureChain(eth, spec);
   return accounts[0];
+}
+
+/** Connect: an account (prompt), then the wallet on `spec`'s chain. */
+export async function connectWallet(eth: Eip1193 | undefined, spec: ChainSpec): Promise<string> {
+  const a = await requestAccount(eth);
+  await ensureChain(eth!, spec);
+  return a;
 }
 
 /** The account the site may already use (no prompt), or ''. */
 export async function knownAccount(eth: Eip1193): Promise<string> {
   try {
-    return ((await eth.request({ method: 'eth_accounts' })) as string[])?.[0] || '';
+    return ((await withTimeout(eth.request({ method: 'eth_accounts' }), 2500, 'no answer')) as string[])?.[0] || '';
   } catch {
     return '';
   }

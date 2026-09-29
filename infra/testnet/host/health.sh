@@ -49,6 +49,22 @@
 #                that are no fault. NULL_RUN_ALERT (the old block count) is
 #                ignored.
 #   C5           any "settlement mismatch" rejection in the last 3 minutes
+#   keeper       (the keeper host only) keeper_isolated: its node keeps no
+#   isolated     peer, so it seals alone and its blocks reach no one. 0
+#                peers (the newest "Status connected_peers=N" line, or the
+#                newest "sova/1: peer active|gone ... peers=N" line) for
+#                KEEPER_ISOLATED_MIN (default 5) minutes in a row, or one
+#                peer's sova/1 session "gone" within PEER_FLAP_SECS of
+#                "active" PEER_FLAP_ALERT times in PEER_FLAP_WINDOW_MIN
+#                with no other sova/1 peer left (a peer that banned it).
+#                2026-09-28: the seeds banned the keeper after a Zcash
+#                reorg; only block_age/epoch_lag fired, 18 min later.
+#   rejecting    rejecting_blocks: this node logged "peer sent an INVALID
+#   blocks       block" REJECT_ALERT times from one peer in
+#                REJECT_WINDOW_MIN: it refuses a chain, a split if that
+#                chain is the keeper's (named when KEEPER_NODE_ID matches).
+#                From every node host: the fix (restart sova-node) is per
+#                host, and only the hosts that reject send it.
 #   faucet       not accepting drips, or hot wallet over its limit
 #   checkout     the checkout relayer's /status not answering, its SOVA
 #                below CHECKOUT_RELAYER_ALERT_BALANCE_WEI, or refusing new
@@ -76,6 +92,22 @@ NULL_SEALED_MAX_MIN="${NULL_SEALED_MAX_MIN:-45}"
 NULL_SEALED_WALK=1800
 NULL_SEALED_BATCH=50
 SOVA_SIP6="${SOVA_SIP6:-1}"
+KEEPER_ISOLATED_MIN="${KEEPER_ISOLATED_MIN:-5}"
+[[ "${KEEPER_ISOLATED_MIN}" =~ ^[1-9][0-9]*$ ]] || KEEPER_ISOLATED_MIN=5
+# The keeper's node id (its enode's 128 hex; deploy.sh records it), to say
+# "the keeper" when this node rejects its blocks. Empty or malformed: unknown.
+KEEPER_NODE_ID="$(tr 'A-F' 'a-f' <<<"${KEEPER_NODE_ID:-}")"
+KEEPER_NODE_ID="${KEEPER_NODE_ID#0x}"
+[[ "${KEEPER_NODE_ID}" =~ ^[0-9a-f]{128}$ ]] || KEEPER_NODE_ID=""
+# Peer findings from sova-node's journal (peer_findings). A flap: a sova/1
+# session "gone" within PEER_FLAP_SECS of "active" (a banning peer accepts,
+# then cuts; a healthy session lasts minutes to days; 2 s, not 1, as
+# journald stamps lines on receipt). Windows in minutes.
+PEER_FLAP_SECS=2
+PEER_FLAP_ALERT=3
+PEER_FLAP_WINDOW_MIN=5
+REJECT_ALERT=3
+REJECT_WINDOW_MIN=10
 # Another node's public RPC to tell "we lag" from "network stalled"
 # (e.g. https://rpc.testnet.sova.io on a seed host). Empty: can't tell.
 HEALTH_REFERENCE_RPC="${HEALTH_REFERENCE_RPC:-}"
@@ -269,6 +301,144 @@ check_keeper() {
   fi
 }
 
+# ---- peers (sova-node's journal) ----------------------------------------------
+# node_journal <minutes>: sova-node's journal for the last <minutes>, each
+# line starting with its epoch time (short-unix). health.sh runs as root.
+node_journal() {
+  journalctl -u sova-node --since "-$1min" --no-pager -q -o short-unix 2>/dev/null
+}
+
+short_id() { # 0x12345678...abcd
+  local x="$1"
+  ((${#x} > 18)) && x="${x:0:10}...${x: -4}"
+  printf '%s' "${x}"
+}
+
+# peer_findings <now>: reads node_journal's output on stdin, prints one line
+#   <status> <sova1> <flap-peer> <flaps> <flap-left> <reject-peer> <rejects> <reject-height> <reject-error...>
+# status: connected_peers in the newest "Status" line (reth's sessions).
+# sova1: peers= in the newest "sova/1: peer active|gone" line (the sessions
+# that carry blocks; one can stay up without sova/1). flap-peer, flaps: the
+# peer whose sova/1 session most often went "gone" within PEER_FLAP_SECS of
+# "active" in the last PEER_FLAP_WINDOW_MIN; flap-left: the sova/1 peers its
+# last drop left. reject-peer, rejects: the peer with the most "peer sent an
+# INVALID block" lines in the last REJECT_WINDOW_MIN, with its newest one's
+# height and validation error. "-" for none. A "Started sova-node" line
+# starts over: a restart empties reth's invalid-block cache and its bans.
+# ANSI colours (RUST_LOG_STYLE unset) are stripped.
+peer_findings() {
+  awk -v now="$1" -v fsecs="${PEER_FLAP_SECS}" -v fwin="$((PEER_FLAP_WINDOW_MIN * 60))" \
+    -v rwin="$((REJECT_WINDOW_MIN * 60))" '
+    function val(name) {
+      if (!match($0, " " name "=[^ ]+")) return ""
+      return substr($0, RSTART + length(name) + 2, RLENGTH - length(name) - 2)
+    }
+    function peer(name,   id) { id = val(name); return id == "" ? "?" : id }
+    function dash(s) { return s == "" ? "-" : s }
+    { gsub(/\033\[[0-9;]*m/, ""); t = $1 + 0 }
+    /systemd\[1\]: Started sova-node/ {
+      status = ""; sova1 = ""
+      split("", act); split("", flaps); split("", left); split("", rej); split("", rh); split("", re)
+      next
+    }
+    / connected_peers=[0-9]/ { status = val("connected_peers"); next }
+    /sova\/1: peer active/ { act[peer("peer_id")] = t; sova1 = val("peers"); next }
+    /sova\/1: peer gone/ {
+      id = peer("peer_id"); sova1 = val("peers")
+      if ((id in act) && t - act[id] <= fsecs && t >= now - fwin) { flaps[id]++; left[id] = sova1 }
+      delete act[id]
+      next
+    }
+    /sova\/1: peer sent an INVALID block/ && t >= now - rwin {
+      id = peer("peer"); rej[id]++; rh[id] = val("height"); re[id] = ""
+      if (match($0, / validation_error=.*/)) re[id] = substr($0, RSTART + 18)
+    }
+    END {
+      fp = "-"; fc = 0; for (k in flaps) if (flaps[k] > fc) { fc = flaps[k]; fp = k }
+      rp = "-"; rc = 0; for (k in rej) if (rej[k] > rc) { rc = rej[k]; rp = k }
+      print dash(status), dash(sova1), fp, fc, (fc ? dash(left[fp]) : "-"), rp, rc, (rc ? dash(rh[rp]) : "-"), (rc ? dash(re[rp]) : "-")
+    }'
+}
+
+# The keeper's node keeping no peer (on the keeper host): it seals on alone
+# and its blocks reach no one. 2026-09-28 (docs/audits/2026-09-28-null-
+# timestamp-split.md): after a Zcash reorg the seeds judged a keeper block
+# invalid and banned the keeper; it redialled every 45 s and was cut each
+# time, for 28 min, and the alerts said only "stuck", 18 min in. Two shapes:
+# 0 peers (Status or sova/1) for KEEPER_ISOLATED_MIN minutes in a row, or
+# a peer that accepts and drops it PEER_FLAP_ALERT times in
+# PEER_FLAP_WINDOW_MIN with no other sova/1 peer left.
+check_keeper_isolated() { # status sova1 flap-peer flaps flap-left
+  local status="$1" sova1="$2" fpeer="$3" flaps="$4" fleft="$5" why="" healthy=1
+  say "keeper peers: connected_peers ${status}, sova/1 peers ${sova1}, flaps ${flaps} in ${PEER_FLAP_WINDOW_MIN} min"
+  if [[ "${status}" == 0 || "${sova1}" == 0 ]]; then
+    healthy=0
+    if persisted keeper_no_peers "${KEEPER_ISOLATED_MIN}"; then
+      why="0 peers for ${KEEPER_ISOLATED_MIN}+ min (connected_peers ${status}, sova/1 peers ${sova1})"
+    else
+      say "keeper: 0 peers, under ${KEEPER_ISOLATED_MIN} min so far (alert at ${KEEPER_ISOLATED_MIN})"
+    fi
+  elif [[ "${status}" == - && "${sova1}" == - ]]; then
+    healthy=0
+    say "keeper: no Status or sova/1 peer line in sova-node's journal for ${REJECT_WINDOW_MIN} min; peers not judged"
+  else
+    clear_alert keeper_no_peers
+  fi
+  if ((flaps >= PEER_FLAP_ALERT)); then
+    if [[ "${fleft}" == 0 || "${fleft}" == - ]]; then
+      healthy=0
+      why="${why:+${why}; }peer $(short_id "${fpeer}") connected and dropped within ${PEER_FLAP_SECS} s ${flaps} times in ${PEER_FLAP_WINDOW_MIN} min"
+    else
+      say "keeper: peer $(short_id "${fpeer}") connects and drops (${flaps} times in ${PEER_FLAP_WINDOW_MIN} min), but ${fleft} other sova/1 peer(s) stay: not isolated"
+    fi
+  fi
+  if [[ -n "${why}" ]]; then
+    alert keeper_isolated "the keeper is sealing alone: no peer keeps a connection, so its blocks don't reach the network (seeds may have banned it; see docs/ops/testnet-launch.md). ${why}"
+  elif ((healthy)); then
+    clear_alert keeper_isolated
+  fi
+}
+
+# This node rejecting one peer's blocks as INVALID, again and again
+# (REJECT_ALERT lines in REJECT_WINDOW_MIN): it refuses the chain that peer
+# offers. When that is the keeper's (the only sealer), we are split from
+# the chain and stuck, as seed-1, seed-2 and rpc-1 were on 2026-09-28.
+# reth caches the verdict in memory and the reputation hits ban the peer,
+# so it never heals by itself: restart sova-node here. Hosts can't reach the
+# keeper's RPC to compare heads, and the public RPC was stuck too; what each
+# node can see is its own rejections. A single INVALID is a peer's problem
+# (it gets the reputation hit), so one or two only log.
+check_block_rejects() { # peer rejects height error...
+  local peer="$1" n="$2" height="$3" who
+  shift 3
+  local err="$*"
+  if ((n < REJECT_ALERT)); then
+    ((n > 0)) && say "${n} INVALID block(s) from peer $(short_id "${peer}") in ${REJECT_WINDOW_MIN} min (alert at ${REJECT_ALERT})"
+    clear_alert rejecting_blocks
+    return 0
+  fi
+  local what="${n} INVALID blocks in ${REJECT_WINDOW_MIN} min, newest at height ${height}: ${err:0:160}"
+  if [[ -n "${KEEPER_NODE_ID}" && "${peer}" == "0x${KEEPER_NODE_ID}" ]]; then
+    alert rejecting_blocks "rejecting the keeper's blocks as invalid: possible split (${what}). Restart sova-node here; see docs/ops/testnet-launch.md, \"A split\""
+  else
+    who="peer $(short_id "${peer}")"
+    [[ -n "${KEEPER_NODE_ID}" ]] || who+=" (the keeper's node id is unknown here: re-run deploy.sh)"
+    alert rejecting_blocks "rejecting the blocks of ${who} as invalid: possible split if it relays the keeper's chain, else a peer on a bad fork (${what}). See docs/ops/testnet-launch.md, \"A split\""
+  fi
+}
+
+# Both peer checks, from one read of the node's journal. The isolation
+# check runs where sova-keeper is enabled (the keeper host) only.
+check_peers() {
+  local status sova1 fpeer flaps fleft rpeer rejects rheight rerr
+  read -r status sova1 fpeer flaps fleft rpeer rejects rheight rerr \
+    <<<"$(node_journal "${REJECT_WINDOW_MIN}" | peer_findings "$(date +%s)")"
+  if systemctl is-enabled --quiet sova-keeper 2>/dev/null; then
+    check_keeper_isolated "${status}" "${sova1}" "${fpeer}" "${flaps}" "${fleft}"
+  fi
+  check_block_rejects "${rpeer}" "${rejects}" "${rheight}" "${rerr}"
+}
+
 # ---- memory -----------------------------------------------------------------
 # MemAvailable (what can be had without swapping) under MEM_ALERT_MB on two
 # passes in a row: one low pass is often a burst (a RocksDB compaction, a
@@ -367,6 +537,11 @@ if systemctl is-enabled --quiet sova-node 2>/dev/null; then
     fi
     check_block_age "${head}"
     check_null_run "${head}"
+  fi
+  if systemctl is-active --quiet sova-node; then
+    check_peers
+  else
+    clear_alert keeper_no_peers # a restart starts the count over
   fi
   rejects="$(journalctl -u sova-node --since '-3min' --no-pager -q 2>/dev/null | grep -c 'settlement mismatch' || true)"
   if [[ "${rejects}" -gt 0 ]]; then

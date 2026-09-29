@@ -307,6 +307,9 @@ async function main() {
   const b = await newPage({}, shim);
   await b.goto(PAGE);
   await b.click('#connect');
+  // Connecting first finds the wallet (EIP-6963 listen + an is-it-answering
+  // check), so the address arrives a moment after the click.
+  for (let i = 0; i < 50 && (await b.inputValue('#addr')).toLowerCase() !== buyerB.address.toLowerCase(); i++) await sleep(200);
   assert((await b.inputValue('#addr')).toLowerCase() === buyerB.address.toLowerCase(), 'wallet address filled in');
   await b.click('#reserve');
   await statusHas(b, 'waiting for payment');

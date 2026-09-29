@@ -1,11 +1,12 @@
 # sova-miner
 
 Budget-capped, per-epoch SIP-1 burn mining against a `zebrad`-compatible
-node. Four subcommands: `init` (create the keystore, print the t-address
+node. Five subcommands: `init` (create the keystore, print the t-address
 to fund and the EVM address burns credit), `mine` (the burn loop),
 `report` (spend/earnings summary, with optional on-chain verification),
-and `export-evm-key` (print the key, to spend your SOVA from an EVM
-wallet).
+`export-evm-key` (print the key, to spend your SOVA from an EVM
+wallet) and `transfer` (send SOVA from the keystore's EVM address
+without exporting the key).
 
 ## Your SOVA: the EVM address and its key
 
@@ -46,6 +47,34 @@ than moving your burns without being asked. Fix it with
 `sova-miner init --migrate-evm-address`, which switches to the key's own
 Ethereum address. SOVA already credited to the legacy address stays
 there.
+
+## Sending SOVA without exporting the key
+
+`transfer` signs a plain SOVA transfer with the keystore key in-process
+and broadcasts it through a Sova node. The key is never printed, logged
+or written anywhere, so a host can pay out what it mined without the key
+ever leaving `keystore.json`:
+
+```bash
+sova-miner --data-dir .sova-miner transfer \
+  --to 0x<recipient> --amount 1000.5 --sova-rpc http://127.0.0.1:8545
+# from / to / amount / chain id / nonce / max fee / balance, then:
+# send this transaction? type 'yes' to confirm:
+```
+
+It sends from the key's own EVM address (the one `init` defaults to),
+one EIP-1559 transaction of 21,000 gas on the chain id the node reports,
+nonce from the pending pool, max fee `2 x base fee + tip`. It refuses if
+that is above `--max-fee-per-gas` (100 gwei by default) or the balance
+can't cover amount plus max fee. `--amount` is decimal SOVA, at most 18
+places. `--yes` skips the prompt. It then waits for the receipt (up to
+`--wait-secs`, 600 by default; Sova makes one block per Zcash block) and
+prints the tx hash, block, fee paid and status, exiting non-zero on a
+failed transaction or a timeout. After a timeout, look the hash up
+before sending again.
+
+Only chain 82330 (Sova testnet) and local dev chains (31337, 1337) are
+accepted; anything else, including Sova mainnet, needs `--any-chain`.
 
 ## Budgets
 

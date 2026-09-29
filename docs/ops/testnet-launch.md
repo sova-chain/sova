@@ -320,6 +320,7 @@ the gitleaks CI scan.
 | `host/byo-bootstrap.py` | Applies that same `cloud-init.yaml` over SSH to a byo host, so it matches a Hetzner one |
 | `test/byo-dry-run.sh` | Offline proof that the optional byo path works (a byo keeper validates, renders and appears in every launch stage) and that the default example is all-Hetzner |
 | `test/null-sealed-stub.sh` | Offline test of the `null_run` rule (`health.sh`) and its `smoke.sh` twin against a local JSON-RPC stub: recent sealed, 50 min old, none within the bound, RPC hiccups, bursts, a slow Zcash, a young chain |
+| `test/peer-alerts-stub.sh` | Offline test of `keeper_isolated` and `rejecting_blocks` (`health.sh`) on canned `sova-node` journal lines and a fake clock: 0 peers for 4 and 6 min, a peer that connects and drops at once, ×2 and ×3, normal peers, INVALID blocks ×2 and ×3 from one peer, spread over peers, before a restart |
 | `deploy.sh` → `host/setup-host.sh` | Per-role setup over SSH. `deploy.sh check` validates the config, `deploy.sh render` writes and lints every host's files locally |
 | `cloudflare.sh` | DNS, tunnels (incl. the checkout relayer's host on the faucet tunnel), the RPC firewall Worker (with the RPC rate limit), the WAF rate-limit rule (faucet `/drip`, relayer `/reserve` + `/claim`), R2 bucket + domain, teardown |
 | `epoch-base.sh` | Proposes, pins and records the epoch base B |
@@ -370,9 +371,43 @@ active`.
 | `epoch_lag` | (zebrad tip − B + 1) − sova head > 10 epochs (~12 min) | **"WE LAG (infra)"**: the reference node (public RPC) is ahead of us, so it's our problem. **"NETWORK STALLED (miner matter)"**: the reference is stuck too, and nobody is sealing. That's not an infra failure; check the keeper. On `rpc-1` itself there is no reference, so the alert says it can't tell. |
 | `block_age` | The newest Sova block is older than `BLOCK_AGE_ALERT_MIN` (10 min) | A block's time is its Zcash block's. The alert says whether zebrad's tip is old too (**Zcash is slow**; Sova waits for it, nothing to fix) or not (**SOVA STUCK**: look at the keeper and `epoch_lag`). A 5-minute gap is normal. Sent by the `HEALTH_NETWORK_ALERT_HOSTS`. |
 | `null_run` | No SIP-6 sealed block for more than `NULL_SEALED_MAX_MIN` (45) minutes. The check walks back from the head to the newest sealed block and times it by its block time (its Zcash block's); it stops once the null blocks span the limit (an alert), or at 1800 blocks (60 min of 2 s blocks), where a shorter span is logged and judged on a later pass. If the RPC doesn't answer every block, the pass is skipped | Heights advance on null blocks but nobody is burning, so no transaction can be mined. Check `sova-keeper` (a spent per-run budget, `KEEPER_BUDGET_ZAT`, stopped it on 2026-09-25 and every block was null for an hour) and restart it. Timed, not counted: a demand-mode keeper seals only for pending transactions plus a heartbeat every `KEEPER_HEARTBEAT_SECS` (30 min; 45 = 1.5×), and a Zcash burst of 3 s blocks is hundreds of null blocks. When no Sova block at all has come for that long, it is only logged: that is `block_age`'s finding (Zcash slow, or Sova stuck). `smoke.sh edge` fails on the same rule; it walks at most 600 blocks through the public edge and prints an uncounted `note` when a burst makes those span less than the limit. `NULL_RUN_ALERT` (the old block count) is ignored, with a warning. Sent by the `HEALTH_NETWORK_ALERT_HOSTS`. |
+| `keeper_isolated` | On the keeper host only (where `sova-keeper` is enabled): its node has had 0 peers for `KEEPER_ISOLATED_MIN` (5) minutes in a row (the newest `Status connected_peers=N` line, or the newest `sova/1: peer active/gone … peers=N` line, says 0), or one peer's sova/1 session went `peer gone` within 2 s of `peer active` 3 times in 5 minutes with no other sova/1 peer left | **The keeper is sealing alone**: no peer keeps a connection, so its blocks don't reach the network. Usually the seeds banned it (2026-09-28: 28 minutes). Check `rejecting_blocks` on the other hosts and follow [A split](#a-split-the-keeper-sealing-alone). A dead seed or a firewall change gives 0 peers too: `journalctl -u sova-node \| grep -E 'sova/1: peer\|connected_peers'` on the keeper |
+| `rejecting_blocks` | Any node host: its node logged `sova/1: peer sent an INVALID block` 3 times from one peer in 10 minutes (counted since sova-node's last start) | **This node rejects that peer's chain.** When the peer is the keeper (named when `KEEPER_NODE_ID`, rendered by `deploy.sh` from the keeper's recorded enode, matches), this host is split from the only sealer and stuck: follow [A split](#a-split-the-keeper-sealing-alone). Another peer: a split if it relays the keeper's chain, else a stranger on a bad fork (it gets banned; nothing to fix). The alert quotes the newest height and validation error. Sent by every host that rejects, since each needs its own restart |
 | `c5_reject` | Any `settlement mismatch` in the last 3 minutes | A peer offered a block that contradicts our zebrad. Investigate: a doctored snapshot, a Zcash fork, or a bad sealer. |
 | `faucet_down`, `faucet_dry`, `faucet_over` | `/status` dead, not accepting drips, or the hot wallet is over its limit | Top up (plain transfer), or stop topping up |
 | `checkout_down`, `checkout_low`, `checkout_refusing` | The checkout relayer's `/status` is dead; its SOVA is under `CHECKOUT_RELAYER_ALERT_BALANCE_WEI` (1 SOVA); or it refuses new orders (under the 0.1 SOVA floor, or at its open-order cap) | Top it up (below); a cap that stays full for an hour is someone holding orders open: see "Checkout relayer" |
+
+### A split: the keeper sealing alone
+
+The shape of 2026-09-28 (`docs/audits/2026-09-28-null-timestamp-split.md`):
+a follower judged one of the keeper's blocks invalid, cached the verdict in
+memory, rejected every descendant, and banned the keeper. The keeper
+sealed on alone while the followers (and the public RPC) stayed at the
+same height. The alerts, earliest first: `keeper_isolated` from the
+keeper, `rejecting_blocks` from each follower that rejects, then, much
+later (18 minutes on 2026-09-28), `block_age` "SOVA STUCK" and
+`epoch_lag` from the network alert hosts.
+
+1. **Find the rejecting hosts.** The ones that sent `rejecting_blocks`;
+   or, on each node host, `sudo journalctl -u sova-node --since -30min |
+   grep -c 'INVALID block'`, and compare heads (`smoke.sh hosts`).
+2. **Restart `sova-node` on each rejecting host** (seeds first, then
+   rpc-1): `sudo systemctl restart sova-node`. A restart empties reth's
+   in-memory invalid-block cache and the peer bans, so the keeper's blocks
+   are judged afresh. Don't restart the keeper: its chain is the one being
+   refused.
+3. **Check they converge.** Within a minute or two every node reports the
+   keeper's head (same hash at the same height), `keeper_isolated` and
+   `rejecting_blocks` stop, and `./smoke.sh` passes.
+4. **If a host rejects again at once**, the keeper's block is really
+   invalid for it (not a stale verdict): don't keep restarting. Read the
+   `validation_error` in the alert or the journal and treat it as a
+   consensus bug.
+
+v0.1.14 fixes the known cause (a block's own Zcash anchor is checked
+before its SIP-6 timestamp, so a Zcash reorg makes it a hold, not an
+invalid block). Until every host runs v0.1.14 the restart is the fix;
+after that, a `rejecting_blocks` alert is a new bug worth an audit note.
 
 ### Checkout relayer (`checkout.testnet.sova.io`)
 

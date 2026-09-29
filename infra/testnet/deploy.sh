@@ -80,6 +80,18 @@ ordered_servers() {
   return 0
 }
 
+# The keeper's node id (128 hex, from the enode pass 1 recorded), for
+# health.sh to name the keeper when a host rejects its blocks
+# (rejecting_blocks). Empty until recorded (a first deploy of only other
+# hosts, or a render).
+keeper_node_id() {
+  local k f
+  k="$(servers_with_role keeper | sed -n 1p)"
+  f="${OUT_DIR}/servers/${k}.enode"
+  [[ -n "${k}" && -s "${f}" ]] || return 0
+  sed -n 's|^enode://\([0-9a-fA-F]\{128\}\)@.*|\1|p' "${f}" | head -1
+}
+
 host_env() { # server-entry bootnodes
   local s="$1" name role
   name="$(srv_name "${s}")"
@@ -118,6 +130,8 @@ HEALTH_REFERENCE_RPC=${ref_rpc}
 BLOCK_AGE_ALERT_MIN=${BLOCK_AGE_ALERT_MIN}
 NULL_SEALED_MAX_MIN=${NULL_SEALED_MAX_MIN}
 MEM_ALERT_MB=${MEM_ALERT_MB}
+KEEPER_ISOLATED_MIN=${KEEPER_ISOLATED_MIN}
+KEEPER_NODE_ID=$(keeper_node_id)
 HEALTH_NETWORK_ALERTS=$(network_alerts_for "${name}")
 SWAP_GB=${SWAP_GB}
 KEEPER_PER_EPOCH_ZAT=${KEEPER_PER_EPOCH_ZAT:-10000}

@@ -50,6 +50,12 @@ zcash_transparent = { version = "0.10.0", features = ["transparent-inputs"] }
 # version the repo-root workspace already locks (via alloy/reth); built on
 # digest 0.10, which this workspace's lockfile already carries.
 sha3 = "0.10.9"
+# `transfer` signs an EIP-1559 transaction with the keystore key in-process.
+# The same secp256k1 0.29 burn-wallet already links (see its Cargo.toml),
+# plus the `recovery` feature for the recoverable signature EIP-1559's
+# `y_parity` comes from. No new crates: the feature only turns on
+# `secp256k1-sys/recovery`, already in the lockfile.
+secp256k1 = { version = "0.29.1", features = ["recovery"] }
 
 clap = { version = "4", features = ["derive", "env"] }
 serde = { version = "1", features = ["derive"] }

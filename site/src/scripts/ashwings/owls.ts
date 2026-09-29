@@ -10,7 +10,7 @@
 import {
   RpcError, rpc, u256, addrWord, calldata, words, num, asAddr, dynBytes, utf8, waitingForBlock, stopWaiting,
 } from '../checkout/chain';
-import { type Eip1193, WalletError, chainSpec, connectWallet, ensureChain, findWallet } from '../checkout/wallet';
+import { type Eip1193, WalletError, chainSpec, chooseWallet, connectWallet, ensureChain, findWallet } from '../checkout/wallet';
 
 export type Cfg = { rpc: string; chainId?: number; explorer?: string; ashw: string; market: string; relayer: string };
 export type Owl = { id: bigint; name: string; image: string; traits: string; owner: string };
@@ -171,8 +171,9 @@ export async function wallet(): Promise<Eip1193 | undefined> {
 }
 
 /** Connect: an account, and the wallet on Sova (added first if it doesn't know it). */
-export async function connect(c: Cfg): Promise<string> {
-  return connectWallet(await wallet(), await chainSpec(c));
+export async function connect(c: Cfg, anchor?: HTMLElement | null): Promise<string> {
+  eth = await chooseWallet(anchor ?? (document.activeElement as HTMLElement | null));
+  return connectWallet(eth, await chainSpec(c));
 }
 
 /**

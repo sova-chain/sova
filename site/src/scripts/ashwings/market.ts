@@ -106,7 +106,8 @@ async function load() {
 
 async function doConnect() {
   try {
-    S.wallet = await connect(cfg);
+    $('connect').textContent = 'connecting…';
+    S.wallet = await connect(cfg, $('connect'));
   } catch (e) {
     $('connect').textContent = 'try again';
     throw e;
@@ -116,15 +117,16 @@ async function doConnect() {
 
 $('cfg').textContent = `rpc ${cfg.rpc} · ashwings ${cfg.ashw} · market ${cfg.market}`;
 $('to-mint').setAttribute('href', `/ashwings/mint${location.search}`);
+// The button works from the first paint; the wallet is found on the click.
+$('connect').hidden = false;
+$('connect').addEventListener('click', () =>
+  doConnect()
+    .then(load)
+    .then(() => setStatus(status, 'ok', 'wallet connected · on Sova testnet'))
+    .catch((e) => setStatus(status, 'err', why(e))),
+);
 const found = wallet().then(async (w) => {
   if (!w) return false;
-  $('connect').hidden = false;
-  $('connect').addEventListener('click', () =>
-    doConnect()
-      .then(load)
-      .then(() => setStatus(status, 'ok', 'wallet connected · on Sova testnet'))
-      .catch((e) => setStatus(status, 'err', why(e))),
-  );
   // A wallet that leaves Sova, or changes account, has to connect again.
   const want = await chainSpec(cfg).then((c) => c.chainId, () => '');
   watchWallet(w, {

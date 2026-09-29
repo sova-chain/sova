@@ -8,7 +8,7 @@ import {
   ZCASH, ZERO_ADDR, SEL, TOPIC, rpc, reason, u256, addrWord, b32, calldata, words, num, asAddr,
   dynBytes, utf8, payeeScript, tAddr, zec, waitingForBlock, stopWaiting,
 } from './chain';
-import { type Eip1193, WalletError, chainSpec, ensureChain, findWallet, isRejected, watchWallet } from './wallet';
+import { type Eip1193, WalletError, chainSpec, chooseWallet, ensureChain, findWallet, isRejected, requestAccount, walletName, watchWallet } from './wallet';
 
 type Cfg = { rpc: string; chainId?: number; explorer?: string; ashw: string; checkout: string; listing: number; relayer: string; net: 'test' | 'main' };
 type Resv = {
@@ -347,7 +347,11 @@ function setTxid() {
 async function connect() {
   const btn = $<HTMLButtonElement>('connect');
   try {
-    const [a] = await eth!.request({ method: 'eth_requestAccounts' });
+    btn.textContent = 'connecting…';
+    status('wait', 'choose or open your wallet');
+    eth = await chooseWallet(btn);
+    status('wait', `approve in ${walletName()}`);
+    const a = await requestAccount(eth);
     $<HTMLInputElement>('addr').value = a;
     btn.textContent = 'wallet ' + short(a);
     await ensureChain(eth!, await chainSpec(cfg));
@@ -368,11 +372,14 @@ $('reserve').addEventListener('click', doReserve);
 $('claim').addEventListener('click', doClaim);
 $('check').addEventListener('click', setTxid);
 $('txid').addEventListener('keydown', (e) => e.key === 'Enter' && setTxid());
+// The button works from the first paint: finding the wallet happens on the
+// click (a silent window.ethereum can take seconds to rule out, and a click
+// that lands before then used to do nothing at all).
+$('connect').hidden = false;
+$('connect').addEventListener('click', connect);
 findWallet().then((w) => {
   if (!w) return;
-  eth = w;
-  $('connect').hidden = false;
-  $('connect').addEventListener('click', connect);
+  eth ??= w;
   watchWallet(w, {
     account: (a) => {
       if (S.wallet && a.toLowerCase() !== S.wallet.toLowerCase()) {

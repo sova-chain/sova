@@ -283,6 +283,7 @@ validate_health_config() {
   BLOCK_AGE_ALERT_MIN="${BLOCK_AGE_ALERT_MIN:-10}"
   NULL_SEALED_MAX_MIN="${NULL_SEALED_MAX_MIN:-45}"
   MEM_ALERT_MB="${MEM_ALERT_MB:-300}"
+  KEEPER_ISOLATED_MIN="${KEEPER_ISOLATED_MIN:-5}"
   SWAP_GB="${SWAP_GB:-4}"
   [[ "${BLOCK_AGE_ALERT_MIN}" =~ ^[1-9][0-9]*$ ]] || die "config: BLOCK_AGE_ALERT_MIN must be a positive number of minutes"
   [[ "${NULL_SEALED_MAX_MIN}" =~ ^[1-9][0-9]*$ ]] || die "config: NULL_SEALED_MAX_MIN must be a positive number of minutes"
@@ -291,6 +292,7 @@ validate_health_config() {
   [[ -z "${NULL_RUN_ALERT:-}" ]] ||
     cfg_warn "NULL_RUN_ALERT is deprecated and ignored: the null-run alert is time-based now (NULL_SEALED_MAX_MIN=${NULL_SEALED_MAX_MIN} min); remove it"
   [[ "${MEM_ALERT_MB}" =~ ^[1-9][0-9]*$ ]] || die "config: MEM_ALERT_MB must be a positive number of MB"
+  [[ "${KEEPER_ISOLATED_MIN}" =~ ^[1-9][0-9]*$ ]] || die "config: KEEPER_ISOLATED_MIN must be a positive number of minutes"
   if ! [[ "${SWAP_GB}" =~ ^[0-9]+$ ]] || ((SWAP_GB > 64)); then
     die "config: SWAP_GB must be a whole number of GB from 0 (no swapfile) to 64"
   fi
