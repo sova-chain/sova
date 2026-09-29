@@ -6,13 +6,13 @@
 import Direction from '../../layouts/Direction.astro';
 import DirSwitch from '../../components/DirSwitch.astro';
 import {
-  EDGE_LINE, REWARD_SOVA, HALVING_EPOCHS, SLOW_START_EPOCHS,
+  EDGE_LINE, REWARD_SOVA, FLAT_REWARD_SOVA, HALVING_EPOCHS, SLOW_START_EPOCHS,
   notClaims, owls, footerLinks, repo, WORDMARK_PATHS,
 } from '../../data/sova';
 
 // Big numerals. Each digit becomes a rolling column (see .roll in the CSS).
 const stats = [
-  { v: REWARD_SOVA, unit: 'SOVA per epoch*' },
+  { v: REWARD_SOVA.split('.')[0], unit: 'SOVA per epoch*' },
   { v: '0', unit: 'premine' },
   { v: '1:1', unit: 'Zcash block : Sova block' },
   { v: '0', unit: 'admin keys' },
@@ -73,7 +73,7 @@ const split = [
           <span class="unit">{s.unit}</span>
         </div>
       ))}
-      <p class="fn">* After a {SLOW_START_EPOCHS}-epoch slow start. Halves every {HALVING_EPOCHS} epochs, like Zcash. Burn-less epochs mint nothing.</p>
+      <p class="fn">* {REWARD_SOVA} exactly, per 25-second epoch, after a {SLOW_START_EPOCHS}-epoch slow start. Halves every {HALVING_EPOCHS} epochs, like Zcash. Burn-less epochs mint nothing.</p>
     </section>
 
     <section id="flow" class="flow" aria-labelledby="flow-t">
@@ -103,7 +103,7 @@ const split = [
             <div class="bar">{split.map((p) => <span class={`seg ${p.k}`} style={`--w:${p.w}%`}></span>)}</div>
             <ul class="legend">{split.map((p) => <li class={p.k}><span>{p.label}</span><b>{p.v}</b></li>)}</ul>
           </div>
-          <p>The Sova block mints {REWARD_SOVA} SOVA, split by ZEC burned. No claim step.</p>
+          <p>The Sova block mints {FLAT_REWARD_SOVA} SOVA, split by ZEC burned. No claim step.</p>
         </li>
       </ol>
       <p class="cap">Illustrative, from a two-burner regtest run. The split is exact to the gwei.</p>

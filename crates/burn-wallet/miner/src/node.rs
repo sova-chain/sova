@@ -8,7 +8,7 @@
 
 use burn_wallet::RpcClient;
 use burn_wallet::RpcError;
-use burn_wallet::rpc::AddressUtxo;
+use burn_wallet::rpc::{AddressUtxo, NextBlockConsensus};
 use serde_json::Value;
 
 /// zebrad's JSON-RPC code for "No such mempool or main chain transaction"
@@ -42,6 +42,9 @@ pub(crate) struct AddressSnapshot {
 pub(crate) trait Node {
     /// `getblockcount`.
     fn tip_height(&self) -> Result<u64, RpcError>;
+    /// `getblockchaininfo`: the tip and the consensus branch ID of the
+    /// next block, which every burn is signed for.
+    fn next_block(&self) -> Result<NextBlockConsensus, RpcError>;
     /// `getaddressutxos` (with `chainInfo`) for one address.
     fn address_utxos(&self, address: &str) -> Result<AddressSnapshot, RpcError>;
     /// Whether `txid` (known to the node) is a coinbase transaction.
@@ -77,6 +80,10 @@ fn is_coinbase_tx(tx: &Value) -> bool {
 impl Node for RpcClient {
     fn tip_height(&self) -> Result<u64, RpcError> {
         self.get_block_count()
+    }
+
+    fn next_block(&self) -> Result<NextBlockConsensus, RpcError> {
+        self.get_next_block_consensus()
     }
 
     fn address_utxos(&self, address: &str) -> Result<AddressSnapshot, RpcError> {

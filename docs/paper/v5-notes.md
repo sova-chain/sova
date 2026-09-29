@@ -72,7 +72,7 @@ Each claim in the paper, by section, with its source. “Derived” means arithm
 
 **§3 Epochs**
 - One Zcash block = one epoch; height E − B + 1: `sips/sip-2.md` (Epochs).
-- About 75 seconds per block: `sips/sip-3.md` (Constants: “at 75 s”).
+- About 75 seconds per block, about 25 after NU7; mainnet begins after NU7: `sips/sip-3.md` (Revision 2), ZIP 218 [11].
 - Anchor in the beacon-root header field; “Zcash is its beacon”; hash chain pins ancestors: `sips/sip-4-draft-zcash-state-precompile.md` §1.
 - Fork choice follows Zcash; a Zcash reorg unwinds Sova; finality = Zcash depth: `sips/sip-2.md` (Epochs), SIP-4 §7.
 - Burn-less epoch still has a block, mints nothing: `sips/sip-2.md`, `sips/sip-3.md` (No mint without burns).
@@ -82,9 +82,9 @@ Each claim in the paper, by section, with its source. “Derived” means arithm
 - 9/10 pro rata by weight, floor division; 1/10 plus dust to the sealer; gwei arithmetic; exact conservation; equations (1), (2): `sips/sip-2.md` (Rewards), `sips/sip-3.md` (Constants); the formula reproduces the logged C3 amounts (`site/README.md`, Figure 4 row).
 - Fixed reward, more burners divide it thinner, price not supply: `sips/sip-3.md` (Why this shape).
 - No carry-over, no jackpot epoch, emission tracks demand: `sips/sip-3.md` (No mint without burns).
-- Equation (3), 0.3125 step, 20,000-epoch slow start, 1,680,000-epoch eras, gwei floor, era 42 = 1 gwei, era 43 = 0, asymptote 20,937,503,124.97144: `sips/sip-3.md` (Constants, The schedule).
+- Equation (3), 0.034722222 step, 60,000-epoch slow start (about 17 days), 2,083.33332 base, 5,040,000-epoch eras, gwei floor, era 40 = 1 gwei, era 41 = 0, asymptote 20,937,500,907.57594 (the paper rounds to .58): `sips/sip-3.md` (Constants, The schedule, Revision 2).
 - Slow start mirrors Zcash’s launch and closes the worthless-token window: `sips/sip-3.md` (rationale).
-- Halving interval inherited from Zcash: `sips/sip-3.md` (rationale).
+- Halving interval inherited from Zcash (5,040,000 blocks after NU7): `sips/sip-3.md` (rationale, Revision 2), ZIP 218 [11].
 - EIP-1559: base fee burned; priority fees and tip to sealers: `sips/sip-3.md` (Summary, “The far future is fees”).
 - Schedule changes only by burn-weight signaling; tally not built: `sips/sip-3.md` (Changing this schedule), `docs/ROADMAP.md` (Later: burn-weight signaling needs its own SIP).
 
@@ -130,11 +130,11 @@ Each claim in the paper, by section, with its source. “Derived” means arithm
 - Censorship costs out-burning every epoch, given SIP-6: `sips/sip-6-draft-sealer-signatures.md` §2.8.
 - Price of a share W / ((9/10) R): derived from (1).
 - Floor cost: 1,000 zat burn, about 20,000 zat fee: `sips/sip-3.md` (Cost floor note: 20,000 to 25,000 zat), `sips/sip-1.md` (ZIP-317).
-- About a quarter of a ZEC a day: derived. 86,400 / 75 = 1,152 epochs a day × (1,000 + 20,000) zat = 24,192,000 zat = 0.24 ZEC.
-- Slow-start total 62,503,125: derived. 0.3125 × 20,000 × 20,001 / 2 = 62,503,125. Shortfall 62,496,875: `sips/sip-3.md`, and 125,000,000 − 62,503,125.
-- Era about four years: `sips/sip-3.md` (Constants). Emission ends after 43 eras: `sips/sip-3.md` (era 43 pays 0).
-- “A little over 170 years”: derived. 43 × 1,680,000 × 75 s = 5.418 × 10^9 s = 171.7 years. See the discrepancy note below.
-- Worked epoch 5 : 2: `docs/WORKPLAN.md` C3 row (logged 4,642.857142858 + 1,607.142857142 = 6,250); the shares and the tip recomputed from (1) and (2): 5,625 × 5/7 = 4,017.857142857 (floor in gwei), 5,625 × 2/7 = 1,607.142857142, tip = 6,250 − sum = 625.000000001, rank 0 total 4,642.857142858.
+- Roughly 0.7 ZEC a day: derived. 86,400 / 25 = 3,456 epochs a day × (1,000 + 20,000) zat = 72,576,000 zat = 0.73 ZEC. (At 75 s it was 1,152 epochs, 0.24 ZEC, “a quarter”.)
+- Slow-start total 62,501,041.27: derived. 0.034722222 × 60,000 × 60,001 / 2 = 62,501,041.26666 (the `schedule.rs` supply audit pins the ramp at 62,501,041,266,660,000 gwei). Shortfall 62,498,957.93: 60,000 × 2,083.33332 = 124,999,999.2, minus 62,501,041.26666.
+- Era about four years: `sips/sip-3.md` (Constants; 5,040,000 × 25 s = 3.99 years). Emission ends after 41 eras: `sips/sip-3.md` (era 41 pays 0).
+- “About 164 years”: derived. 41 × 5,040,000 × 25 s = 5.166 × 10^9 s = 163.7 years; SIP-3 says ~164.
+- Worked epoch 5 : 2, at R = 6,250, the flat reward of the public testnet and regtest (`sips/sip-3.md`, Revision 2 and Implementation status): `docs/WORKPLAN.md` C3 row (logged 4,642.857142858 + 1,607.142857142 = 6,250); the shares and the tip recomputed from (1) and (2): 5,625 × 5/7 = 4,017.857142857 (floor in gwei), 5,625 × 2/7 = 1,607.142857142, tip = 6,250 − sum = 625.000000001, rank 0 total 4,642.857142858.
 
 **§11 Conclusion**
 - Local network from one command; source and specs public: `docs/ROADMAP.md` (M0), `box/README.md` per the claim table.
@@ -144,11 +144,11 @@ Each claim in the paper, by section, with its source. “Derived” means arithm
 
 ## 4. Claims I believe true but could not source, or where sources disagree
 
-1. **“A little over 170 years” to the end of emission.** SIP-3 says “~176 years”. 43 eras × 1,680,000 epochs × 75 s is 171.7 years (44 eras would be 175.7, but era 43 already pays zero, so emission ends when era 43 begins). The paper uses the arithmetic; SIP-3’s figure looks like 44 × 4. Recommend correcting SIP-3 or the paper, whichever Rob prefers.
+1. **The end of emission.** Resolved by SIP-3 revision 2: SIP-3 says ~164 years, and 41 eras × 5,040,000 epochs × 25 s is 163.7 years. (Under revision 1 the paper said “a little over 170 years”, 43 × 1,680,000 × 75 s, against SIP-3’s “~176”.)
 2. **“Zcash itself used a 20,000-block slow start.”** Stated in SIP-3’s rationale; not independently checked against the Zcash protocol spec in this pass. (Zcash’s slow-start interval is indeed 20,000 blocks in its consensus parameters, but I did not open the spec to cite a section.)
 3. **“The transaction is included by the first sealer who is not the attacker.”** From SIP-6 §2.8, which is a draft and conditional on sealer signatures. The paper states the condition (“with the sealer’s signature in the header [9]”). Before SIP-6, tip grinding (SIP-6 §1.1) lets a non-burner replace the tip block, so the censorship cost claim does not hold today. Section 5 says so in one paragraph.
 4. **“A Zcash reorganization unwinds the Sova blocks built on it.”** This is the specified rule (SIP-2, SIP-4 §7). SIP-4 §7 notes the automatic rollback is “required work” (the sealer today logs a follower rollback and continues). The paper describes the rule; the Conclusion’s status sentence covers “specified and built, ships with the testnet” for the anchor, and the same applies here.
-5. **“About 75 seconds”** for Zcash block time is stated as a constant in SIP-3, not cited to the Zcash spec.
+5. **Block time.** “About 75 seconds”, and 25 after NU7, are cited to ZIP 218 [11] and SIP-3 revision 2, not to the protocol spec.
 6. **“Only up to the Zcash height its own Zcash node has reached”** (sync gating) is `docs/design/p2p-m1.md` Decision 2 and the WORKPLAN log (“scan-gated catch-up landed”); it is a design note, not a SIP.
 7. **Reference [7] and [8] details** (EIP author lists and the ethereum.org whitepaper URL) are from memory and should be checked before publication.
 
@@ -201,3 +201,11 @@ Each claim in the paper, by section, with its source. “Derived” means arithm
 - **Joining nodes.** A joining or catching-up node takes the first valid history offered; its operator pins a recent hash until client checkpoints ship (audit F2, open).
 - **Future work, named not claimed (§10, §11):** a preference among histories by cumulative sealer rank, and burns that name a recent Sova block (SIP-8 draft).
 - References [9] SIP-6 and [10] SIP-7 are cited as accepted.
+
+## 8. SIP-3 revision 2: Zcash NU7 (2026-09-29)
+
+Zcash NU7 (testnet 6 October 2026, mainnet 5 November 2026) moves Zcash to 25-second blocks, and ZIP 218 divides the block subsidy by 3 and multiplies the halving interval by 3. SIP-3 revision 2 mirrors it (Rob, 2026-09-29), so the paper follows `sips/sip-3.md` and `crates/consensus/src/schedule.rs`, superseding the rows above where they differ:
+
+- §3: blocks about every 75 seconds, about every 25 after NU7; Sova’s mainnet begins after NU7, so the paper’s durations assume 25-second epochs. Reference [11], ZIP 218, added.
+- §4, equation (3): 0.034722222 step, 60,000-epoch slow start (about 17 days), 2,083.33332 SOVA base, halving every 5,040,000 epochs, era 40 = 1 gwei, era 41 = 0, bound 20,937,500,907.58 SOVA.
+- §10: a transaction settles about 75 seconds after its block (3 × 25 s; §7 above said about four minutes at 75 s); a miner that burns every epoch spends roughly 0.7 ZEC a day; the slow start mints 62,501,041.27 SOVA, 62,498,957.93 less than flat; emission ends after 41 eras, about 164 years. The worked epoch keeps R = 6,250, the testnet’s flat reward, and says so.

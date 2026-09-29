@@ -36,7 +36,8 @@ use std::collections::BTreeSet;
 use std::thread;
 use std::time::Duration;
 
-use burn_wallet::tx::{BurnTxRequest, DEFAULT_TX_EXPIRY_DELTA, build_burn_transaction};
+use burn_wallet::branch;
+use burn_wallet::tx::{BurnTxRequest, build_burn_transaction};
 use burn_wallet::utxo::{decode_rpc_hash, encode_rpc_hash};
 use burn_wallet::{Keypair, Network, RpcError, Utxo};
 use zcash_transparent::bundle::OutPoint;
@@ -439,10 +440,18 @@ fn fund_burn(
 /// confirmed coin suffices, the unconfirmed change of a burn in flight is
 /// spent (see the module docs).
 ///
-/// `target_height` is only a *target*, used for the transaction's
-/// consensus branch id / expiry -- not what gets recorded: the epoch's
-/// height is the block the burn actually confirms in (see
-/// [`resolve_pending`]).
+/// `target_height` is only a *target*, used for the transaction's expiry
+/// -- not what gets recorded: the epoch's height is the block the burn
+/// actually confirms in (see [`resolve_pending`]). The consensus branch the
+/// burn is signed for is zebrad's, read (`getblockchaininfo`) right before
+/// signing: `consensus.nextblock`, so the burn follows a network upgrade
+/// (NU7) as soon as zebrad does, with no activation height compiled in. If
+/// zebrad has moved on since `target_height` was chosen, its next block is
+/// the target instead. A branch this build doesn't know is refused
+/// ([`burn_wallet::BurnTxError::Branch`]): nothing is signed or sent.
+///
+/// `expiry_delta` is `--expiry-delta`: blocks until the burn expires;
+/// `None` is 40, or 120 once zebrad's next block is NU7 or later (ZIP 218).
 ///
 /// `sova_ref` makes the burn a SIP-8 version-2 (anchored) burn referencing
 /// that Sova block; `None` builds the SIP-1 v1 burn, exactly as before
@@ -476,6 +485,7 @@ pub(crate) fn attempt_epoch(
     signal_bits: u32,
     burn_zat: u64,
     target_height: u32,
+    expiry_delta: Option<u32>,
     sova_ref: Option<SovaRef>,
     state: &mut MinerState,
     persist: &mut dyn FnMut(&MinerState) -> Result<(), StateError>,
@@ -534,9 +544,16 @@ pub(crate) fn attempt_epoch(
         })
         .collect::<Result<_, burn_wallet::utxo::UtxoError>>()?;
 
+    // The branch and the height it is for come from one zebrad snapshot,
+    // read as late as possible: zebrad checks a new transaction against
+    // its next block's branch, and the ZIP 244 sighash commits to it.
+    let next = node.next_block()?;
+    let target_height = target_height.max(next.next_height());
     let request = BurnTxRequest {
         network,
         target_height,
+        consensus_branch_id: next.next_block_branch_id,
+        expiry_delta,
         utxos,
         change_and_signing_key: *keypair,
         evm_address,
@@ -546,6 +563,14 @@ pub(crate) fn attempt_epoch(
         sova_ref,
     };
     let built = build_burn_transaction(&request)?;
+    println!(
+        "burn {}: signed for consensus branch {}, zebrad's next block {} (tip on {:08x}), expiry height {}",
+        encode_rpc_hash(built.txid),
+        branch::describe(built.branch_id),
+        next.next_height(),
+        next.chain_tip_branch_id,
+        built.expiry_height
+    );
     let pending = PendingBurn {
         txid: encode_rpc_hash(built.txid),
         raw_hex: hex::encode(&built.raw),
@@ -563,7 +588,7 @@ pub(crate) fn attempt_epoch(
         } else {
             0
         },
-        expiry_height: u64::from(target_height) + u64::from(DEFAULT_TX_EXPIRY_DELTA),
+        expiry_height: u64::from(built.expiry_height),
     };
 
     // Write-ahead: in flight (inputs out of the pool, reserved by
@@ -925,6 +950,8 @@ pub(crate) fn broadcast(node: &impl Node, raw_hex: &str, txid: &str, attempts: u
 // with a message is more useful here than threading `Result` through.
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
+    use zcash_protocol::consensus::{BlockHeight, BranchId};
+
     use super::*;
     use crate::funding::tests::{FakeNode, SendScript, txid, txid_of};
 
@@ -1023,6 +1050,13 @@ mod tests {
         target_height: u32,
     ) -> Result<EpochOutcome, EpochError> {
         let keypair = Keypair::generate();
+        if network != Network::Regtest {
+            // What a zebrad on `network` reports for `target_height`.
+            node.next_branch.set(Some(u32::from(BranchId::for_height(
+                &network,
+                BlockHeight::from_u32(target_height),
+            ))));
+        }
         attempt_epoch(
             node,
             &mut Funding::new(network),
@@ -1032,6 +1066,7 @@ mod tests {
             0,
             burn_zat,
             target_height,
+            None,
             None,
             state,
             &mut |_| Ok(()),
@@ -1532,6 +1567,114 @@ mod tests {
         }
     }
 
+    // --- NU7: the branch comes from zebrad (docs/design/nu7-readiness.md B1/B2) ---
+
+    /// The consensus branch ID in a sent v5 burn's header.
+    fn sent_branch_id(raw_hex: &str) -> u32 {
+        let raw = hex::decode(raw_hex).unwrap();
+        u32::from_le_bytes(raw[8..12].try_into().unwrap())
+    }
+
+    /// Before NU7 nothing changes: the burn carries the branch zebrad
+    /// reports (NU5 on regtest) and expires 40 blocks out.
+    #[test]
+    fn burn_is_signed_for_zebrads_next_block_branch() {
+        let node = funded_node();
+        let mut state = fresh_state();
+        state.begin_invocation(1_000_000, 100_000, None);
+        let pending = submitted(attempt(&node, &mut state, 100_000));
+        assert_eq!(sent_branch_id(&node.sent.borrow()[0]), 0xc2d6_d0b4);
+        assert_eq!(pending.expiry_height, 201 + 40);
+    }
+
+    /// zebrad's next block is NU7: the burn is signed for `77190ad9`,
+    /// expires 120 blocks out (ZIP 218), and the node takes it.
+    #[test]
+    fn nu7_next_block_burn_is_signed_for_nu7_with_expiry_120() {
+        let node = funded_node();
+        node.next_branch.set(Some(0x7719_0ad9));
+        let mut state = fresh_state();
+        state.begin_invocation(1_000_000, 100_000, None);
+        let pending = submitted(attempt(&node, &mut state, 100_000));
+        assert_eq!(sent_branch_id(&node.sent.borrow()[0]), 0x7719_0ad9);
+        assert_eq!(pending.expiry_height, 201 + 120);
+        assert_eq!(node.mempool(), vec![pending.txid]);
+    }
+
+    /// The refusal: a branch this build doesn't know is an error before
+    /// anything is signed or sent -- no wrong-branch burn, nothing in
+    /// flight, no inputs reserved.
+    #[test]
+    fn unknown_next_block_branch_is_refused_and_nothing_is_sent() {
+        let node = funded_node();
+        node.next_branch.set(Some(0xffff_ffff));
+        let mut state = fresh_state();
+        state.begin_invocation(1_000_000, 100_000, None);
+        let err = attempt(&node, &mut state, 100_000).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                EpochError::Build(burn_wallet::BurnTxError::Branch(
+                    burn_wallet::BranchError::Unknown {
+                        id: 0xffff_ffff,
+                        height: 201
+                    }
+                ))
+            ),
+            "{err:?}"
+        );
+        assert!(err.to_string().contains("refusing to sign"), "{err}");
+        assert!(node.sent.borrow().is_empty());
+        assert!(state.pending.is_empty(), "nothing in flight");
+        assert_eq!(
+            state
+                .utxos
+                .iter()
+                .map(|u| u.txid.clone())
+                .collect::<Vec<_>>(),
+            vec![txid(7)],
+            "the coin is still free"
+        );
+    }
+
+    /// If zebrad's tip moved past the one the target was chosen from, the
+    /// burn targets zebrad's next block: the branch and the height it is
+    /// for come from the same snapshot.
+    #[test]
+    fn target_follows_zebrad_when_it_has_moved_on() {
+        let node = funded_node();
+        node.tip.set(260);
+        node.next_branch.set(Some(0x7719_0ad9));
+        let mut state = fresh_state();
+        state.begin_invocation(1_000_000, 100_000, None);
+        let pending = submitted(attempt(&node, &mut state, 100_000));
+        assert_eq!(pending.expiry_height, 261 + 120);
+    }
+
+    /// `--expiry-delta` overrides the branch's default.
+    #[test]
+    fn expiry_delta_flag_overrides_the_default() {
+        let node = funded_node();
+        node.next_branch.set(Some(0x7719_0ad9));
+        let mut state = fresh_state();
+        state.begin_invocation(1_000_000, 100_000, None);
+        let pending = submitted(attempt_epoch(
+            &node,
+            &mut Funding::new(Network::Regtest),
+            Network::Regtest,
+            &Keypair::generate(),
+            [0u8; 20],
+            0,
+            100_000,
+            201,
+            Some(60),
+            None,
+            &mut state,
+            &mut |_| Ok(()),
+        ));
+        assert_eq!(pending.expiry_height, 201 + 60);
+    }
+
     /// Two burns sent back to back on a one-coin wallet: the second spends
     /// the first's unconfirmed change, and the node (which, like zebrad,
     /// admits a tx spending a mempool output) takes it.
@@ -1971,6 +2114,7 @@ mod tests {
             0,
             100_000,
             201,
+            None,
             sova_ref,
             &mut state,
             &mut |_| Ok(()),

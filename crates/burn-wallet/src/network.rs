@@ -14,10 +14,15 @@
 //! NU5 = 1`, which (per Zebra's `ConfiguredActivationHeights::for_regtest`)
 //! also defaults Overwinter/Sapling/Blossom/Heartwood/Canopy to height 1.
 //! NU6 and later are left unset (never active) there, so they are `None`
-//! here too. If the harness config ever adds e.g. `NU6 = 1`, this must be
-//! updated to match, or `BranchId::for_height` (used to pick the
-//! `consensus_branch_id` for signing) will compute the wrong branch and
-//! Zebra will reject the resulting transaction.
+//! here too.
+//!
+//! This table no longer picks the branch a transaction is signed for: that
+//! comes from zebrad (`getblockchaininfo.consensus.nextblock`, see
+//! [`crate::branch`]), because NU7's heights are only published the day
+//! before it activates. The table is the cross-check: where it knows an
+//! upgrade's height, zebrad must agree with it. NU7's height is `None` on
+//! every network here (librustzcash `main` has none for Mainnet or Testnet
+//! either), so NU7 is always taken from zebrad.
 
 use zcash_protocol::consensus::{
     BlockHeight, MAIN_NETWORK, NetworkType, NetworkUpgrade, Parameters, TEST_NETWORK,
@@ -73,6 +78,7 @@ impl Network {
             nu6_1: None,
             nu6_2: None,
             nu6_3: None,
+            nu7: None,
         }
     }
 }

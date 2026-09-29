@@ -273,7 +273,8 @@ Precedent: the Bitcoin-era Sova priced its pure decode precompile at
 - **Contracts.** A Sova reorg can't undo anything outside Sova, such as
   goods shipped or assets bridged elsewhere. That is what `minConf` is
   for. Suggested defaults for the library docs: testnet 3, mainnet 10
-  (≈ 12.5 min at 75 s), and more for large values.
+  (≈ 12.5 min at 75 s, ≈ 4 min at NU7's 25 s), and more for large
+  values.
 
 ### 8. What is impossible, and what is merely later
 

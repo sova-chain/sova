@@ -13,6 +13,7 @@ export const SEL = {
   zecCheckout: 'c4f85e7b', // Ashwings.zecCheckout()
   tokenURI: 'c87b56dd', // tokenURI(uint256)
   anchor: 'd3fb73b4', // anchor()
+  blockAt: '6f8ea15d', // blockAt(uint64)
   txInfo: '0ac6923d', // txInfo(bytes32)
   txOutput: '2d45828e', // txOutput(bytes32,uint32)
 };
@@ -63,7 +64,7 @@ export async function rpc<T = any>(url: string, method: string, params: unknown[
 // ---- waiting for a block ----------------------------------------------------
 
 /** The one line shown while a sent transaction waits for its block. */
-export const BLOCK_NOTE = 'Sova makes one block per Zcash block: about a minute, sometimes several.';
+export const BLOCK_NOTE = 'Sova makes one block per Zcash block: about a minute (25 seconds after NU7), sometimes longer.';
 
 const ticking = new WeakMap<HTMLElement, number>();
 

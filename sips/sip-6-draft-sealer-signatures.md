@@ -299,7 +299,7 @@ For a block at Sova height `N` settling epoch `E_N` with ranked miners
 Consequences:
 
 - **"Sealed" means "has burns", not "has a reward".** Today an epoch whose
-  scheduled reward is 0 (post-emission, SIP-3 era 43 onward) "settles like
+  scheduled reward is 0 (post-emission, SIP-3 era 41 onward) "settles like
   a burn-less epoch" with no rank (`driver.rs:342-356`,
   `expectations.rs:163-169`). The reason is that the tip can't identify a
   sealer when there is no tip. With signatures the rank comes from the
@@ -664,7 +664,7 @@ it later:
 ## 5. Cost
 
 - **Bytes.** +65 bytes per sealed header. At 75 s epochs that is about
-  27 MB a year. Null blocks are smaller than today's cadence blocks.
+  27 MB a year; at NU7's 25 s, about 82 MB. Null blocks are smaller than today's cadence blocks.
 - **CPU.** One ECDSA signature per sealed block, and one recovery per
   imported header (tens of microseconds, *estimate*).
 - **Engineering** (*estimates*, worker-days):

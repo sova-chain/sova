@@ -70,6 +70,7 @@ use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use burn_wallet::branch;
 use burn_wallet::rpc::RpcClient;
 use burn_wallet::{Keypair, Network};
 use consensus::sip1::SovaRef;
@@ -128,6 +129,9 @@ pub(crate) struct MineArgs {
     /// `--min-burn-interval-secs`: the least wall-clock time between two
     /// new burns from this miner (0: no throttle). See the module docs.
     pub min_burn_interval_secs: u64,
+    /// `--expiry-delta`: blocks until a burn expires. `None`: 40, or 120
+    /// once zebrad's next block is NU7 or later (ZIP 218).
+    pub expiry_delta: Option<u32>,
     /// `--sova-rpc`: the miner's own Sova node, for SIP-8 votes. `None`:
     /// v1 burns only, and nothing waits on Sova.
     pub sova_rpc: Option<String>,
@@ -252,6 +256,7 @@ pub(crate) fn run(args: MineArgs) -> Result<(), CliError> {
 
     let mut last_height = rpc.get_block_count()?;
     println!("baseline tip height: {last_height} (epochs trigger on new blocks past this)");
+    report_consensus_branch(&rpc, args.network, args.expiry_delta);
 
     let mut burner = Burner {
         network: args.network,
@@ -261,6 +266,7 @@ pub(crate) fn run(args: MineArgs) -> Result<(), CliError> {
         max_epochs: args.max_epochs,
         epochs_this_run: 0,
         min_burn_interval_ms: args.min_burn_interval_secs.saturating_mul(1000),
+        expiry_delta: args.expiry_delta,
         clock: &unix_now_ms,
     };
     // A tip whose burn `--min-burn-interval-secs` held back: when it may go
@@ -390,6 +396,8 @@ pub(crate) struct Burner<'a> {
     /// `--min-burn-interval-secs`, in milliseconds: no new burn goes out
     /// sooner than this after the previous one (0: no throttle).
     pub min_burn_interval_ms: u64,
+    /// `--expiry-delta`, if given (else the branch's default).
+    pub expiry_delta: Option<u32>,
     /// The wall clock, Unix milliseconds. Injected so tests run on
     /// simulated time.
     pub clock: &'a dyn Fn() -> u64,
@@ -527,6 +535,7 @@ pub(crate) fn on_new_tip(
         0,
         burner.per_epoch_zat,
         target_height,
+        burner.expiry_delta,
         sova_ref,
         state,
         save,
@@ -596,6 +605,24 @@ pub(crate) fn on_new_tip(
             Ok(TipStep::Continue)
         }
         Err(e) => Err(e.into()),
+    }
+}
+
+/// Says once at startup which consensus branch burns are being signed for
+/// (zebrad's next block; each burn re-reads it) and whether this build can
+/// sign for it. Informational: every burn checks again before signing.
+fn report_consensus_branch(rpc: &RpcClient, network: Network, expiry_delta: Option<u32>) {
+    match rpc.get_next_block_consensus() {
+        Ok(next) => match branch::resolve(network, next.next_height(), next.next_block_branch_id) {
+            Ok(branch_id) => println!(
+                "zcash consensus: zebrad's next block {} is on branch {}; burns are signed for zebrad's next block, expiring {} blocks out",
+                next.next_height(),
+                branch::describe(branch_id),
+                expiry_delta.unwrap_or_else(|| branch::default_expiry_delta(branch_id))
+            ),
+            Err(e) => eprintln!("warning: zcash consensus: {e}"),
+        },
+        Err(e) => eprintln!("warning: could not read zebrad's consensus branch: {e}"),
     }
 }
 
@@ -674,6 +701,7 @@ fn attempt_epoch_with_retries(
     signal_bits: u32,
     burn_zat: u64,
     target_height: u32,
+    expiry_delta: Option<u32>,
     sova_ref: Option<SovaRef>,
     state: &mut MinerState,
     persist: &mut dyn FnMut(&MinerState) -> Result<(), StateError>,
@@ -689,6 +717,7 @@ fn attempt_epoch_with_retries(
             signal_bits,
             burn_zat,
             target_height,
+            expiry_delta,
             sova_ref,
             state,
             persist,
@@ -818,6 +847,7 @@ mod tests {
                 max_epochs,
                 epochs_this_run: 0,
                 min_burn_interval_ms: self.min_interval_ms,
+                expiry_delta: None,
                 clock: &clock,
             };
             self.step(&mut burner)
@@ -1003,6 +1033,7 @@ mod tests {
                 max_epochs: Some(3),
                 epochs_this_run: burner_epochs,
                 min_burn_interval_ms: 0,
+                expiry_delta: None,
                 clock: &|| 0,
             };
             let step = sim.step(&mut burner);
@@ -1103,6 +1134,7 @@ mod tests {
             max_epochs: None,
             epochs_this_run: 0,
             min_burn_interval_ms: 0,
+            expiry_delta: None,
             clock: &|| 0,
         };
         let tip = sim.node.tip.get();
@@ -1149,6 +1181,7 @@ mod tests {
                 max_epochs: None,
                 epochs_this_run: 0,
                 min_burn_interval_ms: 0,
+                expiry_delta: None,
                 clock: &|| 0,
             };
             let tip = sim.node.tip.get();
@@ -1214,6 +1247,7 @@ mod tests {
             max_epochs: None,
             epochs_this_run: 0,
             min_burn_interval_ms: 0,
+            expiry_delta: None,
             clock: &|| 0,
         };
         sim.step(&mut burner);
@@ -1443,6 +1477,7 @@ mod tests {
             max_epochs: None,
             epochs_this_run: 0,
             min_burn_interval_ms: 30_000,
+            expiry_delta: None,
             clock: &clock,
         };
         let tip = sim.node.tip.get();

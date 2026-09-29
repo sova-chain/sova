@@ -151,6 +151,12 @@ enum Command {
         /// default) burns into every block.
         #[arg(long, value_name = "SECS", default_value_t = 0)]
         min_burn_interval_secs: u64,
+        /// Blocks after its target height until a burn expires (a burn not
+        /// mined by then is dropped and its inputs freed). Default: 40,
+        /// or 120 once zebrad's next block is NU7 or later (ZIP 218's
+        /// 25-second blocks). At least 4.
+        #[arg(long, value_name = "BLOCKS", value_parser = clap::value_parser!(u32).range(i64::from(burn_wallet::branch::MIN_TX_EXPIRY_DELTA)..))]
+        expiry_delta: Option<u32>,
         /// SIP-8 anchored burns: the JSON-RPC endpoint of YOUR OWN Sova
         /// node, e.g. `http://127.0.0.1:8545`. Each burn then also votes
         /// for that node's head block, once SIP-8 is active on this network
@@ -675,6 +681,7 @@ fn main() {
             poll_interval_ms,
             max_epochs,
             min_burn_interval_secs,
+            expiry_delta,
             sova_rpc,
             vote_wait,
         } => mine::run(mine::MineArgs {
@@ -688,6 +695,7 @@ fn main() {
             poll_interval_ms,
             max_epochs,
             min_burn_interval_secs,
+            expiry_delta,
             sova_rpc,
             vote_wait: std::time::Duration::from_secs(vote_wait),
             sip8_from: cli.sip8_from,
@@ -773,6 +781,32 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(report.rpc_cookie_file.as_deref(), Some(Path::new("/c")));
+    }
+
+    /// `--expiry-delta` is optional (the branch's default: 40, 120 from
+    /// NU7) and at least 4.
+    #[test]
+    fn expiry_delta_is_optional_with_a_floor() {
+        let parse = |extra: &[&str]| {
+            let base = [
+                "sova-miner",
+                "mine",
+                "--rpc",
+                "http://127.0.0.1:18232",
+                "--budget-zat",
+                "1",
+                "--per-epoch-zat",
+                "1",
+            ];
+            Cli::try_parse_from(base.iter().chain(extra)).map(|cli| match cli.command {
+                Command::Mine { expiry_delta, .. } => expiry_delta,
+                _ => unreachable!("parsed `mine`"),
+            })
+        };
+        assert_eq!(parse(&[]).unwrap(), None);
+        assert_eq!(parse(&["--expiry-delta", "200"]).unwrap(), Some(200));
+        assert_eq!(parse(&["--expiry-delta", "4"]).unwrap(), Some(4));
+        assert!(parse(&["--expiry-delta", "3"]).is_err());
     }
 
     /// `--min-burn-interval-secs` defaults to 0 (no throttle: the

@@ -148,6 +148,21 @@ doubles that sealed nothing.
   clock: if it steps back by more than the interval, the saved time is
   ignored rather than stalling the miner.
 
+### Network upgrades (NU7) and expiry
+
+Every burn is signed for the consensus branch your zebrad reports for its
+next block (`getblockchaininfo` → `consensus.nextblock`), read just before
+signing, and the log says which (`signed for consensus branch 77190ad9
+(Nu7)`). No activation height is compiled in: when Zcash NU7 activates
+(testnet 2026-10-06), upgrading zebrad is enough, as long as this binary
+knows NU7's branch ID `77190ad9` (it does from this release on). A branch
+ID the binary doesn't know is refused with an error naming it: nothing is
+signed, so upgrade sova-miner.
+
+- **`--expiry-delta <blocks>`** (default: 40 before NU7, 120 from NU7 on,
+  per ZIP 218; at least 4): a burn not mined within this many blocks of
+  its target height expires, and its inputs are free again.
+
 Before a burn is broadcast, `state.json` records it under `pending`
 (write-ahead), and its inputs stay reserved until it is mined. A process
 killed right after the broadcast therefore still knows the burn. A burn

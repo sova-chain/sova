@@ -7,7 +7,10 @@
 # --systemd-verify, which needs Docker), and `launch.sh --dry-run` includes
 # it in every stage that touches hosts, without ever creating it on
 # Hetzner. Also checks that a pending address is refused by a real run and
-# that malformed byo entries are rejected.
+# that malformed byo entries are rejected, and the zebrad rollout kit's
+# commands and rendering (--zebra-only, keeper-pause/resume, mute/unmute,
+# the readiness/mute settings, the pause condition in the units;
+# docs/ops/nu7-upgrade.md; the host side is test/zebra-kit-stub.sh).
 #
 #   test/byo-dry-run.sh [--systemd-verify]
 #
@@ -219,7 +222,7 @@ check "NULL_RUN_ALERT config: renders NULL_SEALED_MAX_MIN=45 and no NULL_RUN_ALE
 CFG="${TMP}/health-bad.env"
 sed 's/^BLOCK_AGE_ALERT_MIN=10$/BLOCK_AGE_ALERT_MIN=0/' "${TMP}/config.env" >"${TMP}/health-bad.env"
 check "deploy.sh check refuses BLOCK_AGE_ALERT_MIN=0" has "BLOCK_AGE_ALERT_MIN must be a positive number" "$(cd "${KIT}" && kit ./deploy.sh check 2>&1)"
-grep -v '^BLOCK_AGE_ALERT_MIN=\|^NULL_SEALED_MAX_MIN=\|^MEM_ALERT_MB=\|^HEALTH_NETWORK_ALERT_HOSTS=\|^SWAP_GB=\|^KEEPER_ISOLATED_MIN=' "${TMP}/config.env" >"${TMP}/health-old.env"
+grep -v '^BLOCK_AGE_ALERT_MIN=\|^NULL_SEALED_MAX_MIN=\|^MEM_ALERT_MB=\|^HEALTH_NETWORK_ALERT_HOSTS=\|^SWAP_GB=\|^KEEPER_ISOLATED_MIN=\|^ZCASH_REFERENCE_URLS=\|^NU7_ACTIVATION_HEIGHT=' "${TMP}/config.env" >"${TMP}/health-old.env"
 CFG="${TMP}/health-old.env"
 check "deploy.sh check: an older config without the health section still passes" grep -q '^==> config OK' <<<"$(cd "${KIT}" && kit ./deploy.sh check 2>&1)"
 out="$(cd "${KIT}" && kit ./deploy.sh render --out "${TMP}/render-old" 2>&1)"
@@ -227,6 +230,48 @@ check "older config: renders the defaults (SWAP_GB=4, MEM_ALERT_MB=300, NULL_SEA
   bash -c "grep -qx SWAP_GB=4 '${TMP}/render-old/sova-seed-1/host.env' && grep -qx MEM_ALERT_MB=300 '${TMP}/render-old/sova-seed-1/etc/sova/host.env' && grep -qx NULL_SEALED_MAX_MIN=45 '${TMP}/render-old/sova-seed-1/etc/sova/host.env' && grep -qx KEEPER_ISOLATED_MIN=5 '${TMP}/render-old/sova-keeper-1/etc/sova/host.env'"
 check "older config: network alerts from the rpc host and the first seed" \
   test "$(grep -lx HEALTH_NETWORK_ALERTS=1 "${TMP}"/render-old/*/etc/sova/host.env | awk -F/ '{ print $(NF-3) }' | sort | tr '\n' ' ')" == "sova-rpc-1 sova-seed-1 "
+check "older config: fork detection off (ZCASH_REFERENCE_URLS and NU7_ACTIVATION_HEIGHT empty)" \
+  bash -c "grep -qx ZCASH_REFERENCE_URLS= '${TMP}/render-old/sova-seed-1/etc/sova/host.env' && grep -qx NU7_ACTIVATION_HEIGHT= '${TMP}/render-old/sova-seed-1/etc/sova/host.env'"
+CFG="${TMP}/config.env"
+
+# ---- fork detection: zcash_ref_fork, zebrad_nu7, zcash_fork (NU7) ---------------
+# Every host's health env carries the reference sources (the example's two)
+# and NU7_ACTIVATION_HEIGHT (empty until ZIP 259 sets it on 2026-10-05). The
+# URLs are rendered unquoted into files bash sources, so what reaches
+# health.sh must be the exact text, {height} included.
+REFS='https://zcash-testnet-zebrad.gateway.tatum.io,https://api.testnet.cipherscan.app/api/block/{height}'
+check "config: the example names two reference sources" grep -qxF "ZCASH_REFERENCE_URLS=\"${REFS}\"" "${KIT}/config.env.example"
+for h in sova-seed-1 sova-rpc-1 sova-keeper-1 sova-faucet-1; do
+  check "render: ${h} host.env (deploy.sh) has the reference sources" grep -qxF "ZCASH_REFERENCE_URLS=${REFS}" "${TMP}/out/render/${h}/host.env"
+  check "render: ${h} health has the reference sources" grep -qxF "ZCASH_REFERENCE_URLS=${REFS}" "${TMP}/out/render/${h}/etc/sova/host.env"
+  check "render: ${h} health has an empty NU7_ACTIVATION_HEIGHT (not set yet)" grep -qx 'NU7_ACTIVATION_HEIGHT=' "${TMP}/out/render/${h}/etc/sova/host.env"
+done
+check "render: sourcing the health env gives health.sh the URLs verbatim" \
+  test "$(env -i bash -c "source '${TMP}/out/render/sova-rpc-1/etc/sova/host.env' && printf '%s' \"\${ZCASH_REFERENCE_URLS}\"")" == "${REFS}"
+sed 's/^NU7_ACTIVATION_HEIGHT=""$/NU7_ACTIVATION_HEIGHT=4416000/' "${TMP}/config.env" >"${TMP}/nu7.env"
+CFG="${TMP}/nu7.env"
+out="$(cd "${KIT}" && kit ./deploy.sh render --out "${TMP}/render-nu7" 2>&1)"
+check "NU7_ACTIVATION_HEIGHT=4416000: rendered into every host's health env" \
+  test "$(grep -lx NU7_ACTIVATION_HEIGHT=4416000 "${TMP}"/render-nu7/*/etc/sova/host.env | wc -l | tr -d ' ')" == 4
+CFG="${TMP}/fork-bad.env"
+for v in soon 0 -1 4416000x; do
+  sed "s/^NU7_ACTIVATION_HEIGHT=\"\"\$/NU7_ACTIVATION_HEIGHT=${v}/" "${TMP}/config.env" >"${TMP}/fork-bad.env"
+  check "deploy.sh check refuses NU7_ACTIVATION_HEIGHT=${v}" has "NU7_ACTIVATION_HEIGHT must be empty \(not checked\) or a Zcash height" "$(cd "${KIT}" && kit ./deploy.sh check 2>&1)"
+done
+# shellcheck disable=SC2016 # literal $(id): the config must refuse it, not run it
+for v in 'https://a.example/x?h={height}&k=1' 'https://a.example, https://b.example' 'ftp://a.example' 'https://a.example/$(id)'; do
+  grep -v '^ZCASH_REFERENCE_URLS=' "${TMP}/config.env" >"${TMP}/fork-bad.env"
+  printf "ZCASH_REFERENCE_URLS='%s'\n" "${v}" >>"${TMP}/fork-bad.env"
+  check "deploy.sh check refuses ZCASH_REFERENCE_URLS='${v}'" has "ZCASH_REFERENCE_URLS: .* is not a plain http\(s\) URL" "$(cd "${KIT}" && kit ./deploy.sh check 2>&1)"
+done
+sed 's|^ZCASH_REFERENCE_URLS=.*|ZCASH_REFERENCE_URLS="http://127.0.0.1:18232"|' "${TMP}/config.env" >"${TMP}/fork-bad.env"
+out="$(cd "${KIT}" && kit ./deploy.sh check 2>&1)"
+check "one plain-http reference: accepted (config OK)" grep -q '^==> config OK' <<<"${out}"
+check "... warns it is not HTTPS" has "http://127.0.0.1:18232 is not HTTPS" "${out}"
+check "... warns one source is not enough" has "ZCASH_REFERENCE_URLS names one source" "${out}"
+sed 's|^ZCASH_REFERENCE_URLS=.*|ZCASH_REFERENCE_URLS=""|' "${TMP}/config.env" >"${TMP}/fork-bad.env"
+out="$(cd "${KIT}" && kit ./deploy.sh render --out "${TMP}/render-noref" 2>&1)"
+check "ZCASH_REFERENCE_URLS empty: renders empty (check skipped)" grep -qx 'ZCASH_REFERENCE_URLS=' "${TMP}/render-noref/sova-keeper-1/etc/sova/host.env"
 CFG="${TMP}/config.env"
 
 # ---- split alerts: keeper_isolated, rejecting_blocks (2026-09-28 incident) ----
@@ -326,6 +371,82 @@ out="$(cd "${KIT}" && kit ./deploy.sh check 2>&1)"
 check "one network-alert host: an open item, not an error" \
   bash -c "grep -q 'only sova-rpc-1 sends network alerts' <<<\"\$1\" && grep -q '^==> config OK' <<<\"\$1\"" _ "${out}"
 CFG="${TMP}/config.env"
+
+# ---- zebrad rollout kit (docs/ops/nu7-upgrade.md K1 K2 K7 K12) ------------------
+# --zebra-only: one host, one setup-host.sh run with --zebra-only, no pass 1,
+# no relayer copy; the full path is unchanged. keeper-pause/resume and
+# mute/unmute send host/maint.sh over SSH. Rendering: the readiness and mute
+# settings, and the pause condition in the node and keeper units.
+out="$(cd "${KIT}" && kit ./deploy.sh --dry-run --only sova-rpc-1 --zebra-only 2>&1)"
+check "--zebra-only: one setup-host.sh run, with --zebra-only" \
+  test "$(grep -c '^+ ssh ' <<<"${out}")" == 1
+check "... on sova-rpc-1" hasF "+ ssh sova-admin@sova-rpc-1 sudo bash /tmp/sova-infra-kit/setup-host.sh /tmp/sova-infra-kit/host.env --zebra-only" "${out}"
+check "... no pass 1 (--enode-only)" lacks "enode-only|Pass 1" "${out}"
+check "... copies the kit (host/)" hasF "+ rsync host/ + sova-rpc-1.host.env -> sova-admin@sova-rpc-1:/tmp/sova-infra-kit/" "${out}"
+check "... says the mute and the wait" has "on a restart: Telegram muted 15 min, then wait up to 15 min for zebrad to be ready" "${out}"
+out="$(cd "${KIT}" && kit ./deploy.sh --dry-run --only sova-faucet-1 --zebra-only 2>&1)"
+check "--zebra-only on the faucet: no relayer code copied" lacks "checkout-relayer" "${out}"
+out="$(cd "${KIT}" && kit ./deploy.sh --dry-run --only sova-keeper-1 --zebra-only 2>&1)"
+check "--zebra-only on the byo keeper: its address" \
+  hasF "+ ssh sova-admin@sova-keeper-1[byo ${KEEPER_IP}] sudo bash /tmp/sova-infra-kit/setup-host.sh /tmp/sova-infra-kit/host.env --zebra-only" "${out}"
+out="$(cd "${KIT}" && kit ./deploy.sh --dry-run --only sova-rpc-1 2>&1)"
+check "the full path is unchanged: pass 1 on the seed and the host, then pass 2" \
+  test "$(grep '^+ ssh ' <<<"${out}" | sed 's/.*sova-admin@\([^ ]*\) .*setup-host.sh [^ ]* *\(.*\)$/\1 \2/' | tr '\n' '|')" == "sova-seed-1 --enode-only|sova-rpc-1 --enode-only|sova-rpc-1 |"
+check "--zebra-only without --only: refused" has "--zebra-only needs --only <server>" "$(cd "${KIT}" && kit ./deploy.sh --dry-run --zebra-only 2>&1)"
+check "--zebra-only with render: refused" has "--zebra-only is a deploy" "$(cd "${KIT}" && kit ./deploy.sh render --only sova-rpc-1 --zebra-only 2>&1)"
+check "--only <unknown>: refused" has "--only sova-nope: no such server in SERVERS" "$(cd "${KIT}" && kit ./deploy.sh --dry-run --only sova-nope --zebra-only 2>&1)"
+out="$(cd "${KIT}" && kit ./deploy.sh --dry-run keeper-pause --reason "NU7: old-rules chain" 2>&1)"
+check "keeper-pause: host/maint.sh keeper-pause on the keeper, reason quoted" \
+  hasF '+ ssh sova-admin@sova-keeper-1 sudo bash -s -- keeper-pause NU7:\ old-rules\ chain < host/maint.sh' "${out}"
+check "keeper-resume: host/maint.sh keeper-resume on the keeper" \
+  hasF '+ ssh sova-admin@sova-keeper-1 sudo bash -s -- keeper-resume < host/maint.sh' "$(cd "${KIT}" && kit ./deploy.sh --dry-run keeper-resume 2>&1)"
+check "keeper-pause --only a non-keeper: refused" has "sova-rpc-1 is not a keeper host" "$(cd "${KIT}" && kit ./deploy.sh --dry-run keeper-pause --only sova-rpc-1 2>&1)"
+out="$(cd "${KIT}" && kit ./deploy.sh --dry-run mute 20 --only sova-rpc-1 2>&1)"
+check "mute 20 --only sova-rpc-1: that host only" \
+  test "$(grep '^+ ssh' <<<"${out}")" == '+ ssh sova-admin@sova-rpc-1 sudo bash -s -- mute 20 planned\ maintenance < host/maint.sh'
+check "mute 20 (no --only): every host" test "$(cd "${KIT}" && kit ./deploy.sh --dry-run mute 20 2>&1 | grep -c '^+ ssh .* mute 20 ')" == 4
+for v in 0 241 x ""; do
+  check "mute '${v}': refused" has "mute needs 1..240 minutes" "$(cd "${KIT}" && kit ./deploy.sh --dry-run mute ${v:+"${v}"} --only sova-rpc-1 2>&1)"
+done
+check "unmute: host/maint.sh unmute" \
+  hasF '+ ssh sova-admin@sova-rpc-1 sudo bash -s -- unmute < host/maint.sh' "$(cd "${KIT}" && kit ./deploy.sh --dry-run unmute --only sova-rpc-1 2>&1)"
+for h in sova-seed-1 sova-rpc-1 sova-keeper-1 sova-faucet-1; do
+  check "render: ${h} host.env (deploy.sh) has the zebrad restart settings (15 min, 3 blocks, 15 min mute)" \
+    bash -c "grep -qx ZEBRA_READY_TIMEOUT_MIN=15 '${RR}/${h}/host.env' && grep -qx ZEBRA_READY_LAG=3 '${RR}/${h}/host.env' && grep -qx ZEBRA_RESTART_MUTE_MIN=15 '${RR}/${h}/host.env'"
+  check "render: ${h} health env has ZEBRA_IMAGE_DIGEST and the readiness settings (zebra-ready.sh by hand)" \
+    bash -c "grep -qx ZEBRA_IMAGE_DIGEST= '${RR}/${h}/etc/sova/host.env' && grep -qx ZEBRA_READY_TIMEOUT_MIN=15 '${RR}/${h}/etc/sova/host.env' && grep -qx ZEBRA_READY_LAG=3 '${RR}/${h}/etc/sova/host.env'"
+done
+for h in sova-seed-1 sova-rpc-1 sova-keeper-1; do
+  check "render: ${h}'s sova-node.service won't start while the keeper is paused" \
+    grep -qx 'ConditionPathExists=!/etc/sova/.keeper-paused' "${RR}/${h}/etc/systemd/system/sova-node.service"
+done
+check "render: sova-keeper.service won't start while the keeper is paused" \
+  grep -qx 'ConditionPathExists=!/etc/sova/.keeper-paused' "${RR}/sova-keeper-1/etc/systemd/system/sova-keeper.service"
+CFG="${TMP}/zr-bad.env"
+for kv in ZEBRA_READY_TIMEOUT_MIN=abc ZEBRA_READY_TIMEOUT_MIN=300 ZEBRA_READY_LAG=-1 ZEBRA_RESTART_MUTE_MIN=500; do
+  { grep -v "^${kv%%=*}=" "${TMP}/config.env"; echo "${kv}"; } >"${CFG}"
+  check "deploy.sh check refuses ${kv}" has "config: ${kv%%=*} must be" "$(cd "${KIT}" && kit ./deploy.sh check 2>&1)"
+done
+{ grep -v '^ZEBRA_READY_TIMEOUT_MIN=' "${TMP}/config.env"; echo 'ZEBRA_READY_TIMEOUT_MIN=0'; } >"${CFG}"
+out="$(cd "${KIT}" && kit ./deploy.sh check 2>&1)"
+check "ZEBRA_READY_TIMEOUT_MIN=0: accepted with a warning" \
+  bash -c "grep -q 'ZEBRA_READY_TIMEOUT_MIN=0: deploy.sh doesn.t wait' <<<\"\$1\" && grep -q '^==> config OK' <<<\"\$1\"" _ "${out}"
+grep -v '^ZEBRA_READY_\|^ZEBRA_RESTART_MUTE_MIN=' "${TMP}/config.env" >"${CFG}"
+out="$(cd "${KIT}" && kit ./deploy.sh render --out "${TMP}/render-zr-old" 2>&1)"
+check "an older config without them: renders the defaults" \
+  bash -c "grep -qx ZEBRA_READY_TIMEOUT_MIN=15 '${TMP}/render-zr-old/sova-rpc-1/host.env' && grep -qx ZEBRA_RESTART_MUTE_MIN=15 '${TMP}/render-zr-old/sova-rpc-1/host.env'"
+CFG="${TMP}/config.env"
+SH="${KIT}/host/setup-host.sh"
+zo="$(awk '/^if \[\[ "\$\{2:-\}" == --zebra-only \]\]; then$/ { on = 1 } on { print } on && /^  exit 0$/ { exit }' "${SH}")"
+check "setup-host.sh --zebra-only: the health env, then zebrad" \
+  bash -c "awk '/^  setup_health\$/ { h = NR } /^  setup_zebrad\$/ { z = NR } END { exit !(h && z > h) }' <<<\"\$1\"" _ "${zo}"
+check "setup-host.sh --zebra-only: nothing else (no ufw, swap, binaries, node, faucet, relayer, keeper, cloudflared)" \
+  lacks "setup_ufw|setup_swap|install_binaries|setup_node|node_key_and_enode|setup_faucet|setup_checkout_relayer|setup_keeper|setup_cloudflared|check_no_keys" "${zo}"
+check "setup-host.sh: setup_zebrad mutes (maint.sh), restarts, then waits (zebra-ready.sh)" \
+  bash -c "awk '/maint.sh\" mute/ { m = NR } /systemctl restart zebrad/ { r = NR } /zebra-ready.sh\" wait/ { w = NR } END { exit !(m && r > m && w > r) }' '${SH}'"
+# shellcheck disable=SC2016 # the literal source line
+check "setup-host.sh: installs maint.sh and zebra-ready.sh next to health.sh" \
+  grep -qF 'install -m 0755 "${HERE}/health.sh" "${HERE}/maint.sh" "${HERE}/zebra-ready.sh" /usr/local/lib/sova-infra/' "${SH}"
 
 # ---- bootnodes.sh: the genesis hash comes from the nodes, never a constant ----
 # Stand in for what deploy.sh records from each node host's

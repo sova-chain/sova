@@ -96,3 +96,26 @@ base64 = "0.22"
 
 [dev-dependencies]
 tempfile = "3"
+
+# -- NU7 (docs/design/nu7-readiness.md, rows B1/B2, §4.3). --
+# Zcash NU7 (consensus branch ID 0x77190AD9, ZIP 259) activates on testnet
+# 2026-10-06. No `zcash_protocol` release knows it yet: 0.10.6 has NU7 only
+# behind `cfg(zcash_unstable = "nu7")`, with the placeholder ID 0xffffffff,
+# so a v5 tx signed for NU7 with it would carry the wrong ZIP 244 sighash.
+# librustzcash `main` has the real ID outside any cfg (928592188, merged in
+# cd5eae71a). We take `zcash_protocol` and `zcash_primitives` from that one
+# commit -- the same code Zebra's NU7 branch (`nu7-zips`, PR #11484) builds
+# with (its pin 517047de1 differs from cd5eae71a only in a CHANGELOG) -- and,
+# exactly as Zebra does, keep the *released* `zcash_transparent` 0.10.0 and
+# `equihash` 0.3.0 rather than their unreleased `main` versions: the
+# transparent bundle builder and signer we ship stay byte-for-byte what they
+# were. Both crates on `main` still carry the versions we already require
+# (0.10.6 / 0.30.1), so no manifest's version requirement changes.
+# Drop both tables when a release with `BranchId::Nu7 = 0x77190ad9` lands.
+[patch.crates-io]
+zcash_protocol = { git = "https://github.com/zcash/librustzcash", rev = "cd5eae71a000d426a63906be740952b5f232a558" }
+zcash_primitives = { git = "https://github.com/zcash/librustzcash", rev = "cd5eae71a000d426a63906be740952b5f232a558" }
+
+[patch."https://github.com/zcash/librustzcash"]
+equihash = { version = "=0.3.0" }
+zcash_transparent = { version = "=0.10.0" }

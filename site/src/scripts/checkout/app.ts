@@ -58,6 +58,42 @@ async function reservation(id: bigint): Promise<Resv> {
   };
 }
 const anchorHeight = async () => num(words(await call(ZCASH, '0x' + SEL.anchor))[0]);
+/** A Zcash header Sova has anchored: status 0 (OK) and its miner-set time. */
+async function blockAt(h: bigint) {
+  const w = words(await call(ZCASH, calldata(SEL.blockAt, u256(h))));
+  return { status: Number(num(w[0])), time: Number(num(w[2])) };
+}
+
+// Seconds per Zcash block, for the countdown to the quote's deadline (a
+// Zcash height). NU7 (ZIP 218) takes Zcash from 75 s to 25 s blocks, on
+// testnet on 2026-10-06 and mainnet on 2026-11-05, so it is measured: the
+// mean spacing of the last PACE_BLOCKS anchored blocks (blockAt times). The
+// mean, not the median: testnet mines in bursts of 3-7 s blocks between
+// long gaps, and k blocks take about k x the mean. Kept within 3x of the
+// nominal spacing (75 s before NU7's date, 25 s from it), which also holds
+// on the day itself, when the date and the activation height disagree for
+// a few hours; the nominal alone when the segment is too young or a read
+// fails. Measured once per anchor.
+const PACE_BLOCKS = 100n;
+const NU7_DATE = { test: Date.UTC(2026, 9, 6), main: Date.UTC(2026, 10, 5) };
+const pace = { at: -1n, secs: 75 };
+async function blockSecs(anchor: bigint): Promise<number> {
+  if (pace.at === anchor) return pace.secs;
+  const nominal = Date.now() >= NU7_DATE[cfg.net === 'main' ? 'main' : 'test'] ? 25 : 75;
+  let secs = nominal;
+  if (anchor > PACE_BLOCKS) {
+    try {
+      const [a, b] = await Promise.all([blockAt(anchor), blockAt(anchor - PACE_BLOCKS)]);
+      const mean = (a.time - b.time) / Number(PACE_BLOCKS);
+      if (a.status === 0 && b.status === 0 && mean > 0) secs = Math.min(nominal * 3, Math.max(nominal / 3, mean));
+    } catch {
+      // a node without blockAt, or a hiccup: the nominal spacing
+    }
+  }
+  pace.at = anchor;
+  pace.secs = secs;
+  return secs;
+}
 
 async function txInfo(txid: string) {
   const w = words(await call(ZCASH, calldata(SEL.txInfo, b32(txid))));
@@ -222,7 +258,7 @@ async function step() {
   const anchor = await anchorHeight();
   const dl = r.reservedAt + r.window;
   $('dl').textContent = `${dl}`;
-  $('dl-min').textContent = anchor < dl ? `~${Math.ceil(Number(dl - anchor) * 75 / 60)} min left` : 'closed';
+  $('dl-min').textContent = anchor < dl ? `~${Math.ceil((Number(dl - anchor) * (await blockSecs(anchor))) / 60)} min left` : 'closed';
 
   // A relayer that watches the seller's t-address may have found it for us.
   if (!S.txid && cfg.relayer) {

@@ -15,7 +15,7 @@
 import Direction from '../../layouts/Direction.astro';
 import DirSwitch from '../../components/DirSwitch.astro';
 import TestnetStats from '../../components/TestnetStats.astro';
-import { WORDMARK_PATHS, REWARD_SOVA, doors, readLinks, footerLinks } from '../../data/sova';
+import { WORDMARK_PATHS, FLAT_REWARD_SOVA, doors, readLinks, footerLinks } from '../../data/sova';
 
 const LOOP = 16;
 const HIDE = 15.2;
@@ -34,7 +34,7 @@ const lines: L[] = [
   { k: 'out', t: 'epoch 1: height=103 burn=100000zat …', at: 6.0 },
   { k: 'note', t: '# to 76a914 00…00 88ac, unspendable', at: 6.7 },
   { k: 'log', t: 'INFO sova epoch trigger height=103 settled=true', at: 7.7 },
-  { k: 'mint', t: `+${REWARD_SOVA} SOVA to 0x0095…3523`, at: 8.7 },
+  { k: 'mint', t: `+${FLAT_REWARD_SOVA} SOVA to 0x0095…3523`, at: 8.7 },
 ];
 const FOUND_AT = 5.6;
 const CURSOR_AT = 9.3;
@@ -104,7 +104,7 @@ const css = [
         {cols.map((c, i) => (
           <div class="col" style={`--i:${i}`}>
             <span class={`b zb${c.burn ? ' burn' : ''}`} style={`animation-name:bz${i}`}>{c.h}</span>
-            <span class={`b sb${c.burn ? ' mint' : ''}`} style={`animation-name:bs${i}`}>{c.burn ? `+${REWARD_SOVA}` : '+0'}</span>
+            <span class={`b sb${c.burn ? ' mint' : ''}`} style={`animation-name:bs${i}`}>{c.burn ? `+${FLAT_REWARD_SOVA}` : '+0'}</span>
           </div>
         ))}
       </div>

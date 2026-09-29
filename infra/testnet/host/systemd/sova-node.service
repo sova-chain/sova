@@ -13,6 +13,10 @@ After=network-online.target zebrad.service
 # Refuse to start without a pinned epoch base (setup-host.sh writes this
 # marker only once SOVA_EPOCH_BASE is set).
 ConditionPathExists=/etc/sova/epoch-base-pinned
+# Nor while the keeper is paused (host/maint.sh keeper-pause; the marker is
+# only ever written on the keeper host): not by a deploy, a reboot or a
+# hand-typed start. keeper-resume removes it.
+ConditionPathExists=!/etc/sova/.keeper-paused
 
 [Service]
 User=sova

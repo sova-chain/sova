@@ -3,7 +3,7 @@
 // every page has exactly one source:
 //
 //   - Repo markdown (the join guide, its reference, the box README, the
-//     miner README, the SIPs) is copied with frontmatter added, its first
+//     miner README, the SIPs, the future-SIP ideas) is copied with frontmatter added, its first
 //     H1 used as the title, and repo-relative links rewritten to docs URLs
 //     (or to GitHub for files the docs site doesn't render).
 //   - Pages written for the docs site live in docs-site/pages/ and get the
@@ -52,6 +52,14 @@ const REPO_PAGES = [
     slug: 'reference/sova-miner',
     title: 'sova-miner CLI',
     description: 'Budget-capped burn mining: init, mine, report and export-evm-key, funding, budgets, broadcast and chain resets.',
+  },
+  {
+    src: 'docs/ideas/future-sips.md',
+    slug: 'specs/future',
+    title: 'What could come next',
+    description: 'Ideas that could become SIPs: following NU7, wallet-native burns, burn-weight signaling, reading shielded-asset supply, and more.',
+    // Listed under Specs, after the SIPs (which use their numbers as order).
+    sidebar: { label: 'What could come next', order: 1000 },
   },
 ];
 
@@ -254,7 +262,7 @@ fs.mkdirSync(OUT, { recursive: true });
 
 for (const p of REPO_PAGES) {
   const [h1, body] = takeTitle(read(p.src));
-  const fm = frontmatter({ title: p.title ?? h1, description: p.description, editUrl: editUrl(p.src) });
+  const fm = frontmatter({ title: p.title ?? h1, description: p.description, sidebar: p.sidebar, editUrl: editUrl(p.src) });
   write(p.slug, fm + rewriteLinks(body, p.src));
 }
 

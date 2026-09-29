@@ -22,12 +22,15 @@ use crate::PendingEpoch;
 
 use crate::SovaEpochAttribute;
 
-/// The flat per-epoch reward regtest and the box run on: SIP-3's base
-/// reward (6,250 SOVA — the numbers are locked, SIP-3 is Accepted).
-/// The name keeps its historical `DRAFT_` prefix only to avoid churning
-/// every call site; the real schedule (slow start + halving eras) lives
-/// in [`consensus::schedule`] and is selected per network (C8).
-pub const DRAFT_EPOCH_REWARD_GWEI: u128 = consensus::schedule::BASE_EPOCH_REWARD_GWEI;
+/// The flat per-epoch reward regtest, the box and the public testnet run
+/// on: 6,250 SOVA, SIP-3 revision 1's base reward. Deliberately a literal,
+/// not an alias of [`consensus::schedule::BASE_EPOCH_REWARD_GWEI`]: SIP-3
+/// revision 2 (ZIP 218, 25 s epochs) divides the mainnet base by 3, and
+/// the live testnet's flat reward must not change with it (a node paying a
+/// different reward than its peers rejects their blocks). The name keeps
+/// its historical `DRAFT_` prefix only to avoid churning every call site;
+/// the real schedule lives in [`consensus::schedule`] (C8).
+pub const DRAFT_EPOCH_REWARD_GWEI: u128 = 6_250 * 1_000_000_000;
 
 /// One gwei in wei, for settlement wire amounts.
 const GWEI_IN_WEI: u128 = 1_000_000_000;
@@ -201,7 +204,7 @@ pub struct SealerCore {
 }
 
 /// Epochs kept below the head (see [`SealerCore::process`]): the same reach
-/// as the stale-tip scan behind the head, beyond Zebra's 99-block reorg limit.
+/// as the stale-tip scan behind the head (300, the `finalized` depth).
 const SETTLED_KEEP: u64 = crate::expectations::STALE_SCAN_MAX;
 
 /// An epoch awaiting in-order production.
@@ -1151,7 +1154,7 @@ mod tests {
         // And the halving boundary halves: era 1's first epoch.
         assert_eq!(
             Schedule::Sip3.reward_gwei(consensus::schedule::ERA_EPOCHS),
-            DRAFT_EPOCH_REWARD_GWEI / 2
+            consensus::schedule::BASE_EPOCH_REWARD_GWEI / 2
         );
     }
 

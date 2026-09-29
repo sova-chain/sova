@@ -133,8 +133,10 @@ pub struct ExpectedSettlements {
 }
 
 /// How far [`ExpectedSettlements::effective_head`] walks down a stale tip
-/// when no rollback is pending: past Zebra's 99-block reorg limit.
-pub const STALE_SCAN_MAX: u64 = 100;
+/// when no rollback is pending: the same depth as `finalized`
+/// ([`crate::candidates::FINALIZED_DEPTH`], 300 blocks, ~2 h at NU7's 25 s
+/// Zcash blocks; Rob, 2026-09-29). Zebra itself rolls back up to 1,000.
+pub const STALE_SCAN_MAX: u64 = 300;
 
 impl ExpectedSettlements {
     /// Record the requirement for a height and advance the scanned
@@ -885,12 +887,12 @@ mod tests {
         assert_eq!(e.effective_head(12, |h| Some([h as u8; 32])), 12);
         // Nothing matches: the walk stops after STALE_SCAN_MAX blocks.
         let big = ExpectedSettlements::default();
-        for h in 1..=300 {
+        for h in 1..=600 {
             big.insert(h, rb_rec(1));
         }
         assert_eq!(
-            big.effective_head(300, |_| Some([0xee; 32])),
-            300 - STALE_SCAN_MAX
+            big.effective_head(600, |_| Some([0xee; 32])),
+            600 - STALE_SCAN_MAX
         );
     }
 

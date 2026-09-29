@@ -296,7 +296,55 @@ validate_health_config() {
   if ! [[ "${SWAP_GB}" =~ ^[0-9]+$ ]] || ((SWAP_GB > 64)); then
     die "config: SWAP_GB must be a whole number of GB from 0 (no swapfile) to 64"
   fi
+  validate_fork_detection
   validate_network_alert_hosts
+  validate_zebra_restart
+}
+
+# zebrad restarts (config.env.example, "Release"; host/zebra-ready.sh,
+# host/maint.sh). Defaults keep an older config.env working.
+#   ZEBRA_READY_TIMEOUT_MIN  how long setup-host.sh waits for a restarted
+#                            zebrad to be ready (0 = don't wait)
+#   ZEBRA_READY_LAG          blocks it may still be behind (before the
+#                            restart / the references) and count as caught up
+#   ZEBRA_RESTART_MUTE_MIN   Telegram mute on that host around the restart
+#                            (0 = none)
+validate_zebra_restart() {
+  ZEBRA_READY_TIMEOUT_MIN="${ZEBRA_READY_TIMEOUT_MIN:-15}"
+  ZEBRA_READY_LAG="${ZEBRA_READY_LAG:-3}"
+  ZEBRA_RESTART_MUTE_MIN="${ZEBRA_RESTART_MUTE_MIN:-15}"
+  if ! [[ "${ZEBRA_READY_TIMEOUT_MIN}" =~ ^[0-9]+$ ]] || ((ZEBRA_READY_TIMEOUT_MIN > 240)); then
+    die "config: ZEBRA_READY_TIMEOUT_MIN must be 0 (don't wait) to 240 minutes"
+  fi
+  [[ "${ZEBRA_READY_LAG}" =~ ^[0-9]+$ ]] || die "config: ZEBRA_READY_LAG must be a number of blocks (0 or more)"
+  if ! [[ "${ZEBRA_RESTART_MUTE_MIN}" =~ ^[0-9]+$ ]] || ((ZEBRA_RESTART_MUTE_MIN > 240)); then
+    die "config: ZEBRA_RESTART_MUTE_MIN must be 0 (no mute) to 240 minutes"
+  fi
+  [[ "${ZEBRA_READY_TIMEOUT_MIN}" != 0 ]] ||
+    cfg_warn "ZEBRA_READY_TIMEOUT_MIN=0: deploy.sh doesn't wait for a restarted zebrad (a rollout won't stop on a bad one)"
+  return 0
+}
+
+# Fork detection (config.env.example, "Health alerts"; health.sh
+# check_zcash_reference, check_nu7). Both empty by default, so an older
+# config.env renders them empty and the checks are skipped. The URLs are
+# rendered unquoted into host.env files that bash sources: only URL
+# characters with no meaning to the shell (no &, ;, quotes, $, spaces).
+validate_fork_detection() {
+  local u urls=() n=0
+  ZCASH_REFERENCE_URLS="${ZCASH_REFERENCE_URLS:-}"
+  NU7_ACTIVATION_HEIGHT="${NU7_ACTIVATION_HEIGHT:-}"
+  [[ -n "${ZCASH_REFERENCE_URLS}" ]] && IFS=, read -ra urls <<<"${ZCASH_REFERENCE_URLS}"
+  for u in ${urls[@]+"${urls[@]}"}; do
+    [[ "${u}" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~/?=%+{}-]*)?$ ]] ||
+      die "config: ZCASH_REFERENCE_URLS: '${u}' is not a plain http(s) URL (comma-separated; letters, digits and . _ ~ / ? = % + - {height} only)"
+    [[ "${u}" == https://* ]] || cfg_warn "ZCASH_REFERENCE_URLS: ${u} is not HTTPS: its answers can be forged on the way"
+    n=$((n + 1))
+  done
+  ((n != 1)) || cfg_warn "ZCASH_REFERENCE_URLS names one source: if it is the one on a fork, every host alerts; name two"
+  [[ -z "${NU7_ACTIVATION_HEIGHT}" || "${NU7_ACTIVATION_HEIGHT}" =~ ^[1-9][0-9]*$ ]] ||
+    die "config: NU7_ACTIVATION_HEIGHT must be empty (not checked) or a Zcash height, got '${NU7_ACTIVATION_HEIGHT}'"
+  return 0
 }
 
 # The hosts that send network-wide alerts (health.sh net_alert: stuck head,

@@ -42,7 +42,8 @@ integer zatoshis.
   node that can't answer yet holds the block and retries.
 - **Confirmations** are counted from the committed Zcash block.
   `ZcashLib` asks for a minimum depth on every check: 3 on testnet, 10 on
-  mainnet (about 12.5 minutes), more for large amounts.
+  mainnet (about 4 minutes at NU7's 25-second blocks), more for large
+  amounts.
 - **Reorgs.** A Zcash reorg deeper than a payment reorgs Sova with it,
   identically on every node. Your minimum depth protects whatever happens
   off Sova.

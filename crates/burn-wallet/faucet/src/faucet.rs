@@ -14,9 +14,10 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use burn_wallet::branch;
 use burn_wallet::fee::{P2PKH_STANDARD_OUTPUT_SIZE, P2SH_OUTPUT_SIZE, transparent_fee_zat};
 use burn_wallet::rpc::AddressUtxo;
-use burn_wallet::tx::{DEFAULT_TX_EXPIRY_DELTA, build_transfer_transaction};
+use burn_wallet::tx::build_transfer_transaction;
 use burn_wallet::utxo::{COINBASE_MATURITY, decode_rpc_hash, encode_rpc_hash};
 use burn_wallet::{Keypair, Network, RpcError, TransferTxRequest, Utxo};
 use serde::Serialize;
@@ -476,15 +477,26 @@ impl<N: Node> Faucet<N> {
                 value_zat: u.satoshis,
             });
         }
-        let target_height = u32::try_from(view.tip + 1).unwrap_or(u32::MAX);
+        // Signed for the consensus branch zebrad reports for its next
+        // block (so drips follow NU7 as soon as zebrad does), with the
+        // height from the same snapshot; see `burn_wallet::branch`.
+        let next = self.node.next_block().map_err(DripError::Node)?;
+        let target_height = u32::try_from(view.tip + 1)
+            .unwrap_or(u32::MAX)
+            .max(next.next_height());
         let built = build_transfer_transaction(&TransferTxRequest {
             network: self.network,
             target_height,
+            consensus_branch_id: next.next_block_branch_id,
+            expiry_delta: self.cfg.expiry_delta,
             utxos,
             change_and_signing_key: self.keypair,
             recipient: recipient.address,
             amount_zat: amount,
             fee_zat: selection.fee_zat,
+        })
+        .inspect_err(|e| {
+            eprintln!("drip to {} not built: {e}", recipient.canonical);
         })?;
         let txid = encode_rpc_hash(built.txid);
 
@@ -534,7 +546,7 @@ impl<N: Node> Faucet<N> {
                     vout: u.output_index,
                 })
                 .collect(),
-            expiry_height: u64::from(target_height) + u64::from(DEFAULT_TX_EXPIRY_DELTA),
+            expiry_height: u64::from(built.expiry_height),
             sent_at: now,
         };
         self.state.record(ip_key, drip, now);
@@ -547,10 +559,12 @@ impl<N: Node> Faucet<N> {
         match broadcast {
             Ok(()) => {
                 println!(
-                    "drip {txid}: {amount} zat to {} (fee {} zat, {} input(s))",
+                    "drip {txid}: {amount} zat to {} (fee {} zat, {} input(s), branch {}, expiry height {})",
                     recipient.canonical,
                     selection.fee_zat,
-                    selection.utxos.len()
+                    selection.utxos.len(),
+                    branch::describe(built.branch_id),
+                    built.expiry_height
                 );
                 Ok(DripReceipt {
                     txid,
@@ -570,8 +584,10 @@ impl<N: Node> Faucet<N> {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
     use std::collections::{BTreeMap, BTreeSet};
+
+    use burn_wallet::NextBlockConsensus;
 
     use zcash_primitives::transaction::Transaction;
     use zcash_protocol::consensus::{BlockHeight, BranchId};
@@ -597,6 +613,9 @@ mod tests {
         /// Answer `reject_with` but admit the tx anyway (zebrad's
         /// "channel closed" case).
         admit_despite_error: bool,
+        /// The consensus branch ID `next_block` reports; `None`: NU5, what
+        /// `box/regtest`'s zebrad reports.
+        next_branch: Cell<Option<u32>>,
     }
 
     impl FakeNode {
@@ -642,6 +661,14 @@ mod tests {
         }
         fn tip_height(&self) -> Result<u64, RpcError> {
             Ok(*self.tip.borrow())
+        }
+        fn next_block(&self) -> Result<NextBlockConsensus, RpcError> {
+            let branch = self.next_branch.get().unwrap_or(u32::from(BranchId::Nu5));
+            Ok(NextBlockConsensus {
+                tip_height: *self.tip.borrow(),
+                chain_tip_branch_id: branch,
+                next_block_branch_id: branch,
+            })
         }
         fn address_utxos(&self, _address: &str) -> Result<Vec<AddressUtxo>, RpcError> {
             Ok(self.utxos.borrow().clone())
@@ -713,6 +740,10 @@ ip_cooldown_secs = 600
     fn testnet_faucet(mut node: FakeNode, dir: &std::path::Path) -> Faucet<FakeNode> {
         node.genesis = TESTNET_GENESIS.into();
         *node.tip.borrow_mut() = TESTNET_TIP;
+        node.next_branch.set(Some(u32::from(BranchId::for_height(
+            &Network::Test,
+            BlockHeight::from_u32(u32::try_from(TESTNET_TIP + 1).unwrap()),
+        ))));
         Faucet::start(config_for("test", dir, ""), Keypair::generate(), node, NOON).unwrap()
     }
 
@@ -840,6 +871,96 @@ ip_cooldown_secs = 600
             serde_json::from_slice(&std::fs::read(dir.path().join("state.json")).unwrap()).unwrap();
         assert_eq!(saved["spent_today_zat"], 10_010_000);
         assert_eq!(f.state.pending.len(), 1);
+    }
+
+    // --- NU7: the branch comes from zebrad (docs/design/nu7-readiness.md B1/B2) ---
+
+    /// zebrad's next block is NU7: the drip is signed for `77190ad9` and
+    /// recorded with a 120-block expiry (ZIP 218).
+    #[test]
+    fn nu7_drip_is_signed_for_nu7_with_expiry_120() {
+        let dir = tempfile::tempdir().unwrap();
+        let node = FakeNode::regtest();
+        node.fund(1, 500_000_000, 50);
+        node.next_branch.set(Some(0x7719_0ad9));
+        let mut f = faucet(node, dir.path());
+        f.drip(&user(), "1.2.3.4", NOON).unwrap();
+        let raw = f.node.sent.borrow()[0].clone();
+        assert_eq!(
+            u32::from_le_bytes(raw[8..12].try_into().unwrap()),
+            0x7719_0ad9
+        );
+        let tx = Transaction::read(raw.as_slice(), BranchId::Nu7).unwrap();
+        assert_eq!(tx.consensus_branch_id(), BranchId::Nu7);
+        assert_eq!(u32::from(tx.expiry_height()), 201 + 120);
+        assert_eq!(f.state.pending[0].expiry_height, 201 + 120);
+    }
+
+    /// Before NU7: the branch zebrad reports (NU5 on regtest), 40 blocks.
+    #[test]
+    fn pre_nu7_drip_keeps_expiry_40() {
+        let dir = tempfile::tempdir().unwrap();
+        let node = FakeNode::regtest();
+        node.fund(1, 500_000_000, 50);
+        let mut f = faucet(node, dir.path());
+        f.drip(&user(), "1.2.3.4", NOON).unwrap();
+        let raw = f.node.sent.borrow()[0].clone();
+        assert_eq!(
+            u32::from_le_bytes(raw[8..12].try_into().unwrap()),
+            0xc2d6_d0b4
+        );
+        assert_eq!(f.state.pending[0].expiry_height, 201 + 40);
+    }
+
+    /// The refusal: a branch this build doesn't know means no drip -- none
+    /// signed, sent, or recorded against the requester's cooldowns.
+    #[test]
+    fn unknown_branch_refuses_the_drip() {
+        let dir = tempfile::tempdir().unwrap();
+        let node = FakeNode::regtest();
+        node.fund(1, 500_000_000, 50);
+        node.next_branch.set(Some(0xffff_ffff));
+        let mut f = faucet(node, dir.path());
+        let err = f.drip(&user(), "1.2.3.4", NOON).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                DripError::Build(burn_wallet::BurnTxError::Branch(
+                    burn_wallet::BranchError::Unknown { .. }
+                ))
+            ),
+            "{err:?}"
+        );
+        assert!(f.node.sent.borrow().is_empty());
+        assert!(f.state.pending.is_empty());
+        // The same requester can try again once zebrad/the faucet agree.
+        f.node.next_branch.set(None);
+        f.drip(&user(), "1.2.3.4", NOON + 1).unwrap();
+    }
+
+    /// `expiry_delta` in the config overrides the branch's default, and
+    /// must be at least 4.
+    #[test]
+    fn configured_expiry_delta() {
+        let dir = tempfile::tempdir().unwrap();
+        let node = FakeNode::regtest();
+        node.fund(1, 500_000_000, 50);
+        node.next_branch.set(Some(0x7719_0ad9));
+        let mut f = Faucet::start(
+            config(dir.path(), "expiry_delta = 60"),
+            Keypair::generate(),
+            node,
+            NOON,
+        )
+        .unwrap();
+        f.drip(&user(), "1.2.3.4", NOON).unwrap();
+        assert_eq!(f.state.pending[0].expiry_height, 201 + 60);
+        assert!(matches!(
+            FaucetConfig::parse(
+                "network = \"regtest\"\nzebrad_rpc = \"x\"\nkeystore = \"k\"\nstate_file = \"s\"\nexpiry_delta = 3\n"
+            ),
+            Err(crate::config::ConfigError::Invalid(m)) if m.contains("expiry_delta")
+        ));
     }
 
     #[test]

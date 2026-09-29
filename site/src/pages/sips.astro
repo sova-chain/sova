@@ -2,8 +2,9 @@
 // /sips: the Sova Improvement Proposals, with status and one line each
 // (data/sova.ts `sips`, from sips/*.md; number 5 is unused), how a SIP moves
 // (CONTRIBUTING.md, the status lines of sips/sip-1.md and sip-3.md), and how
-// to propose one. Each title links to its text in the public repository.
-// Sources: site/README.md.
+// to propose one, and what could come next (the lead ideas of
+// docs/ideas/future-sips.md, linking the docs page and Discussions). Each
+// title links to its text in the public repository. Sources: site/README.md.
 import Site from '../layouts/Site.astro';
 import Tag from '../components/Tag.astro';
 import { sips, repo } from '../data/sova';
@@ -15,10 +16,20 @@ const flow = [
   { k: 'frozen', t: 'Final. Changing a rule takes a new SIP.' },
   { k: 'withdrawn', t: 'Taken out of the protocol; the number is not reused.' },
 ];
+
+// What could come next: the four lead ideas of docs/ideas/future-sips.md,
+// one line each. None is a rule yet. The full list is the docs page.
+const FUTURE_URL = 'https://docs.sova.io/specs/future/';
+const next = [
+  { t: 'Follow NU7 (ZIP 218)', s: 'Zcash moves to 25-second blocks. The reward per epoch divides by 3, so daily issuance and four-year eras hold. Now SIP-3 revision 2, accepted.' },
+  { t: 'Wallet-native burns', s: 'Mine from any Zcash wallet by paying an unspendable address.' },
+  { t: 'Burn-weight signaling', s: 'Changes switch on by the ZEC miners destroy, BIP9-style.' },
+  { t: 'Read shielded-asset supply', s: "Contracts read each Zcash shielded asset's supply. Transfers stay shielded." },
+];
 ---
 <Site
   title="SIPs: Sova Improvement Proposals"
-  description="The Sova Improvement Proposals: burn format, epochs and settlement, emission, the Zcash state precompile, sealer signatures, Zcash pool state and events, anchored burns. Status and one line each."
+  description="The Sova Improvement Proposals: burn format, epochs and settlement, emission, the Zcash state precompile, sealer signatures, Zcash pool state and events, anchored burns. Status and one line each, and what could come next."
   current="/sips"
   cmd="ls sips/"
   status="pre-release · the SIP texts are in the repository"
@@ -46,6 +57,13 @@ const flow = [
   <p>Start with the problem, in the SIPs category of Discussions. When the idea holds up, open the SIP as a pull request to <code>sips/</code>, before the code that implements it. Protocol changes, from consensus rules to the burn format, go through a SIP.</p>
   <p><a href={repo.sipIdeas}>SIPs in Discussions</a> · <a href="/build#contribute">How to contribute</a></p>
 
+  <h2>what could come next</h2>
+  <p>Ideas that could become SIPs. None is a rule yet.</p>
+  <ol class="ideas">
+    {next.map((n) => <li><span class="st st-idea">[idea]</span><span><b>{n.t}.</b> {n.s}</span></li>)}
+  </ol>
+  <p><a href={FUTURE_URL}>All ideas</a> · <a href={repo.sipIdeas}>Discuss</a></p>
+
   <p class="next"><a href="/build">Build</a><a href="/paper">The paper</a><a href="/node">Run a node</a></p>
 </Site>
 
@@ -64,8 +82,11 @@ const flow = [
   .flow { list-style: none; padding: 0; margin: 0 0 12px; }
   .flow li { display: grid; grid-template-columns: 12ch 1fr; gap: 10px; margin: 0 0 8px; max-width: none; }
   .st-idea { color: var(--g2); }
+  .ideas { list-style: none; padding: 0; margin: 0 0 12px; }
+  .ideas li { display: grid; grid-template-columns: 8ch 1fr; gap: 10px; margin: 0 0 8px; max-width: none; }
+  .ideas b { color: var(--cream); }
   @media (max-width: 600px) {
-    .flow li { grid-template-columns: 1fr; gap: 0; margin-bottom: 12px; }
+    .flow li, .ideas li { grid-template-columns: 1fr; gap: 0; margin-bottom: 12px; }
     .num { min-width: 0; margin-right: 4px; }
   }
 </style>

@@ -92,7 +92,8 @@ if restarts don't help.
 
 **Syncing.** On Linux, the image runs zebrad as uid 10001, hence 1c's
 `chown`. The project's own hosts alert when zebrad falls more than 20
-blocks behind. Zcash testnet makes a block about every 75 seconds.
+blocks behind. Zcash testnet makes a block about every 75 seconds, and
+about every 25 seconds from NU7 on 6 October 2026.
 
 ## The binaries
 
@@ -512,7 +513,7 @@ your `node.log` lines, or ask in `t.me/sovazec`.
 - **Nothing here is final.** Sova blocks settle on Zcash testnet, and
   Zcash testnet blocks are cheap to mine, so a reorg there is cheap too;
   when one happens, the Sova blocks built on the replaced Zcash blocks
-  are rebuilt. The RPC's `safe` (3 blocks) and `finalized` (100 blocks)
+  are rebuilt. The RPC's `safe` (3 blocks) and `finalized` (300 blocks)
   labels are conveniences for tools, not guarantees. The `minConf` of 3
   that the testnet contract examples use (`ZcashLib`, the Ashwings ZEC
   checkout) is sized for demos, not for value.

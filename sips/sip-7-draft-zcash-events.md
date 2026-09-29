@@ -144,8 +144,9 @@ So every value is readable at any `h` in `[B, E_N]` under SIP-4's horizon
 rule, with the same answer on every honest node.
 
 **Monotonic totals make windows cheap.** "How much did the shielded pool
-grow in the last day?" is `total(E_N) − total(E_N − 1152)`: two O(1)
-reads, not a loop over 1,152 deltas. (A day is 1,152 blocks at 75 s.)
+grow in the last day?" is `total(E_N) − total(E_N − 3456)`: two O(1)
+reads, not a loop over 3,456 deltas. (A day is 3,456 blocks at NU7's
+25 s; it was 1,152 at 75 s.)
 Tree sizes do the same for note counts.
 
 ### 2. Precompile v1.1 queries (`0x…5A00`)
@@ -280,7 +281,7 @@ EIP-4788 / EIP-2935 pattern.
 - **One Zcash block per Sova block.** Sova block `N` anchors exactly
   `E_N`, and `E_{N+1} = E_N + 1`. The record never skips or batches.
 - **Storage.** A ring buffer of the last **8,191** anchored blocks (about
-  7.1 days at 75 s), keyed `h mod 8191`, 4 slots each: hash;
+  2.4 days at NU7's 25 s; 7.1 days at 75 s), keyed `h mod 8191`, 4 slots each: hash;
   height|time|txCount|shieldedTxCount; transparent|Sprout|Sapling|Orchard;
   lockbox|Ironwood|packed action counts. There is also a `latest` slot.
   Deltas are differences of adjacent entries. State growth is bounded

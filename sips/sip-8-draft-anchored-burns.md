@@ -6,7 +6,7 @@
   The other decisions of §11 take their recommended defaults. Not yet
   implemented. Until it activates, fork choice keeps the bounded branch
   rule (at most 3 blocks replaced) and nodes report `safe` at 3 blocks and
-  `finalized` at 100 (Rob, 2026-09-23: 10 was unsafe — reth refuses a head below finalized, and Zcash can reorg up to 99 blocks); once votes count, depth follows
+  `finalized` at 300 (Rob, 2026-09-29: about two hours at NU7's 25 s blocks; it was 100 from 2026-09-23, when 10 was unsafe — reth refuses a head below finalized, and Zcash can reorg up to 99 blocks); once votes count, depth follows
   §2.4 and the confirmation margin of §2.6. The paper keeps SIP-8 as named
   future work until it is built (§11 item 14 applies then).
 - Numbering: **SIP-8.** SIP-5 is unused, SIP-6 is
@@ -600,7 +600,8 @@ The burn that the miner broadcasts for epoch `E_{N+1}` can reference:
   `E_{N+1}` is found while it waits, so the burn lands in `E_{N+2}`. It
   is not lost, just one epoch later (and its vote is then one behind).
   With exponential 75-second blocks, the chance is `1 − e^{−t/75}`: 2.6%
-  for a 2-second wait, 6.4% for 5 s, 12.5% for 10 s, 18% for 15 s. A
+  for a 2-second wait, 6.4% for 5 s, 12.5% for 10 s, 18% for 15 s. At
+  NU7's 25 s it is `1 − e^{−t/25}`: 7.7%, 18%, 33% and 45%. A
   late broadcast can also miss the template a Zcash miner is working on.
 
 Stale votes are harmless. A vote for `N − 1` counts for every ancestor,
@@ -615,7 +616,8 @@ total 38 + 34 + 34 = 106 bytes (4 logical actions, 20,000 zat), and v2
 outputs total 74 + 34 + 34 = 142 bytes (5 actions, 25,000 zat). Without
 change the figures are 3 and 4 actions. So a v2 burn costs **5,000 zat
 more** in either shape. A floor miner burning every epoch (1,152 epochs
-a day) goes from about 0.24 ZEC a day to about 0.30.
+a day) goes from about 0.24 ZEC a day to about 0.30; at NU7's 25 s
+(3,456 epochs a day), from about 0.73 to about 0.90.
 
 ## 7. Node side
 

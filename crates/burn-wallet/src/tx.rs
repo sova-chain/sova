@@ -36,16 +36,12 @@ use zcash_transparent::bundle::{OutPoint, TxOut};
 
 use consensus::sip1::{BURN_HASH160, BurnPayload, BurnPayloadV2, MIN_BURN_ZAT, SovaRef};
 
+use crate::branch::{self, BranchError, MIN_TX_EXPIRY_DELTA};
 use crate::fee::BurnPayloadVersion;
 use crate::keys::Keypair;
 use crate::network::Network;
 
-/// Transaction expiry window, in blocks past `target_height`, used for every
-/// transaction this module builds --
-/// mirrors `zcash_primitives::transaction::builder::DEFAULT_TX_EXPIRY_DELTA`
-/// (kept as our own constant so this module doesn't need the `Builder`
-/// import purely for one constant).
-pub const DEFAULT_TX_EXPIRY_DELTA: u32 = 40;
+pub use crate::branch::{DEFAULT_TX_EXPIRY_DELTA, NU7_TX_EXPIRY_DELTA};
 
 /// One spendable transparent coin, referencing a previous output, to be
 /// consumed as a transaction input.
@@ -66,13 +62,22 @@ pub struct Utxo {
 /// Everything needed to build and sign one SIP-1 burn transaction.
 #[derive(Debug, Clone)]
 pub struct BurnTxRequest {
-    /// The network to build for (selects the consensus branch id and
-    /// address encoding).
+    /// The network to build for: its compiled activation table
+    /// cross-checks `consensus_branch_id` (see [`crate::branch::resolve`]).
     pub network: Network,
-    /// The current chain tip height. Used to select the consensus branch
-    /// id ([`BranchId::for_height`]) and to compute a default expiry
-    /// height.
+    /// The height the transaction targets: zebrad's next block
+    /// ([`crate::rpc::NextBlockConsensus::next_height`]). The expiry height
+    /// is counted from it.
     pub target_height: u32,
+    /// The consensus branch ID to sign for: what zebrad reports for
+    /// `target_height` (`getblockchaininfo.consensus.nextblock`,
+    /// [`crate::rpc::NextBlockConsensus::next_block_branch_id`]). Refused if
+    /// this build doesn't know it ([`BurnTxError::Branch`]).
+    pub consensus_branch_id: u32,
+    /// Blocks past `target_height` until the transaction expires. `None`:
+    /// [`crate::branch::default_expiry_delta`] for the branch (40, or 120
+    /// from NU7 on).
+    pub expiry_delta: Option<u32>,
     /// Inputs to spend. Must all be P2PKH outputs paying `keypair`'s
     /// address (see [`Utxo`]).
     pub utxos: Vec<Utxo>,
@@ -121,6 +126,10 @@ pub struct BuiltBurnTx {
     /// The change returned to `change_and_signing_key`'s address, in
     /// zatoshis (0 if the inputs summed exactly to burn + fee).
     pub change_zat: u64,
+    /// The consensus branch the transaction was signed for.
+    pub branch_id: BranchId,
+    /// The transaction's expiry height: it can't be mined at or past it.
+    pub expiry_height: u32,
 }
 
 /// Errors building a burn transaction.
@@ -163,6 +172,14 @@ pub enum BurnTxError {
     /// A transfer of zero zatoshis was requested.
     #[error("transfer amount must be non-zero")]
     ZeroAmount,
+    /// The consensus branch ID can't be signed for: unknown to this build,
+    /// without v5 transactions, or at odds with the activation table.
+    /// Nothing was signed.
+    #[error(transparent)]
+    Branch(#[from] BranchError),
+    /// The requested expiry delta is below [`MIN_TX_EXPIRY_DELTA`].
+    #[error("expiry delta {0} is below the minimum of {MIN_TX_EXPIRY_DELTA} blocks")]
+    ExpiryDeltaTooSmall(u32),
 }
 
 /// Builds and signs a burn transaction: one zero-value payload output
@@ -244,30 +261,68 @@ pub fn build_burn_transaction(req: &BurnTxRequest) -> Result<BuiltBurnTx, BurnTx
         builder.add_output(&our_address, Zatoshis::from_u64(change_zat)?)?;
     }
 
-    let (txid, raw) = sign_and_serialize(
-        req.network,
-        req.target_height,
+    let signed = sign_and_serialize(
+        SignFor {
+            network: req.network,
+            target_height: req.target_height,
+            consensus_branch_id: req.consensus_branch_id,
+            expiry_delta: req.expiry_delta,
+        },
         builder,
         &req.change_and_signing_key,
     )?;
 
     Ok(BuiltBurnTx {
-        txid,
-        raw,
+        txid: signed.txid,
+        raw: signed.raw,
         change_zat,
+        branch_id: signed.branch_id,
+        expiry_height: signed.expiry_height,
     })
+}
+
+/// What a transaction is signed for: the request fields shared by burns and
+/// transfers.
+struct SignFor {
+    network: Network,
+    target_height: u32,
+    consensus_branch_id: u32,
+    expiry_delta: Option<u32>,
+}
+
+/// A signed, serialized transaction.
+struct Signed {
+    txid: [u8; 32],
+    raw: Vec<u8>,
+    branch_id: BranchId,
+    expiry_height: u32,
 }
 
 /// Builds the transparent bundle from `builder`, wraps it in a v5
 /// transaction for `target_height`, signs every input with `key` via
 /// librustzcash's ZIP-244 sighash, and serializes it. Shared by burns and
 /// transfers: only the outputs differ between them.
+///
+/// The branch is the one zebrad reported, checked by
+/// [`crate::branch::resolve`] before anything is signed.
 fn sign_and_serialize(
-    network: Network,
-    target_height: u32,
+    sign_for: SignFor,
     builder: TransparentBuilder,
     key: &Keypair,
-) -> Result<([u8; 32], Vec<u8>), BurnTxError> {
+) -> Result<Signed, BurnTxError> {
+    let SignFor {
+        network,
+        target_height,
+        consensus_branch_id,
+        expiry_delta,
+    } = sign_for;
+    let branch_id = branch::resolve(network, target_height, consensus_branch_id)?;
+    let expiry_delta = expiry_delta.unwrap_or_else(|| branch::default_expiry_delta(branch_id));
+    if expiry_delta < MIN_TX_EXPIRY_DELTA {
+        return Err(BurnTxError::ExpiryDeltaTooSmall(expiry_delta));
+    }
+    let expiry_height = target_height.saturating_add(expiry_delta);
+
     let unauthorized_bundle = builder
         .build()
         .ok_or_else(|| BurnTxError::Assembly("empty transparent bundle".to_string()))?;
@@ -275,17 +330,15 @@ fn sign_and_serialize(
     // -- Assemble transaction metadata and compute the ZIP-244 txid digest
     //    over the *unsigned* bundle (script_sig is not covered by the
     //    sighash, so this is well-defined before signing). --
-    let branch_id = BranchId::for_height(&network, BlockHeight::from_u32(target_height));
-    let expiry_height =
-        BlockHeight::from_u32(target_height.saturating_add(DEFAULT_TX_EXPIRY_DELTA));
     let lock_time = 0u32;
+    let expiry_height_bh = BlockHeight::from_u32(expiry_height);
 
     let unauthorized_tx_data: TransactionData<transaction::Unauthorized> =
         TransactionData::from_parts(
             TxVersion::V5,
             branch_id,
             lock_time,
-            expiry_height,
+            expiry_height_bh,
             Some(unauthorized_bundle.clone()),
             None,
             None,
@@ -313,7 +366,7 @@ fn sign_and_serialize(
         TxVersion::V5,
         branch_id,
         lock_time,
-        expiry_height,
+        expiry_height_bh,
         Some(signed_bundle),
         None,
         None,
@@ -328,7 +381,12 @@ fn sign_and_serialize(
     tx.write(&mut raw)
         .map_err(|e| BurnTxError::Assembly(e.to_string()))?;
 
-    Ok((tx.txid().into(), raw))
+    Ok(Signed {
+        txid: tx.txid().into(),
+        raw,
+        branch_id,
+        expiry_height,
+    })
 }
 
 /// Everything needed to build and sign one plain transparent transfer (a
@@ -336,11 +394,18 @@ fn sign_and_serialize(
 /// `sova-faucet`.
 #[derive(Debug, Clone)]
 pub struct TransferTxRequest {
-    /// The network to build for.
+    /// The network to build for (its activation table cross-checks
+    /// `consensus_branch_id`).
     pub network: Network,
-    /// The height the transaction targets (next block): selects the
-    /// consensus branch id and the expiry height.
+    /// The height the transaction targets: zebrad's next block. The expiry
+    /// height is counted from it.
     pub target_height: u32,
+    /// The consensus branch ID to sign for, as zebrad reports it for
+    /// `target_height`; see [`BurnTxRequest::consensus_branch_id`].
+    pub consensus_branch_id: u32,
+    /// Blocks until expiry; `None` for the branch's default (see
+    /// [`BurnTxRequest::expiry_delta`]).
+    pub expiry_delta: Option<u32>,
     /// Inputs to spend. Must all be P2PKH outputs paying `change_and_signing_key`.
     pub utxos: Vec<Utxo>,
     /// The signing key for every input, and the recipient of any change.
@@ -364,6 +429,10 @@ pub struct BuiltTransferTx {
     /// The change returned to the signing key's address (output index 1),
     /// or 0 if there is no change output.
     pub change_zat: u64,
+    /// The consensus branch the transaction was signed for.
+    pub branch_id: BranchId,
+    /// The transaction's expiry height.
+    pub expiry_height: u32,
 }
 
 /// Builds and signs a transparent transfer: output 0 pays `amount_zat` to
@@ -413,16 +482,22 @@ pub fn build_transfer_transaction(req: &TransferTxRequest) -> Result<BuiltTransf
         builder.add_output(&our_address, Zatoshis::from_u64(change_zat)?)?;
     }
 
-    let (txid, raw) = sign_and_serialize(
-        req.network,
-        req.target_height,
+    let signed = sign_and_serialize(
+        SignFor {
+            network: req.network,
+            target_height: req.target_height,
+            consensus_branch_id: req.consensus_branch_id,
+            expiry_delta: req.expiry_delta,
+        },
         builder,
         &req.change_and_signing_key,
     )?;
     Ok(BuiltTransferTx {
-        txid,
-        raw,
+        txid: signed.txid,
+        raw: signed.raw,
         change_zat,
+        branch_id: signed.branch_id,
+        expiry_height: signed.expiry_height,
     })
 }
 
@@ -433,7 +508,12 @@ mod tests {
     use super::*;
     use consensus::sip1::{Burn, TxOutRef, extract_burn, extract_burn_at};
 
+    use crate::branch::NU7_BRANCH_ID;
     use crate::fee::{burn_fee_zat, transparent_fee_zat};
+
+    /// NU5's branch ID: what `box/regtest`'s zebrad reports for every
+    /// block past genesis.
+    const REGTEST_NU5: u32 = 0xc2d6_d0b4;
 
     fn request(utxo_value_zat: u64, burn_zat: u64, fee_zat: u64) -> BurnTxRequest {
         BurnTxRequest {
@@ -449,6 +529,8 @@ mod tests {
             burn_value_zat: burn_zat,
             fee_zat,
             sova_ref: None,
+            consensus_branch_id: REGTEST_NU5,
+            expiry_delta: None,
         }
     }
 
@@ -463,9 +545,7 @@ mod tests {
         // `consensus::sip1::extract_burn` -- the exact check the on-chain
         // proof (the `e2e_regtest_burn` integration test) also performs
         // against outputs fetched back from Zebra.
-        let branch_id =
-            BranchId::for_height(&req.network, BlockHeight::from_u32(req.target_height));
-        let tx = transaction::Transaction::read(built.raw.as_slice(), branch_id).unwrap();
+        let tx = transaction::Transaction::read(built.raw.as_slice(), built.branch_id).unwrap();
         let bundle = tx.transparent_bundle().unwrap();
         let refs: Vec<TxOutRef<'_>> = bundle
             .vout
@@ -505,9 +585,7 @@ mod tests {
         let built = build_burn_transaction(&req).unwrap();
         assert_eq!(built.change_zat, 0);
 
-        let branch_id =
-            BranchId::for_height(&req.network, BlockHeight::from_u32(req.target_height));
-        let tx = transaction::Transaction::read(built.raw.as_slice(), branch_id).unwrap();
+        let tx = transaction::Transaction::read(built.raw.as_slice(), built.branch_id).unwrap();
         let bundle = tx.transparent_bundle().unwrap();
         // Exactly two outputs: SIP-1 payload + eater. No change output.
         assert_eq!(bundle.vout.len(), 2);
@@ -525,6 +603,8 @@ mod tests {
             recipient: Keypair::generate().transparent_address(),
             amount_zat,
             fee_zat,
+            consensus_branch_id: REGTEST_NU5,
+            expiry_delta: None,
         }
     }
 
@@ -534,9 +614,7 @@ mod tests {
         let built = build_transfer_transaction(&req).unwrap();
         assert_eq!(built.change_zat, 690_000);
 
-        let branch_id =
-            BranchId::for_height(&req.network, BlockHeight::from_u32(req.target_height));
-        let tx = transaction::Transaction::read(built.raw.as_slice(), branch_id).unwrap();
+        let tx = transaction::Transaction::read(built.raw.as_slice(), built.branch_id).unwrap();
         assert_eq!(<[u8; 32]>::from(tx.txid()), built.txid);
         let bundle = tx.transparent_bundle().unwrap();
         assert_eq!(bundle.vin.len(), 1);
@@ -555,9 +633,7 @@ mod tests {
         let req = transfer(310_000, 300_000, 10_000);
         let built = build_transfer_transaction(&req).unwrap();
         assert_eq!(built.change_zat, 0);
-        let branch_id =
-            BranchId::for_height(&req.network, BlockHeight::from_u32(req.target_height));
-        let tx = transaction::Transaction::read(built.raw.as_slice(), branch_id).unwrap();
+        let tx = transaction::Transaction::read(built.raw.as_slice(), built.branch_id).unwrap();
         assert_eq!(tx.transparent_bundle().unwrap().vout.len(), 1);
     }
 
@@ -576,10 +652,8 @@ mod tests {
     // --- SIP-8: anchored burns ---
 
     /// The outputs of a built burn, re-read with the real V5 reader.
-    fn outputs_of(req: &BurnTxRequest, built: &BuiltBurnTx) -> Vec<(u64, Vec<u8>)> {
-        let branch_id =
-            BranchId::for_height(&req.network, BlockHeight::from_u32(req.target_height));
-        let tx = transaction::Transaction::read(built.raw.as_slice(), branch_id).unwrap();
+    fn outputs_of(built: &BuiltBurnTx) -> Vec<(u64, Vec<u8>)> {
+        let tx = transaction::Transaction::read(built.raw.as_slice(), built.branch_id).unwrap();
         assert_eq!(<[u8; 32]>::from(tx.txid()), built.txid);
         tx.transparent_bundle()
             .unwrap()
@@ -634,7 +708,7 @@ mod tests {
     fn v1_burn_round_trips_through_extract_burn_at() {
         for utxo in [1_000_000, 120_000] {
             let req = fixed(utxo, 20_000, None);
-            let outs = outputs_of(&req, &build_burn_transaction(&req).unwrap());
+            let outs = outputs_of(&build_burn_transaction(&req).unwrap());
             assert_eq!(
                 outs[0].1,
                 BurnPayload::to_script(&BurnPayload {
@@ -663,7 +737,7 @@ mod tests {
         for (utxo, outputs) in [(1_000_000, 3), (125_000, 2)] {
             let req = fixed(utxo, 25_000, Some(REFERENCE));
             let built = build_burn_transaction(&req).unwrap();
-            let outs = outputs_of(&req, &built);
+            let outs = outputs_of(&built);
             assert_eq!(outs.len(), outputs);
             let v2 = BurnPayloadV2 {
                 evm_address: req.evm_address,
@@ -700,7 +774,7 @@ mod tests {
                 if sova_ref.is_some() { 25_000 } else { 20_000 },
                 sova_ref,
             );
-            let outs = outputs_of(&req, &build_burn_transaction(&req).unwrap());
+            let outs = outputs_of(&build_burn_transaction(&req).unwrap());
             // value (8) + script length (1, every script here is < 253) + script.
             let sizes: Vec<u64> = outs.iter().map(|(_, s)| 8 + 1 + s.len() as u64).collect();
             assert_eq!(sizes[0], req.payload_version().output_size());
@@ -713,5 +787,131 @@ mod tests {
             fixed(1, 1, Some(REFERENCE)).payload_version().output_size(),
             74
         );
+    }
+
+    // --- NU7: the branch comes from zebrad (docs/design/nu7-readiness.md B1/B2) ---
+
+    /// A v5 header's consensus branch ID field (bytes 8..12, little-endian).
+    fn header_branch_id(raw: &[u8]) -> u32 {
+        u32::from_le_bytes(raw[8..12].try_into().unwrap())
+    }
+
+    /// Pre-NU7 (what zebrad reports today): the branch zebrad names is the
+    /// one in the header, and the default expiry delta is still 40.
+    #[test]
+    fn signs_for_the_reported_pre_nu7_branch_with_expiry_40() {
+        let req = fixed(1_000_000, 20_000, None);
+        let built = build_burn_transaction(&req).unwrap();
+        assert_eq!(built.branch_id, BranchId::Nu5);
+        assert_eq!(header_branch_id(&built.raw), REGTEST_NU5);
+        assert_eq!(built.expiry_height, req.target_height + 40);
+    }
+
+    /// NU7 as zebrad's next block: the burn is signed for `77190ad9`, reads
+    /// back as a valid v5 NU7 transaction with the same txid, still
+    /// recognized as a SIP-1 burn, and expires 120 blocks out (ZIP 218).
+    #[test]
+    fn nu7_next_block_signs_a_v5_nu7_burn_expiring_in_120() {
+        let req = BurnTxRequest {
+            target_height: 50,
+            consensus_branch_id: NU7_BRANCH_ID,
+            ..fixed(1_000_000, 20_000, None)
+        };
+        let built = build_burn_transaction(&req).unwrap();
+        assert_eq!(built.branch_id, BranchId::Nu7);
+        assert_eq!(header_branch_id(&built.raw), 0x7719_0ad9);
+        assert_eq!(built.expiry_height, 50 + NU7_TX_EXPIRY_DELTA);
+
+        let tx = transaction::Transaction::read(built.raw.as_slice(), BranchId::Nu7).unwrap();
+        assert_eq!(tx.version(), TxVersion::V5);
+        assert_eq!(tx.consensus_branch_id(), BranchId::Nu7);
+        assert_eq!(u32::from(tx.expiry_height()), 170);
+        assert_eq!(<[u8; 32]>::from(tx.txid()), built.txid);
+        let outs = outputs_of(&built);
+        assert_eq!(
+            extract_burn(refs(&outs)).map(|b| b.value_zat),
+            Some(req.burn_value_zat)
+        );
+
+        // The sighash commits to the branch: the same burn signed for NU5
+        // differs (in the signature and the header), so a burn signed for
+        // the wrong branch can't be valid for the right one.
+        let nu5 = build_burn_transaction(&BurnTxRequest {
+            consensus_branch_id: REGTEST_NU5,
+            expiry_delta: Some(NU7_TX_EXPIRY_DELTA),
+            ..req.clone()
+        })
+        .unwrap();
+        assert_ne!(nu5.txid, built.txid);
+        assert_ne!(nu5.raw[12..], built.raw[12..]);
+    }
+
+    /// Faucet transfers take the same path.
+    #[test]
+    fn nu7_transfer_is_signed_for_nu7() {
+        let req = TransferTxRequest {
+            consensus_branch_id: NU7_BRANCH_ID,
+            ..transfer(1_000_000, 300_000, 10_000)
+        };
+        let built = build_transfer_transaction(&req).unwrap();
+        assert_eq!(built.branch_id, BranchId::Nu7);
+        assert_eq!(header_branch_id(&built.raw), NU7_BRANCH_ID);
+        assert_eq!(built.expiry_height, req.target_height + 120);
+        let tx = transaction::Transaction::read(built.raw.as_slice(), BranchId::Nu7).unwrap();
+        assert_eq!(<[u8; 32]>::from(tx.txid()), built.txid);
+    }
+
+    /// The refusal: an ID this build doesn't know (here the retired
+    /// pre-ZIP-259 NU7 ID, and the old `zcash_unstable` placeholder) means
+    /// no transaction at all, for burns and transfers alike.
+    #[test]
+    fn unknown_branch_is_refused_not_signed() {
+        for id in [0x7719_0ad8, 0xffff_ffff] {
+            let burn = BurnTxRequest {
+                consensus_branch_id: id,
+                ..request(1_000_000, 100_000, 1_000)
+            };
+            match build_burn_transaction(&burn) {
+                Err(BurnTxError::Branch(BranchError::Unknown { id: got, height })) => {
+                    assert_eq!((got, height), (id, burn.target_height));
+                }
+                other => panic!("expected a refusal, got {other:?}"),
+            }
+            let drip = TransferTxRequest {
+                consensus_branch_id: id,
+                ..transfer(1_000_000, 300_000, 10_000)
+            };
+            assert!(matches!(
+                build_transfer_transaction(&drip),
+                Err(BurnTxError::Branch(BranchError::Unknown { .. }))
+            ));
+        }
+        // zebrad's "no branch" is refused too.
+        assert!(matches!(
+            build_burn_transaction(&BurnTxRequest {
+                consensus_branch_id: 0,
+                ..request(1_000_000, 100_000, 1_000)
+            }),
+            Err(BurnTxError::Branch(BranchError::NoV5 { .. }))
+        ));
+    }
+
+    /// The expiry delta is configurable, with a floor.
+    #[test]
+    fn expiry_delta_override() {
+        let built = build_burn_transaction(&BurnTxRequest {
+            expiry_delta: Some(200),
+            consensus_branch_id: NU7_BRANCH_ID,
+            ..request(1_000_000, 100_000, 1_000)
+        })
+        .unwrap();
+        assert_eq!(built.expiry_height, 101 + 200);
+        assert!(matches!(
+            build_burn_transaction(&BurnTxRequest {
+                expiry_delta: Some(3),
+                ..request(1_000_000, 100_000, 1_000)
+            }),
+            Err(BurnTxError::ExpiryDeltaTooSmall(3))
+        ));
     }
 }

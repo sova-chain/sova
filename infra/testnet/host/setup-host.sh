@@ -6,6 +6,12 @@
 #
 #   setup-host.sh <host.env>               full setup
 #   setup-host.sh <host.env> --enode-only  node key + enode only
+#   setup-host.sh <host.env> --zebra-only  zebrad only (deploy.sh --zebra-only):
+#                                          pull, write zebrad.env/.toml and the
+#                                          health env, restart zebrad if they
+#                                          changed (muted, then the readiness
+#                                          wait); nothing else is touched or
+#                                          restarted
 #   setup-host.sh <host.env> --render DIR  write the files this host would
 #                                          get (/etc/sova/*, units) under
 #                                          DIR and stop: no root, no
@@ -36,8 +42,18 @@
 # different genesis hash from SIP-7 off. Nodes with different values do
 # not peer (fork ID), so every node renders the same one.
 #
+# Every zebrad restart (either mode) mutes this host's Telegram alerts for
+# ZEBRA_RESTART_MUTE_MIN (15; host/maint.sh mute) and then waits until
+# zebrad is ready again (host/zebra-ready.sh: RPC, image, NU7 height, state
+# format upgrade, caught up), up to ZEBRA_READY_TIMEOUT_MIN (15; 0 = don't
+# wait). Not ready: this script fails, and so does deploy.sh.
+#
+# The keeper pause (host/maint.sh keeper-pause, /etc/sova/.keeper-paused):
+# while it is on, sova-node and sova-keeper are configured but never
+# started or restarted here.
+#
 # Lines starting "KIT-OUT " are machine-read by deploy.sh (enode, faucet
-# t-addr, keeper addresses: all public).
+# t-addr, keeper addresses, zebrad readiness timings: all public).
 set -euo pipefail
 
 ENV_FILE="${1:?usage: setup-host.sh <host.env>}"
@@ -71,6 +87,8 @@ if [[ "${2:-}" == --render ]]; then
   UNIT_DIR="${RENDER}/etc/systemd/system"
   SYSCTL_DIR="${RENDER}/etc/sysctl.d"
 fi
+# The keeper pause marker (host/maint.sh keeper-pause).
+KEEPER_PAUSED_FILE="${ETC}/.keeper-paused"
 PLATFORM=linux-x86_64
 ASSET="sova-box-bin-${PLATFORM}.tar.gz"
 
@@ -100,6 +118,8 @@ if ! [[ "${SWAP_GB}" =~ ^[0-9]+$ ]] || ((SWAP_GB > 64)); then die "SWAP_GB must 
 has_node() { [[ "${ROLE}" == seed || "${ROLE}" == rpc || "${ROLE}" == keeper ]]; }
 has_tunnel() { [[ "${ROLE}" == rpc || "${ROLE}" == faucet ]]; }
 has_relayer() { [[ "${ROLE}" == faucet && "${CHECKOUT_RELAYER}" == 1 ]]; }
+keeper_paused() { [[ "${ROLE}" == keeper && -f "${KEEPER_PAUSED_FILE}" ]]; }
+paused_since() { sed -n 's/^since=//p' "${KEEPER_PAUSED_FILE}" 2>/dev/null; }
 if has_relayer; then
   : "${CHECKOUT_RELAYER_PORT:?}" "${CHECKOUT_RELAYER_SOVA_RPC:?}" "${CHECKOUT_RELAYER_CORS_ORIGIN:?}" "${CHECKOUT_RELAYER_NODE_MAJOR:?}"
 fi
@@ -294,9 +314,20 @@ setup_zebrad() {
   local sum
   sum="$(cat "${ETC}/zebrad.env" "${ETC}/zebrad.toml" | sha256sum | cut -d' ' -f1)"
   if [[ "$(cat "${ETC}/.zebrad.sum" 2>/dev/null)" != "${sum}" ]] || ! systemctl is-active --quiet zebrad; then
+    # Where zebrad is before the restart ("<tip> <lag behind the
+    # references>", "- 0" when it doesn't answer), for the readiness wait.
+    local pre t0 t1 mute="${ZEBRA_RESTART_MUTE_MIN:-15}"
+    pre="$(ZEBRA_READY_ENV="${ENV_FILE}" bash "${HERE}/zebra-ready.sh" before)" || pre="- 0"
+    # Planned noise (zebrad_down, a short epoch_lag): no Telegram for a while.
+    [[ "${mute}" == 0 ]] || bash "${HERE}/maint.sh" mute "${mute}" "zebrad restart (${ref##*/})"
+    t0="$(date +%s)"
     systemctl restart zebrad
+    t1="$(date +%s)"
     echo "${sum}" >"${ETC}/.zebrad.sum"
     log "zebrad (re)started with ${ref}"
+    ZEBRA_READY_ENV="${ENV_FILE}" bash "${HERE}/zebra-ready.sh" wait --since "${t0}" --started "${t1}" \
+      --pre-tip "${pre% *}" --pre-lag "${pre#* }" ||
+      die "zebrad is not ready after the restart (above); the rollout stops here"
   else
     log "zebrad unchanged and running"
   fi
@@ -522,6 +553,11 @@ setup_node() {
     sed -i "s/^ban_duration = \".*\"$/ban_duration = \"${ban}\"/" "${toml}"
     changed=1
     log "reth.toml: peer ban_duration ${ban}"
+  fi
+  if keeper_paused; then
+    # Configured above; started by keeper-resume (with this config).
+    log "sova-node NOT started or restarted: the keeper is paused (since $(paused_since), ${KEEPER_PAUSED_FILE}); ./deploy.sh keeper-resume starts it"
+    return 0
   fi
   local bin_changed=0
   [[ "$(readlink /usr/local/bin/sova)" != "$(cat "${ETC}/.sova-node.bin" 2>/dev/null)" ]] && bin_changed=1
@@ -775,7 +811,9 @@ setup_keeper() {
   # with the old ones (2026-09-26: v0.1.8 was installed under a burner
   # still running v0.1.7).
   sum="$(cat /usr/local/bin/sova-miner "${ETC}/keeper.env" "${UNIT_DIR}/sova-keeper.service" | sha256sum | cut -d' ' -f1)"
-  if ! systemctl is-active --quiet sova-keeper; then
+  if keeper_paused; then
+    log "sova-keeper NOT started or restarted: the keeper is paused (since $(paused_since), ${KEEPER_PAUSED_FILE}); ./deploy.sh keeper-resume"
+  elif ! systemctl is-active --quiet sova-keeper; then
     log "sova-keeper installed, NOT started (publish the disclosure and fund the t-addr first; docs/ops/keeper-miner.md)"
   elif [[ "$(cat "${ETC}/.sova-keeper.sum" 2>/dev/null)" != "${sum}" ]]; then
     systemctl restart sova-keeper
@@ -821,6 +859,11 @@ NULL_SEALED_MAX_MIN=${NULL_SEALED_MAX_MIN:-45}
 MEM_ALERT_MB=${MEM_ALERT_MB:-300}
 KEEPER_ISOLATED_MIN=${KEEPER_ISOLATED_MIN:-5}
 KEEPER_NODE_ID=${KEEPER_NODE_ID:-}
+ZCASH_REFERENCE_URLS=${ZCASH_REFERENCE_URLS:-}
+NU7_ACTIVATION_HEIGHT=${NU7_ACTIVATION_HEIGHT:-}
+ZEBRA_IMAGE_DIGEST=${ZEBRA_IMAGE_DIGEST:-}
+ZEBRA_READY_TIMEOUT_MIN=${ZEBRA_READY_TIMEOUT_MIN:-15}
+ZEBRA_READY_LAG=${ZEBRA_READY_LAG:-3}
 HEALTH_NETWORK_ALERTS=${HEALTH_NETWORK_ALERTS:-}
 CHECKOUT_RELAYER_PORT=${CHECKOUT_RELAYER_PORT:-}
 CHECKOUT_RELAYER_ALERT_BALANCE_WEI=${CHECKOUT_RELAYER_ALERT_BALANCE_WEI:-}
@@ -828,7 +871,9 @@ EOF
 }
 
 setup_health() {
-  install -m 0755 "${HERE}/health.sh" /usr/local/lib/sova-infra/health.sh
+  # health.sh (the timer), and the maintenance helpers for use by hand:
+  # maint.sh (mute, keeper pause) and zebra-ready.sh.
+  install -m 0755 "${HERE}/health.sh" "${HERE}/maint.sh" "${HERE}/zebra-ready.sh" /usr/local/lib/sova-infra/
   health_env_text >"${ETC}/host.env"
   chmod 0644 "${ETC}/host.env"
   install -m 0644 "${HERE}/systemd/sova-health.service" "${HERE}/systemd/sova-health.timer" "${UNIT_DIR}/"
@@ -903,6 +948,18 @@ if [[ "${2:-}" == --enode-only ]]; then
   # deploy.sh's first pass: make (or read) the node key and print the
   # enode, so every node's bootnode list can be written before any starts.
   has_node && node_key_and_enode
+  exit 0
+fi
+if [[ "${2:-}" == --zebra-only ]]; then
+  # deploy.sh --zebra-only (a Zebra release, e.g. NU7): the health env first
+  # (its new NU7_ACTIVATION_HEIGHT and the mute-aware health.sh), then
+  # zebrad. No firewall, swap, binaries, sova-node, faucet, relayer, keeper
+  # or cloudflared step, so none of them restarts.
+  log "zebrad only on $(hostname) (${PUBLIC_IPV4}): $(zebra_ref)"
+  setup_health
+  setup_zebrad
+  out zebra_image "$(zebra_ref)"
+  log "done (zebrad only)"
   exit 0
 fi
 log "setting up ${ROLE} on $(hostname) (${PUBLIC_IPV4}), release ${SOVA_RELEASE_TAG}"

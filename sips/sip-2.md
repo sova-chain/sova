@@ -50,8 +50,10 @@ by recent sealers on the same ladder.
 
 ## Rewards
 
-Draft schedule: 6,250 SOVA per epoch (21B cap, 4-year halvings at 75 s
-epochs; final numbers are SIP-3). All reward math runs in gwei so every
+Draft schedule: a flat 6,250 SOVA per epoch, which the public testnet and
+regtest still mint. Mainnet's numbers are SIP-3's (revision 2: 2,083.33332
+SOVA per 25-second epoch after a slow start, 4-year halvings, just under
+21B). All reward math runs in gwei so every
 share is gwei-exact. The reward splits: a 10% sealer tip, and a pro-rata
 pool by weight (floor division); all rounding dust joins the tip.
 **Conservation is exact**: shares always sum to the full epoch reward.

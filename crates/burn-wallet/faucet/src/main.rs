@@ -125,6 +125,25 @@ fn cmd_run(config: &Path) -> Result<(), AnyError> {
             .with_cookie_file(cookie)
             .map_err(|e| format!("zebrad cookie file {}: {e}", cookie.display()))?;
     }
+    // Drips are signed for the consensus branch zebrad reports for its
+    // next block (each drip re-reads it): say which, once.
+    match rpc.get_next_block_consensus() {
+        Ok(next) => match burn_wallet::branch::resolve(
+            cfg.network(),
+            next.next_height(),
+            next.next_block_branch_id,
+        ) {
+            Ok(branch_id) => println!(
+                "zcash consensus: zebrad's next block {} is on branch {}; drips expire {} blocks out",
+                next.next_height(),
+                burn_wallet::branch::describe(branch_id),
+                cfg.expiry_delta
+                    .unwrap_or_else(|| burn_wallet::branch::default_expiry_delta(branch_id))
+            ),
+            Err(e) => eprintln!("warning: zcash consensus: {e}"),
+        },
+        Err(e) => eprintln!("warning: could not read zebrad's consensus branch: {e}"),
+    }
     let now = http::unix_now();
     let mut faucet = Faucet::start(cfg.clone(), keypair, rpc, now)?;
     let status = faucet.status(now)?;

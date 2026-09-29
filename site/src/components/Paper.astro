@@ -53,7 +53,7 @@ const toc: { id: string; n: string; t: string }[] = [
   { id: 'refs', n: '', t: 'References' },
 ];
 
-// References [1]-[10], as in the paper.
+// References [1]-[11], as in the paper.
 const refs: { a: string; t: string; href: string; extra?: string }[] = [
   { a: 'D. Hopwood, S. Bowe, T. Hornby, N. Wilcox', t: 'Zcash Protocol Specification', href: 'https://zips.z.cash/protocol/protocol.pdf' },
   { a: 'Sova', t: 'SIP-1: The Burn Transaction Format', href: sipUrl(1) },
@@ -65,6 +65,7 @@ const refs: { a: string; t: string; href: string; extra?: string }[] = [
   { a: 'A. Dietrichs et al.', t: 'EIP-4895: Beacon chain push withdrawals as operations', href: 'https://eips.ethereum.org/EIPS/eip-4895' },
   { a: 'Sova', t: 'SIP-6: Sealer Signatures', extra: '(accepted)', href: sipUrl(6) },
   { a: 'Sova', t: 'SIP-7: Zcash Pool State and Events', extra: '(accepted)', href: sip7Url },
+  { a: 'Zcash', t: 'ZIP 218', href: 'https://zips.z.cash/zip-0218' },
 ];
 ---
 <Direction
@@ -167,7 +168,7 @@ const refs: { a: string; t: string; href: string; extra?: string }[] = [
       the Zcash block it settles. Because every node derives every mint from
       Zcash, a node can also answer a contract’s question about Zcash
       deterministically, and that is what lets a contract verify a payment.
-      Sova changes nothing in Zcash and posts nothing to it.</p>
+      Sova changes nothing in Zcash and posts nothing to it but the burns.</p>
 
       <span id="s2"></span>
       <h2 id="burns">2. Burns</h2>
@@ -265,8 +266,10 @@ const refs: { a: string; t: string; href: string; extra?: string }[] = [
       a base height <i>B</i>, the Zcash height at which the network began, the
       Sova block for epoch <i>E</i> sits at Sova height <i>E</i>&nbsp;−&nbsp;<i>B</i>&nbsp;+&nbsp;1 [3]. That block settles the
       burns confirmed in the epoch’s Zcash block: it credits their addresses,
-      and nothing else can. Zcash blocks arrive about every 75 seconds, and so
-      do Sova’s.</p>
+      and nothing else can. Zcash blocks arrive about every 75 seconds, and
+      about every 25 seconds after its NU7 upgrade [11]; Sova’s arrive with
+      them. Sova’s mainnet begins after NU7, so its epochs are about 25 seconds
+      from the first; the durations in this paper assume that.</p>
 
       <p>Each Sova block also commits to the hash of the Zcash block it settles,
       in a header field the EVM inherited from Ethereum’s beacon chain and that
@@ -372,20 +375,21 @@ const refs: { a: string; t: string; href: string; extra?: string }[] = [
       minted tracks demand.</p>
       <p>The schedule, for the 0-based epoch index <i>E</i>, is</p>
 
-      <div class="eq cases-eq" role="math" aria-label="R of E equals 0.3125 times E plus 1 SOVA if E is less than 20,000, and otherwise 6,250 over 2 to the k SOVA, where k is the floor of E over 1,680,000">
-        <span class="eqbody"><i>R</i>(<i>E</i>)<span class="op">=</span><span class="brace" aria-hidden="true">{'{'}</span><span class="cases"><span><span class="cv"><span class="nw">0.3125&nbsp;·&nbsp;(<i>E</i>&nbsp;+&nbsp;1)&nbsp;SOVA</span></span><span class="cond">if&nbsp;<i>E</i>&nbsp;&lt;&nbsp;20,000</span></span><span><span class="cv"><span class="nw">6,250&nbsp;/&nbsp;2<sup><i>k</i></sup>&nbsp;SOVA,</span> <span class="nw"><i>k</i>&nbsp;=&nbsp;<span class="flr"><i>E</i>&nbsp;/&nbsp;1,680,000</span></span></span><span class="cond">otherwise</span></span></span></span>
+      <div class="eq cases-eq" role="math" aria-label="R of E equals 0.034722222 times E plus 1 SOVA if E is less than 60,000, and otherwise 2,083.33332 over 2 to the k SOVA, where k is the floor of E over 5,040,000">
+        <span class="eqbody"><i>R</i>(<i>E</i>)<span class="op">=</span><span class="brace" aria-hidden="true">{'{'}</span><span class="cases"><span><span class="cv"><span class="nw">0.034722222&nbsp;·&nbsp;(<i>E</i>&nbsp;+&nbsp;1)&nbsp;SOVA</span></span><span class="cond">if&nbsp;<i>E</i>&nbsp;&lt;&nbsp;60,000</span></span><span><span class="cv"><span class="nw">2,083.33332&nbsp;/&nbsp;2<sup><i>k</i></sup>&nbsp;SOVA,</span> <span class="nw"><i>k</i>&nbsp;=&nbsp;<span class="flr"><i>E</i>&nbsp;/&nbsp;5,040,000</span></span></span><span class="cond">otherwise</span></span></span></span>
         <span class="eqno">(3)</span>
       </div>
 
       <p class="noindent">with halvings rounded down to whole gwei. The first
-      20,000 epochs ramp the reward from 0.3125 SOVA to 6,250 in equal steps,
-      the slow start Zcash itself used at launch, so that the first days, when
-      the tooling is new and SOVA has no market, cannot be captured cheaply. The
-      reward then halves every 1,680,000 epochs, which is Zcash’s own halving
-      interval, because an epoch is a Zcash block. Era 42 pays 1 gwei per epoch
-      and era 43 pays nothing. Total issuance can therefore never exceed
-      20,937,503,124.97 SOVA, and it reaches that only if every epoch has a burn
-      (Section 10).</p>
+      60,000 epochs, about 17 days, ramp the reward from 0.034722222 SOVA to
+      2,083.33332 in equal steps, the slow start Zcash itself used at launch, so
+      that the first days, when the tooling is new and SOVA has no market,
+      cannot be captured cheaply. The reward then halves every 5,040,000
+      epochs, which is Zcash’s own halving interval after NU7 [11], because an
+      epoch is a Zcash block. Era 40 pays 1 gwei per epoch and era 41 pays
+      nothing. Total issuance can therefore never exceed 20,937,500,907.58
+      SOVA, and it reaches that only if every epoch has a burn (Section
+      10).</p>
       <p>As the reward halves, sealers are paid by fees. Fees follow EIP-1559
       [7]: the base fee is destroyed, and priority fees, with the tip, go to the
       sealer. The schedule can change only by a soft fork that burners signal in
@@ -671,7 +675,7 @@ const refs: { a: string; t: string; href: string; extra?: string }[] = [
       the one block at the tip, replaced by a block of better rank, which pays
       every burner the same share and moves the tip to its sealer. A
       transaction is therefore settled once three more epochs are built on its
-      block, about four minutes, not before. Within those three blocks, a
+      block, about 75 seconds, not before. Within those three blocks, a
       rewrite costs a better-ranked block for the epoch where it begins: with
       the sealer’s signature [9], a block signed by a better-ranked burner of
       that epoch; until the signature ships, a block that claims the better
@@ -703,17 +707,18 @@ const refs: { a: string; t: string; href: string; extra?: string }[] = [
       <p><b>The price of a share.</b> In an epoch with total weight <i>W</i>&nbsp;=&nbsp;Σ&nbsp;<i>w</i>, a SOVA from the pro-rata pool costs <i>W</i>&nbsp;/&nbsp;((9/10)&nbsp;<i>R</i>) in destroyed ZEC. Since <i>R</i> is fixed by the schedule, competition raises this price and never
       the amount minted. At the floor, a burn of 1,000 zatoshis costs more in
       Zcash fees, about 20,000 zatoshis, than in ZEC destroyed; a miner that
-      burns in every epoch spends roughly a quarter of a ZEC a day, most of it
-      to Zcash miners.</p>
-      <p><b>Emission.</b> The slow start mints 62,503,125 SOVA over its 20,000
-      epochs, 62,496,875 less than a flat reward would. Each era of 1,680,000
-      epochs lasts about four years, and with halvings floored to whole gwei,
-      era 42 pays 1 gwei per epoch and era 43 pays nothing, so emission ends
-      after 43 eras, a little over 170 years, at an upper bound of
-      20,937,503,124.97 SOVA. Every epoch without a burn lowers the total that
+      burns in every epoch spends roughly 0.7 ZEC a day, most of it to Zcash
+      miners.</p>
+      <p><b>Emission.</b> The slow start mints 62,501,041.27 SOVA over its
+      60,000 epochs, 62,498,957.93 less than a flat reward would. Each era of
+      5,040,000 epochs lasts about four years, and with halvings floored to
+      whole gwei, era 40 pays 1 gwei per epoch and era 41 pays nothing, so
+      emission ends after 41 eras, about 164 years, at an upper bound of
+      20,937,500,907.58 SOVA. Every epoch without a burn lowers the total that
       will ever exist.</p>
       <p><span id="fig4"></span><b>A worked epoch.</b> Two burners with weights
-      in the ratio 5&nbsp;:&nbsp;2, and <i>R</i>&nbsp;=&nbsp;6,250 SOVA. By (1),
+      in the ratio 5&nbsp;:&nbsp;2, and <i>R</i>&nbsp;=&nbsp;6,250 SOVA, the public
+      testnet’s flat reward. By (1),
       rank 0’s share is floor(5,625&nbsp;×&nbsp;5/7) = 4,017.857142857 SOVA and
       rank 1’s is 1,607.142857142; by (2) the tip is 625.000000001, which rank 0
       also receives as sealer, for 4,642.857142858 in all. The three amounts sum

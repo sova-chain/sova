@@ -29,3 +29,8 @@ max_balance_multiple = 5          # warn if the hot wallet holds > 5 x daily cap
 # trusted_proxy_peers = ["127.0.0.1", "::1"]
 
 status_cache_secs = 10
+
+# Blocks until an unmined drip expires and its inputs are freed. Unset: 40,
+# or 120 once zebrad's next block is NU7 or later (ZIP 218). Drips are always
+# signed for the consensus branch zebrad reports for its next block.
+# expiry_delta = 120

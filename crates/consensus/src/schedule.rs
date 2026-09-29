@@ -5,31 +5,38 @@
 //! draft reward. This module is the normative math, locked by tests —
 //! wiring is a plumbing change, not a consensus-design change.
 //!
-//! Shape (see `sips/sip-3.md` for rationale):
-//! - Zcash-homage slow start: epochs 0..20,000 ramp linearly in exact
-//!   0.3125-SOVA steps (the step divides the base reward exactly — no
+//! Shape (see `sips/sip-3.md` for rationale). Revision 2 (2026-09-29)
+//! follows Zcash NU7 / ZIP 218: Zcash blocks, and so Sova epochs, come
+//! every 25 s, so the per-epoch numbers are the 75 s ones scaled by 3
+//! (reward ÷3, epoch counts ×3); per day, the schedule is unchanged.
+//! Sova mainnet starts after Zcash mainnet NU7 and only sees 25 s epochs.
+//! - Slow start: epochs 0..60,000 (~17 days) ramp linearly in exact
+//!   34,722,222-gwei steps (the step divides the base reward exactly — no
 //!   rounding anywhere in the ramp).
-//! - Then flat 6,250 SOVA per epoch, halving every 1,680,000 epochs
-//!   (Zcash's own halving interval; Sova epochs are Zcash blocks).
-//! - Halving is integer floor in gwei; era 42 pays 1 gwei, era 43 pays
+//! - Then flat 2,083.33332 SOVA per epoch, halving every 5,040,000 epochs
+//!   (Zcash's post-NU7 halving interval; Sova epochs are Zcash blocks).
+//! - Halving is integer floor in gwei; era 40 pays 1 gwei, era 41 pays
 //!   zero and emission ends.
 //! - Burn-less epochs mint nothing and nothing is carried over — that
 //!   rule lives in the settlement derivation (SIP-2), not here; this
 //!   function is the *ceiling* for an epoch, not a guarantee.
 
 /// Full per-epoch reward from the end of the slow start through era 0,
-/// in gwei (6,250 SOVA).
-pub const BASE_EPOCH_REWARD_GWEI: u128 = 6_250_000_000_000;
+/// in gwei (2,083.33332 SOVA): 6,250 SOVA ÷ 3 (ZIP 218), rounded down to
+/// a multiple of `SLOW_START_EPOCHS` so the ramp step is exact (13,333
+/// gwei below a true third).
+pub const BASE_EPOCH_REWARD_GWEI: u128 = 2_083_333_320_000;
 
-/// Epochs per halving era: Zcash's halving interval (~4 years at 75 s).
-pub const ERA_EPOCHS: u64 = 1_680_000;
+/// Epochs per halving era: Zcash's post-NU7 halving interval (ZIP 218,
+/// 5,040,000 blocks, ~4 years at 25 s).
+pub const ERA_EPOCHS: u64 = 5_040_000;
 
-/// Length of the linear slow-start ramp (~17.4 days at 75 s); the
-/// number is Zcash's own slow-start block count.
-pub const SLOW_START_EPOCHS: u64 = 20_000;
+/// Length of the linear slow-start ramp (~17.4 days at 25 s): Zcash's own
+/// 20,000-block slow start, scaled by 3 with the block rate.
+pub const SLOW_START_EPOCHS: u64 = 60_000;
 
 /// Exact ramp step: `BASE_EPOCH_REWARD_GWEI / SLOW_START_EPOCHS`
-/// (0.3125 SOVA). The const assert below guarantees exact division.
+/// (34,722,222 gwei). The const assert below guarantees exact division.
 pub const SLOW_START_STEP_GWEI: u128 = BASE_EPOCH_REWARD_GWEI / SLOW_START_EPOCHS as u128;
 
 const _: () = assert!(
@@ -37,8 +44,8 @@ const _: () = assert!(
     "slow-start step must divide the base reward exactly"
 );
 
-/// The era of first zero reward: `BASE >> 43 == 0` (era 42 pays 1 gwei).
-pub const FINAL_ERA: u64 = 43;
+/// The era of first zero reward: `BASE >> 41 == 0` (era 40 pays 1 gwei).
+pub const FINAL_ERA: u64 = 41;
 
 /// Scheduled reward ceiling for the 0-based epoch index `E` (epochs
 /// since network genesis; the epoch at Sova height `H` has index
@@ -114,16 +121,20 @@ mod tests {
             epoch_reward_gwei(2 * ERA_EPOCHS),
             BASE_EPOCH_REWARD_GWEI / 4
         );
-        // Base = 2^10 × 5^14: exactly divisible through era 10, floored after.
+        // Base = 2^6 × 32,552,083,125: exactly divisible through era 6, floored after.
+        assert_eq!(
+            epoch_reward_gwei(6 * ERA_EPOCHS),
+            BASE_EPOCH_REWARD_GWEI / 64
+        );
         assert_eq!(
             epoch_reward_gwei(10 * ERA_EPOCHS),
             BASE_EPOCH_REWARD_GWEI >> 10
         );
-        assert_eq!(epoch_reward_gwei(42 * ERA_EPOCHS), 1, "era 42 pays 1 gwei");
+        assert_eq!(epoch_reward_gwei(40 * ERA_EPOCHS), 1, "era 40 pays 1 gwei");
         assert_eq!(
-            epoch_reward_gwei(43 * ERA_EPOCHS),
+            epoch_reward_gwei(41 * ERA_EPOCHS),
             0,
-            "era 43 ends emission"
+            "era 41 ends emission"
         );
         assert_eq!(epoch_reward_gwei(u64::MAX), 0, "no overflow at the far end");
     }
@@ -136,7 +147,7 @@ mod tests {
         // Ramp: exact arithmetic series.
         let ramp: u128 = SLOW_START_STEP_GWEI
             * ((SLOW_START_EPOCHS as u128) * (SLOW_START_EPOCHS as u128 + 1) / 2);
-        assert_eq!(ramp, 62_503_125 * GWEI_PER_SOVA);
+        assert_eq!(ramp, 62_501_041_266_660_000);
 
         // Era 0 after the ramp, then every era to extinction.
         let mut total = ramp + (ERA_EPOCHS - SLOW_START_EPOCHS) as u128 * BASE_EPOCH_REWARD_GWEI;
@@ -147,7 +158,8 @@ mod tests {
         // Below the 21B mark by the slow-start shortfall + halving dust.
         assert!(total < 21_000_000_000 * GWEI_PER_SOVA);
         assert!(total > 20_900_000_000 * GWEI_PER_SOVA);
-        // The pinned asymptote: 20,937,503,124.97144 SOVA, in gwei.
-        assert_eq!(total, 20_937_503_124_971_440_000);
+        // The pinned asymptote: 20,937,500,907.57594 SOVA, in gwei
+        // (revision 1, at 75 s: 20,937,503,124.97144).
+        assert_eq!(total, 20_937_500_907_575_940_000);
     }
 }

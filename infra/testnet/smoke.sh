@@ -27,10 +27,19 @@
 #                          non-seed host (incl. byo ones); every private
 #                          port (authrpc, RPC, zebrad RPC, faucet, checkout
 #                          relayer) closed on every host
-#   ./smoke.sh hosts       over SSH: services active, "enforcing
+#   ./smoke.sh hosts [--only <server>]
+#                          over SSH: services active, "enforcing
 #                          settlements" logged, SIP-7 feed logged (with
 #                          SOVA_SIP7=1), zebrad synced, epoch lag,
-#                          zero C5 rejections, no-keys check on public boxes
+#                          zero C5 rejections, no-keys check on public boxes;
+#                          the running zebrad is ZEBRA_IMAGE_DIGEST (when
+#                          pinned) and, with NU7_ACTIVATION_HEIGHT set,
+#                          activates NU7 (77190ad9) at it. A paused keeper
+#                          (deploy.sh keeper-pause) passes with its node and
+#                          burner stopped; a muted host (deploy.sh mute) is
+#                          noted. --only: that host alone (a rollout's gate:
+#                          hosts not yet rolled fail the digest and NU7
+#                          checks by design)
 #   ./smoke.sh balance <0xEVM> [minutes]
 #                          the stranger test's last step: poll the public
 #                          RPC until <0xEVM> holds SOVA (a burn was minted)
@@ -46,6 +55,16 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 CMD="${1:-all}"
 shift || true
+ONLY=""
+if [[ "${CMD}" == hosts ]]; then
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --only) ONLY="${2:?--only needs a server name}"; shift ;;
+      *) die "unknown argument '$1' (smoke.sh hosts [--only <server>])" ;;
+    esac
+    shift
+  done
+fi
 load_config
 validate_servers
 validate_edge_config
@@ -58,6 +77,10 @@ PASS=0
 FAIL=0
 ok() { PASS=$((PASS + 1)); printf 'ok    %s\n' "$*"; }
 bad() { FAIL=$((FAIL + 1)); printf 'FAIL  %s\n' "$*"; }
+note() { printf 'note  %s\n' "$*"; }
+if [[ -n "${ONLY}" ]] && ! server_entry "${ONLY}" >/dev/null; then
+  die "--only ${ONLY}: no such server in SERVERS"
+fi
 
 pub_rpc() { # method [params-json]
   curl -fsS --max-time 15 -H 'Content-Type: application/json' \
@@ -411,13 +434,46 @@ check_keeper_sealer() { # name logged-address
   fi
 }
 
+# The running zebrad's image (smoke's "zimg" line: the ref the container
+# was started with, then its RepoDigests) against ZEBRA_IMAGE_DIGEST.
+check_zebra_image() { # name image-ref repo-digests
+  local name="$1" ref="${2:-}" digests="${3:-}"
+  if [[ -z "${ref}" ]]; then
+    bad "${name}: no zebrad container (docker inspect zebrad)"
+  elif [[ -z "${ZEBRA_IMAGE_DIGEST:-}" ]]; then
+    ok "${name}: zebrad runs ${ref} (ZEBRA_IMAGE_DIGEST not pinned: not compared)"
+  elif [[ "${ref}" == *"@${ZEBRA_IMAGE_DIGEST}" || ",${digests}," == *"@${ZEBRA_IMAGE_DIGEST},"* ]]; then
+    ok "${name}: zebrad runs ZEBRA_IMAGE_DIGEST (${ref})"
+  else
+    bad "${name}: zebrad runs ${ref} (${digests:-no repo digest}), not ZEBRA_IMAGE_DIGEST ${ZEBRA_IMAGE_DIGEST}: roll it (./deploy.sh --only ${name} --zebra-only)"
+  fi
+}
+
+# NU7 as the host's zebrad knows it (smoke's "znu7" line: getblockchaininfo
+# upgrades["77190ad9"].activationheight, "none", or "?" when zebrad didn't
+# answer) against NU7_ACTIVATION_HEIGHT.
+check_zebra_nu7() { # name activation-height
+  local name="$1" at="${2:-?}"
+  [[ -n "${NU7_ACTIVATION_HEIGHT:-}" ]] || return 0
+  if [[ "${at}" == "${NU7_ACTIVATION_HEIGHT}" ]]; then
+    ok "${name}: zebrad activates NU7 (77190ad9) at ${at} = NU7_ACTIVATION_HEIGHT"
+  elif [[ "${at}" == none ]]; then
+    bad "${name}: zebrad has no NU7 upgrade (77190ad9), NU7_ACTIVATION_HEIGHT is ${NU7_ACTIVATION_HEIGHT}: a pre-NU7 zebrad (./deploy.sh --only ${name} --zebra-only)"
+  elif [[ "${at}" == "?" ]]; then
+    bad "${name}: zebrad's getblockchaininfo didn't answer: NU7 not checked"
+  else
+    bad "${name}: zebrad activates NU7 at ${at}, NU7_ACTIVATION_HEIGHT is ${NU7_ACTIVATION_HEIGHT}"
+  fi
+}
+
 cmd_hosts() {
-  local s name role out
+  local s name role out paused
   for s in "${SERVERS[@]}"; do
     name="$(srv_name "${s}")"
     role="$(srv_role "${s}")"
+    [[ -z "${ONLY}" || "${ONLY}" == "${name}" ]] || continue
     # shellcheck disable=SC2016 # expanded on the host
-    out="$(kit_ssh "${name}" '
+    out="$(kit_ssh "${name}" "ZP=${ZEBRA_RPC_PORT}"'
       for u in zebrad sova-node sova-faucet sova-checkout-relayer cloudflared sova-health.timer; do
         systemctl is-enabled --quiet $u 2>/dev/null && echo "svc $u $(systemctl is-active $u)"
       done
@@ -431,11 +487,32 @@ cmd_hosts() {
       if systemctl is-enabled --quiet sova-node 2>/dev/null; then
         echo "p2p $(sudo grep -c "^SOVA_P2P_PEERS=enode" /etc/sova/sova-node.env 2>/dev/null) $(sudo journalctl -u sova-node --since -5min --no-pager -q 2>/dev/null | grep -o "connected_peers=[0-9]*" | tail -1 | cut -d= -f2)"
       fi
+      zid=$(sudo docker inspect zebrad --format "{{.Image}}" 2>/dev/null)
+      echo "zimg $(sudo docker inspect zebrad --format "{{.Config.Image}}" 2>/dev/null) $([ -n "$zid" ] && sudo docker image inspect "$zid" --format "{{range .RepoDigests}}{{.}},{{end}}" 2>/dev/null)"
+      echo "znu7 $(curl -fsS -m 10 -H "Content-Type: application/json" --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getblockchaininfo\",\"params\":[]}" "http://127.0.0.1:$ZP" 2>/dev/null | jq -r ".result.upgrades[\"77190ad9\"].activationheight // \"none\"" 2>/dev/null || echo "?")"
+      [ -f /etc/sova/.keeper-paused ] && echo "paused $(sed -n "s/^since=//p" /etc/sova/.keeper-paused)"
+      [ -f /etc/sova/.mute-until ] && echo "muted $(head -1 /etc/sova/.mute-until)"
       sudo /usr/local/lib/sova-infra/health.sh 2>/dev/null | sed "s/^/health /"
     ' 2>&1)" || { bad "${name}: ssh failed"; continue; }
+    # A paused keeper (deploy.sh keeper-pause) has its node and burner
+    # stopped on purpose.
+    paused=0
+    grep -q '^paused ' <<<"${out}" && paused=1
     while read -r kind a b rest; do
       case "${kind}" in
-        svc) [[ "${b}" == active ]] && ok "${name}: ${a} active" || bad "${name}: ${a} is ${b}" ;;
+        svc)
+          if [[ "${b}" == active ]]; then
+            ok "${name}: ${a} active"
+          elif [[ ${paused} == 1 && ("${a}" == sova-node || "${a}" == sova-keeper) ]]; then
+            ok "${name}: ${a} is ${b}: keeper paused (planned; ./deploy.sh keeper-resume)"
+          else
+            bad "${name}: ${a} is ${b}"
+          fi
+          ;;
+        zimg) check_zebra_image "${name}" "${a:-}" "${b:-}" ;;
+        znu7) check_zebra_nu7 "${name}" "${a:-?}" ;;
+        paused) note "${name}: keeper paused since ${a:-?} (epoch s; /etc/sova/.keeper-paused)" ;;
+        muted) note "${name}: Telegram alerts muted until ${a:-?} (epoch s; planned maintenance, /etc/sova/.mute-until)" ;;
         c5) ok "${name}: C5 enforcing against its own zebrad" ;;
         c5rejects) [[ "${a}" == 0 ]] && ok "${name}: 0 C5 rejections in the last hour" || bad "${name}: ${a} C5 rejections in the last hour" ;;
         sip7feed)
@@ -446,6 +523,7 @@ cmd_hosts() {
           ;;
         sealer) [[ "${role}" == keeper && "${SOVA_SIP6}" == 1 ]] && check_keeper_sealer "${name}" "${a:-}" ;;
         p2p)
+          [[ ${paused} == 0 ]] || continue # the node is stopped on purpose
           # Private hosts can't be dialled (firewall: SSH only), so they
           # must dial the seeds themselves: without SOVA_P2P_PEERS a seed
           # restart leaves them isolated for good (2026-09-25: the keeper

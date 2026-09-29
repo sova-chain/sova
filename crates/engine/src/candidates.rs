@@ -63,14 +63,15 @@ pub const MAX_REPLACE_DEPTH: u64 = 3;
 /// a block with this many blocks built on it.
 pub const SAFE_DEPTH: u64 = MAX_REPLACE_DEPTH;
 
-/// Blocks below the head reported as `finalized`. Must exceed how deep
-/// Zcash itself can still reorganize — Zebra rolls back at most 99 blocks
-/// (`MAX_BLOCK_REORG_HEIGHT`) — because reth refuses any head below the
-/// finalized block it was given (`engine::tree` "too deep reorg"), and a
-/// Zcash reorg unwinds Sova block for block (SIP-4 §7). At 10 (Rob's
-/// 2026-09-23 label) a Zcash reorg deeper than ~9 blocks wedged the node:
-/// it could never re-seal on the new branch (zcash-reorg scenario).
-pub const FINALIZED_DEPTH: u64 = 100;
+/// Blocks below the head reported as `finalized`. Should exceed how deep
+/// Zcash itself can reorganize in practice, because reth refuses any head
+/// below the finalized block it was given (`engine::tree` "too deep
+/// reorg"), and a Zcash reorg unwinds Sova block for block (SIP-4 §7). At
+/// 10 (Rob's 2026-09-23 label) a Zcash reorg deeper than ~9 blocks wedged
+/// the node (zcash-reorg scenario). 300 (Rob, 2026-09-29) keeps ~2 h of
+/// Zcash time at NU7's 25 s blocks, as 100 did at 75 s; Zebra's own
+/// rollback limit (`MAX_BLOCK_REORG_HEIGHT`) is 1,000 since Zebra 5.2.
+pub const FINALIZED_DEPTH: u64 = 300;
 
 /// The canonical-hash lookup, borrowed.
 type Reader<'a> = &'a (dyn Fn(u64) -> Option<[u8; 32]> + Send + Sync);

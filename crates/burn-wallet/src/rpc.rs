@@ -109,6 +109,72 @@ pub struct AddressUtxosAtTip {
     pub height: u64,
 }
 
+/// The consensus branch IDs zebrad reports in `getblockchaininfo`, with the
+/// tip they were read at (one state snapshot, so they agree).
+///
+/// zebrad writes `consensus.chaintip` and `consensus.nextblock` as eight
+/// big-endian hex digits (`ConsensusBranchIdHex` in zebra-rpc), and
+/// computes `nextblock` as the branch of `blocks + 1` -- exactly the branch
+/// its mempool checks a new transaction against. That is the one to sign
+/// for (see [`crate::branch`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(try_from = "BlockchainInfoConsensus")]
+pub struct NextBlockConsensus {
+    /// `blocks`: the tip height.
+    pub tip_height: u64,
+    /// `consensus.chaintip`: the branch ID the tip was validated under.
+    pub chain_tip_branch_id: u32,
+    /// `consensus.nextblock`: the branch ID the next block (and any
+    /// transaction sent now) is validated under.
+    pub next_block_branch_id: u32,
+}
+
+impl NextBlockConsensus {
+    /// The height of the next block, `tip_height + 1`: the height a
+    /// transaction sent now targets. Saturates at `u32::MAX`.
+    #[must_use]
+    pub fn next_height(&self) -> u32 {
+        u32::try_from(self.tip_height.saturating_add(1)).unwrap_or(u32::MAX)
+    }
+
+    /// Whether the next block activates a network upgrade (its branch
+    /// differs from the tip's).
+    #[must_use]
+    pub fn next_block_activates_upgrade(&self) -> bool {
+        self.chain_tip_branch_id != self.next_block_branch_id
+    }
+}
+
+/// The `getblockchaininfo` fields [`NextBlockConsensus`] is read from.
+#[derive(serde::Deserialize)]
+struct BlockchainInfoConsensus {
+    blocks: u64,
+    consensus: ConsensusBranches,
+}
+
+#[derive(serde::Deserialize)]
+struct ConsensusBranches {
+    chaintip: String,
+    nextblock: String,
+}
+
+impl TryFrom<BlockchainInfoConsensus> for NextBlockConsensus {
+    type Error = String;
+
+    fn try_from(info: BlockchainInfoConsensus) -> Result<Self, String> {
+        let parse = |field: &str, value: &str| {
+            crate::branch::parse_branch_id_hex(value).ok_or_else(|| {
+                format!("consensus.{field} {value:?} is not an 8-digit hex branch ID")
+            })
+        };
+        Ok(Self {
+            tip_height: info.blocks,
+            chain_tip_branch_id: parse("chaintip", &info.consensus.chaintip)?,
+            next_block_branch_id: parse("nextblock", &info.consensus.nextblock)?,
+        })
+    }
+}
+
 impl RpcClient {
     /// Constructs a client for the given RPC endpoint, e.g.
     /// `http://127.0.0.1:18232`.
@@ -281,6 +347,19 @@ impl RpcClient {
         self.call_typed("getblockchaininfo", json!([]))
     }
 
+    /// `getblockchaininfo`, reduced to the tip height and the consensus
+    /// branch IDs of the tip and the next block. Transactions are signed
+    /// for [`NextBlockConsensus::next_block_branch_id`].
+    ///
+    /// # Errors
+    ///
+    /// [`RpcError::MalformedResponse`] if `blocks` or
+    /// `consensus.{chaintip,nextblock}` is missing, or a branch ID is not
+    /// eight hex digits.
+    pub fn get_next_block_consensus(&self) -> Result<NextBlockConsensus, RpcError> {
+        self.call_typed("getblockchaininfo", json!([]))
+    }
+
     /// `getaddressutxos {"addresses": [address]}`: every unspent transparent
     /// output paying `address` in the node's best chain (confirmed only --
     /// mempool transactions are not reflected, neither their new outputs nor
@@ -385,6 +464,57 @@ mod tests {
         .unwrap();
         assert!(empty.utxos.is_empty());
         assert_eq!(empty.height, 3_256_842);
+    }
+
+    /// `getblockchaininfo` as zebrad 6.3 answers on the public testnet
+    /// (the `consensus` object verbatim from the laptop's node,
+    /// 2026-09-29; other fields trimmed), and as an NU7 zebrad answers at
+    /// the activation block.
+    #[test]
+    fn reads_the_next_block_branch_from_getblockchaininfo() {
+        let today: NextBlockConsensus = serde_json::from_value(json!({
+            "chain": "test",
+            "blocks": 4_415_198u64,
+            "bestblockhash": "00004c2e982637b3985f2a7b8482aa2c8dcc5bfe6cbafa5b01f57084bbaabbdf",
+            "consensus": {"chaintip": "37a5165b", "nextblock": "37a5165b"},
+        }))
+        .unwrap();
+        assert_eq!(
+            today,
+            NextBlockConsensus {
+                tip_height: 4_415_198,
+                chain_tip_branch_id: 0x37a5_165b,
+                next_block_branch_id: 0x37a5_165b,
+            }
+        );
+        assert_eq!(today.next_height(), 4_415_199);
+        assert!(!today.next_block_activates_upgrade());
+
+        let activation: NextBlockConsensus = serde_json::from_value(json!({
+            "blocks": 49u64,
+            "consensus": {"chaintip": "37a5165b", "nextblock": "77190ad9"},
+        }))
+        .unwrap();
+        assert_eq!(activation.next_block_branch_id, 0x7719_0ad9);
+        assert_eq!(activation.next_height(), 50);
+        assert!(activation.next_block_activates_upgrade());
+    }
+
+    #[test]
+    fn malformed_consensus_fields_are_errors() {
+        for consensus in [
+            json!({"chaintip": "37a5165b"}),
+            json!({"chaintip": "37a5165b", "nextblock": "0x7719ad"}),
+            json!({"chaintip": "37a5165b", "nextblock": 2_000_234_201u64}),
+        ] {
+            assert!(
+                serde_json::from_value::<NextBlockConsensus>(
+                    json!({"blocks": 1, "consensus": consensus})
+                )
+                .is_err()
+            );
+        }
+        assert!(serde_json::from_value::<NextBlockConsensus>(json!({"blocks": 1})).is_err());
     }
 
     /// A one-endpoint HTTP server standing in for zebrad with cookie auth:

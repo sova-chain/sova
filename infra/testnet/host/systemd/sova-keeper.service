@@ -6,6 +6,8 @@
 Description=Sova keeper miner (disclosed)
 Wants=network-online.target zebrad.service
 After=network-online.target zebrad.service
+# Never while the keeper is paused (host/maint.sh keeper-pause).
+ConditionPathExists=!/etc/sova/.keeper-paused
 
 [Service]
 User=sova-keeper

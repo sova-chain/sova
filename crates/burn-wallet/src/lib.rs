@@ -10,6 +10,9 @@
 //! - [`network`] -- the [`Parameters`](zcash_protocol::consensus::Parameters)
 //!   implementation used for transaction building, including a regtest
 //!   configuration matching `box/regtest`'s `zebrad.toml`.
+//! - [`branch`] -- the consensus branch ID a transaction is signed for,
+//!   taken from zebrad's next block and checked, and the expiry delta
+//!   that goes with it (NU7-aware).
 //! - [`tx`] -- construction and ZIP-244 signing of SIP-1 burn transactions
 //!   (and SIP-8 anchored ones, which also reference a Sova block), and of
 //!   plain transparent transfers (used by `sova-faucet`).
@@ -18,6 +21,7 @@
 //! - [`rpc`] -- a minimal JSON-RPC client for a `zebrad`-compatible node.
 //! - [`utxo`] -- coinbase UTXO discovery over that RPC client.
 
+pub mod branch;
 pub mod fee;
 pub mod keys;
 pub mod network;
@@ -25,7 +29,8 @@ pub mod rpc;
 pub mod tx;
 pub mod utxo;
 
+pub use branch::BranchError;
 pub use keys::{Keypair, KeystoreError};
 pub use network::Network;
-pub use rpc::{RpcClient, RpcError};
+pub use rpc::{NextBlockConsensus, RpcClient, RpcError};
 pub use tx::{BuiltBurnTx, BuiltTransferTx, BurnTxError, BurnTxRequest, TransferTxRequest, Utxo};

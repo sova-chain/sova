@@ -32,7 +32,8 @@
 Sova is an EVM chain that runs beside Zcash. Every Sova node runs its own
 Zcash node, so contracts can check real ZEC payments and every node checks
 every mint. SOVA, the gas coin, is minted only by burning ZEC. One Sova block
-follows each Zcash block.
+follows each Zcash block. Every SOVA begins as ZEC burned for good. Sova's
+footprint on Zcash is the burns, at Zcash's normal fee.
 
 > **Status: pre-release and unaudited.** The public testnet runs on Zcash
 > testnet, so mining costs only testnet ZEC. Read [`SECURITY.md`](SECURITY.md)
@@ -76,9 +77,9 @@ laptop, up to 25 on a busy one. Details in [`box/README.md`](box/README.md).
   burner seals the block ([SIP-2](sips/sip-2.md)).
 - **Exact mints.** Each epoch's reward is a 10% sealer tip plus a pool split
   pro rata by burn weight, paid as the block's withdrawals; the shares always
-  sum to the full reward. [SIP-3](sips/sip-3.md) sets the schedule: 6,250
-  SOVA per epoch after a 20,000-epoch slow start, halving every 1,680,000
-  epochs.
+  sum to the full reward. [SIP-3](sips/sip-3.md) sets the schedule:
+  2,083.33332 SOVA per 25-second epoch after a 60,000-epoch slow start,
+  halving every 5,040,000 epochs (about four years).
 - **Every node checks every mint.** Each node runs its own `zebrad`,
   re-derives every mint from it, and rejects blocks that disagree, on every
   import path, including the history a new node syncs.

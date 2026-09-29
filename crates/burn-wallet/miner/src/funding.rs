@@ -225,7 +225,7 @@ pub(crate) fn merge(utxos: &mut Vec<TrackedUtxo>, found: Vec<TrackedUtxo>) -> us
 pub(crate) mod tests {
     use std::cell::{Cell, RefCell};
 
-    use burn_wallet::rpc::AddressUtxo;
+    use burn_wallet::rpc::{AddressUtxo, NextBlockConsensus};
     use zcash_primitives::transaction::Transaction;
     use zcash_protocol::consensus::BranchId;
 
@@ -260,6 +260,9 @@ pub(crate) mod tests {
         pub sent: RefCell<Vec<String>>,
         /// Scripted `send_raw` answers, consumed front first.
         pub send_script: RefCell<Vec<SendScript>>,
+        /// The consensus branch ID `next_block` reports; `None`: NU5, what
+        /// `box/regtest`'s zebrad reports.
+        pub next_branch: Cell<Option<u32>>,
     }
 
     /// A raw tx's inputs (txid, vout) and output values.
@@ -415,6 +418,14 @@ pub(crate) mod tests {
     impl Node for FakeNode {
         fn tip_height(&self) -> Result<u64, RpcError> {
             Ok(self.tip.get())
+        }
+        fn next_block(&self) -> Result<NextBlockConsensus, RpcError> {
+            let branch = self.next_branch.get().unwrap_or(u32::from(BranchId::Nu5));
+            Ok(NextBlockConsensus {
+                tip_height: self.tip.get(),
+                chain_tip_branch_id: branch,
+                next_block_branch_id: branch,
+            })
         }
         fn address_utxos(&self, _address: &str) -> Result<AddressSnapshot, RpcError> {
             self.address_lookups.set(self.address_lookups.get() + 1);

@@ -1,19 +1,18 @@
 ---
-// Why Sova: who it is for, how it compares with wrapped ZEC, what makes it
-// open, and what is new (each new thing linked to where the paper shows it).
-// Site v4: contracts that read Zcash lead, burn-mining second; positive
-// framing (Rob, 2026-09-23). Sources: docs/marketing/{positioning,angles,
-// agent-keeper}.md, docs/ROADMAP.md, sips/sip-{1,2,3,4}*.md, the paper's own
-// sources. Every claim is in site/README.md. The "what it isn't" list lives
-// on /press.
+// Why Sova: who it is for, the fair launch, how it compares with wrapped ZEC,
+// and the plan (trimmed to these four, Rob, 2026-09-29; the mechanism and
+// privacy live on /paper, the risks on /testnet, and one line points there).
+// Positive framing (Rob, 2026-09-23). Sources: docs/marketing/{positioning,
+// angles,agent-keeper}.md, docs/ROADMAP.md, sips/sip-{1,2,3,4}*.md. Every
+// claim is in site/README.md. The press guidance on how to describe Sova
+// lives on /press.
 //
-// Fair launch, experiment and the plan (Rob, 2026-09-23): the fair-launch
-// section says what Sova doesn't have, plainly, the one place the site
-// describes Sova by negatives. Sources: sips/sip-3.md (SOVA minted only by
-// burns), bin/sova/src/chain.rs (`testnet_genesis_alloc_is_empty`),
-// docs/ROADMAP.md ("What we won't do"). Dates are Rob's targets.
+// Fair launch and the plan (Rob, 2026-09-23): the fair-launch section says
+// what Sova doesn't have, plainly, the one place the site describes Sova by
+// negatives. Sources: sips/sip-3.md (SOVA minted only by burns),
+// bin/sova/src/chain.rs (`testnet_genesis_alloc_is_empty`), docs/ROADMAP.md
+// ("What we won't do"). Dates are Rob's targets.
 import Site from '../layouts/Site.astro';
-import Tag from '../components/Tag.astro';
 
 const who = [
   { h: 'ZEC holders.', t: 'Spend ZEC on contracts from the wallet you already use, shielded balance included. Or burn some and mine SOVA.' },
@@ -42,26 +41,10 @@ const plan = [
   { when: 'now', h: 'Public testnet.', t: 'Live, mined with testnet ZEC.' },
   { when: 'Q1 2027', h: 'Mainnet.', t: 'Expected.' },
 ];
-
-const grassroots = [
-  { h: 'Anyone can mine, in any amount.', t: 'From 1,000 zatoshis up. Mining is burning.' },
-  { h: 'Rules change in the open.', t: 'Through SIPs, in the repository.' },
-  { h: 'Runs on a laptop and an SSD.', t: 'A full Zcash node and a full Sova node, on one machine.' },
-];
-
-const fresh = [
-  { h: 'Contracts that read Zcash.', t: 'A contract verifies that a ZEC payment landed, and how deep, then acts: a sale, a swap, a mint.', proof: 'paper §8', href: '/paper#reading-zcash', k: 'testnet' },
-  { h: 'Burn-mining.', t: 'Issuance comes only from destroyed ZEC, split among that epoch’s burners.', proof: 'paper §4', href: '/paper#issuance' },
-  { h: 'Anchored to Zcash.', t: 'One Sova block per Zcash block, ordered by Zcash’s proof-of-work.', proof: 'paper §3', href: '/paper#epochs' },
-  { h: 'Every node checks every mint.', t: 'Against its own Zcash node, synced history included.', proof: 'paper §7', href: '/paper#verification' },
-  { h: 'The sealer ladder.', t: 'The top burner seals each block. If it is offline, the next in line seals after a short delay.', proof: 'paper §5', href: '/paper#sealing' },
-  { h: 'Its own network protocol.', t: 'Peers announce and serve blocks. Only your own node moves its head.', proof: 'paper §6', href: '/paper#network' },
-  { h: 'Mining by agent.', t: 'An MCP server gives an agent six tools and a hard budget.', proof: 'mine', href: '/mine#agent' },
-];
 ---
 <Site
   title="Why Sova"
-  description="Sova is an EVM chain that reads Zcash: contracts verify ZEC payments on Zcash itself. It is mined by burning ZEC, ordered by Zcash’s proof-of-work, and runs on a laptop."
+  description="Sova is an EVM chain that reads Zcash: contracts verify ZEC payments on Zcash itself. It is mined by burning ZEC, ordered by Zcash’s proof-of-work."
   current="/why"
   cmd="sova --why"
   status="pre-release · public testnet live"
@@ -78,7 +61,7 @@ const fresh = [
   <ul class="rows fair">
     {fair.map((r) => <li><span class="mk">[0]</span><p><b>{r.h}</b> {r.t}</p></li>)}
   </ul>
-  <p class="edge">SOVA is created only by producing blocks. Whoever produces blocks earns it.</p>
+  <p class="edge">SOVA is created only by producing blocks. Whoever produces blocks earns it. Every SOVA begins as ZEC burned for good, and Sova’s footprint on Zcash is the burns, at Zcash’s normal fee.</p>
   <p class="note"># The local box prefunds throwaway dev accounts. They never exist on a public network.</p>
 
   <h2>wrapped ZEC, or Sova</h2>
@@ -90,34 +73,12 @@ const fresh = [
   </div>
   <p>Contracts that read Zcash (<a href="/sips#sip-4">SIP-4</a>) and its shielded pools (<a href="/sips#sip-7">SIP-7</a>) are live on the public testnet.</p>
 
-  <h2>open</h2>
-  <ul class="rows">
-    {grassroots.map((r) => <li><span class="mk">[x]</span><p><b>{r.h}</b> {r.t}</p></li>)}
-  </ul>
-
-  <h2>what’s new</h2>
-  <ol class="reasons">
-    {fresh.map((r, i) => (
-      <li>
-        <span class="n">[{String(i + 1).padStart(2, '0')}]</span>
-        <div>
-          <p class="rh">{r.h} {r.k && <Tag k={r.k} />}</p>
-          <p class="rt">{r.t} <a class="proof" href={r.href}>→ {r.proof}</a></p>
-        </div>
-      </li>
-    ))}
-  </ol>
-
-  <p class="edge">The EVM is public. Privacy is at the funding edge: fund your burn from the shielded pool and the ledger does not link the SOVA to you. <a class="proof" href="/paper#privacy">→ paper §9</a></p>
-
-  <h2>an experiment</h2>
-  <p class="warn">Sova is an experiment: pre-release and unaudited. The code and the specs still change, and testnet state gets reset.</p>
-
   <h2>the plan</h2>
   <ol class="plan">
     {plan.map((r) => <li><span class="when">[{r.when}]</span><p><b>{r.h}</b> {r.t}</p></li>)}
   </ol>
-  <p class="note"># Dates are targets.</p>
+  <p class="warn">Sova is pre-release and unaudited. The code and the specs still change, testnet state gets reset, and dates are targets.</p>
+  <p class="note"># How it works, privacy included, is in <a href="/paper">the whitepaper</a>. The risks are on <a href="/testnet">the testnet page</a>.</p>
 
   <p class="next"><a href="/testnet">Join the testnet</a><a href="/paper">Read the whitepaper</a><a href="/build">Build</a><a href="/mine">Mine</a><a href="/story">The story</a></p>
 </Site>
@@ -139,15 +100,6 @@ const fresh = [
   .diff li.new .mk { color: var(--g); }
   .diff li.new p { color: var(--cream); }
 
-  .reasons { list-style: none; padding: 0; margin: 0; }
-  .reasons li { display: grid; grid-template-columns: 7ch 1fr; gap: 12px; padding: 14px 0; border-top: 1px dashed var(--line); max-width: none; }
-  .reasons li:last-child { border-bottom: 1px dashed var(--line); }
-  .n { color: var(--g3); }
-  .rh .st { font-weight: 400; margin-left: 4px; }
-  .rh { color: var(--g); font-weight: 700; margin: 0 0 3px !important; font-size: 16px; }
-  .rt { margin: 0 !important; }
-  .proof { white-space: nowrap; font-size: 13px; margin-left: 4px; }
-
   .fair .mk { color: var(--g); }
   .note { color: var(--g3); font-size: 13.5px; margin: 0 0 16px !important; }
   .fair + .edge { margin: 4px 0 8px !important; }
@@ -161,9 +113,7 @@ const fresh = [
 
   @media (max-width: 600px) {
     .rows li, .diff li { grid-template-columns: 3ch 1fr; gap: 6px; }
-    .reasons li { grid-template-columns: 6ch 1fr; gap: 8px; }
     .plan li { grid-template-columns: 10ch 1fr; gap: 6px; }
-    .rh { font-size: 15px; }
     .diff { padding: 10px 10px 2px; }
   }
 </style>

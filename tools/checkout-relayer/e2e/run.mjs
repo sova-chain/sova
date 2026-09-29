@@ -12,7 +12,8 @@
 //      1/3 conf -> claimable -> relayer claims -> owl
 //   B  injected wallet reserves -> watcher finds the payment on "zebrad"
 //      (payee output at vout 1) and claims -> page shows the owl untouched
-//   C  phone width; wrong amount paid -> page says so
+//   C  phone width, page clock past NU7's date (the countdown still
+//      follows the anchored 75 s blocks); wrong amount paid -> page says so
 //   D  /ashwings/mint, a newcomer: a wallet on Ethereum that has never seen
 //      Sova and holds no SOVA. Connect: the switch fails the MetaMask-mobile
 //      way (-32603 wrapping 4902), the page adds the chain, the user says no
@@ -245,6 +246,11 @@ async function main() {
   await a.click('#reserve');
   await statusHas(a, 'waiting for payment');
   assert(new URL(a.url()).searchParams.get('r') === '1', 'order #1 in the URL');
+  // The countdown is measured from anchored block times (MockZcash: 75 s
+  // apart), not assumed: blocks left x 75 s.
+  const dlA = BigInt(await a.textContent('#dl'));
+  const minA = `~${Math.ceil((Number(dlA - (await anchor())) * 75) / 60)} min left`;
+  await a.waitForFunction((t) => document.getElementById('dl-min').textContent === t, minA, { timeout: 10000 });
   const qA = await quoteOf(1n);
   assert(qA === 25_000_001n, `quote = price + tag = ${qA} zat`);
   const uriA = `zcash:${sellerT}?amount=0.25000001`;
@@ -333,12 +339,19 @@ async function main() {
   await shot(b, '07-wallet-watcher-minted');
 
   // ---- Flow C ------------------------------------------------------------
-  step('C: phone width, wrong amount');
-  const c = await newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true });
+  step('C: phone width, clock past NU7\'s date, wrong amount');
+  // The page's clock says 2026-10-07 (after NU7's testnet date, where the
+  // fallback is 25 s), but the anchored blocks are 75 s apart: the countdown
+  // follows the blocks.
+  const pastNu7 = { fn: (at) => { const off = at - Date.now(), real = Date.now; Date.now = () => real() + off; }, arg: Date.UTC(2026, 9, 7) };
+  const c = await newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true }, pastNu7);
   await c.goto(PAGE);
   await c.fill('#addr', buyerC.address);
   await c.click('#reserve');
   await statusHas(c, 'waiting for payment');
+  const dlC = BigInt(await c.textContent('#dl'));
+  const minC = `~${Math.ceil((Number(dlC - (await anchor())) * 75) / 60)} min left`;
+  await c.waitForFunction((t) => document.getElementById('dl-min').textContent === t, minC, { timeout: 10000 });
   await shot(c, '08-mobile-pay');
   const qC = await quoteOf(3n);
   const txC = await zcashPay([{ value: qC + 1n, script, addr: sellerT }]);

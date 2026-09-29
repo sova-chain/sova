@@ -7,7 +7,7 @@ import Direction from '../../layouts/Direction.astro';
 import DirSwitch from '../../components/DirSwitch.astro';
 import { owlAscii } from '../../data/owl-ascii';
 import {
-  EDGE_LINE, REWARD_SOVA, HALVING_EPOCHS, SLOW_START_EPOCHS, MIN_BURN_ZAT,
+  EDGE_LINE, REWARD_SOVA, FLAT_REWARD_SOVA, HALVING_EPOCHS, SLOW_START_EPOCHS, MIN_BURN_ZAT,
   notClaims, footerLinks, repo, CLONE,
 } from '../../data/sova';
 
@@ -87,7 +87,7 @@ const PS = 'anon@sova:~$';
           <div class="cols" id="cols"></div>
         </div>
         <pre class="log" id="log" aria-hidden="true"></pre>
-        <p class="sr">An animated, simulated stream: each new Zcash block is followed by one Sova block, which mints {REWARD_SOVA} SOVA if that Zcash block carried burns and nothing if it did not.</p>
+        <p class="sr">An animated, simulated stream: each new Zcash block is followed by one Sova block, which mints {FLAT_REWARD_SOVA} SOVA if that Zcash block carried burns and nothing if it did not.</p>
       </div>
     </section>
 

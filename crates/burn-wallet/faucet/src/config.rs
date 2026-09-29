@@ -92,6 +92,11 @@ pub(crate) struct FaucetConfig {
     /// Seconds `/status` answers are cached (each one queries zebrad).
     #[serde(default = "default_status_cache_secs")]
     pub status_cache_secs: u64,
+    /// Blocks after its target height until a drip expires (an unmined
+    /// drip's inputs are freed then). Unset (the default): 40, or 120 once
+    /// zebrad's next block is NU7 or later (ZIP 218). At least 4.
+    #[serde(default)]
+    pub expiry_delta: Option<u32>,
 }
 
 fn default_listen() -> SocketAddr {
@@ -189,6 +194,14 @@ impl FaucetConfig {
         }
         if self.max_balance_multiple == 0 {
             return invalid("max_balance_multiple must be at least 1".into());
+        }
+        if let Some(delta) = self.expiry_delta
+            && delta < burn_wallet::branch::MIN_TX_EXPIRY_DELTA
+        {
+            return invalid(format!(
+                "expiry_delta = {delta} is below the minimum of {} blocks",
+                burn_wallet::branch::MIN_TX_EXPIRY_DELTA
+            ));
         }
         if let Some(h) = &self.trusted_proxy_header {
             if h.trim().is_empty() {

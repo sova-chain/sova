@@ -65,7 +65,7 @@ fi
 echo "--- running e2e_regtest_burn (crates/burn-wallet) ---"
 (
   cd "${BURN_WALLET_DIR}" &&
-    cargo test --test e2e_regtest_burn -- --ignored --nocapture
+    cargo test --test e2e_regtest_burn -- --ignored --nocapture --exact e2e_regtest_burn
 )
 test_exit_code=$?
 

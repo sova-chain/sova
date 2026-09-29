@@ -6,6 +6,18 @@
 # optionally TELEGRAM_THREAD_ID, a topic in a forum group). The
 # same alert is re-sent at most once an hour.
 #
+# Planned maintenance (host/maint.sh; docs/ops/nu7-upgrade.md K7, K12):
+#   mute         /etc/sova/.mute-until (epoch seconds, then a reason; written
+#                by maint.sh mute, and by setup-host.sh around every zebrad
+#                restart): until then every finding is still logged, ALERT
+#                lines included, but nothing goes to Telegram and no dedupe
+#                stamp is written (a problem that outlasts the mute is sent
+#                at once). The first pass after it expires removes it.
+#   keeper pause /etc/sova/.keeper-paused (maint.sh keeper-pause): the keeper
+#                host logs "keeper paused (planned)" instead of keeper_down,
+#                sova_down and keeper_isolated. The other hosts still report
+#                what the pause does to the network (block_age, epoch_lag).
+#
 # Findings about the whole network (a stall, all-null blocks, an old
 # newest block) look the same from every host, so only the hosts with
 # HEALTH_NETWORK_ALERTS=1 send them: two, so one dead host can't silence
@@ -25,6 +37,20 @@
 #                sova-node have stopped answering.
 #   disk         / and /var/lib/sova >= DISK_ALERT_PCT (default 80)
 #   zebrad lag   estimatedheight - blocks > ZEBRA_LAG_ALERT (default 20)
+#   Zcash fork   (docs/design/nu7-readiness.md §4.2) a zebrad that missed an
+#                upgrade stops at it, or follows an old-rules chain (cheap
+#                on testnet: min-difficulty blocks), and Sova here follows
+#                it. Two checks, each skipped while its setting is empty:
+#                zcash_ref_fork: our zebrad's block hash ZCASH_REF_DEPTH (6)
+#                below its tip differs from every ZCASH_REFERENCE_URLS
+#                source that answers, on every pass for ZCASH_REF_PERSIST_MIN
+#                (6) minutes. Checked every ZCASH_REF_EVERY_MIN (10) while
+#                they agree, every pass while they don't.
+#                zebrad_nu7 / zcash_fork: NU7_ACTIVATION_HEIGHT set, and
+#                zebrad's getblockchaininfo has no NU7 upgrade at it
+#                (zebrad_nu7, before activation: it will stop there), or its
+#                consensus.nextblock / chaintip branch is not NU7's
+#                (0x77190AD9) at or past it (zcash_fork: pre-NU7 zebrad).
 #   epoch lag    (zebrad tip - B + 1) - sova head > EPOCH_LAG_ALERT
 #                (default 10 epochs) for EPOCH_LAG_PERSIST_MIN (default
 #                10) minutes in a row: Zcash testnet mines in bursts and
@@ -111,11 +137,63 @@ REJECT_WINDOW_MIN=10
 # Another node's public RPC to tell "we lag" from "network stalled"
 # (e.g. https://rpc.testnet.sova.io on a seed host). Empty: can't tell.
 HEALTH_REFERENCE_RPC="${HEALTH_REFERENCE_RPC:-}"
+# Independent Zcash sources to compare our zebrad's chain with
+# (check_zcash_reference): comma-separated; a URL with {height} is an
+# explorer API (GET, the JSON's "hash"), one without a Zcash JSON-RPC
+# endpoint (getblockhash). No keys. Empty: not checked.
+ZCASH_REFERENCE_URLS="${ZCASH_REFERENCE_URLS:-}"
+# How deep below our tip to compare (a reorg shallower than this is normal
+# and settles by itself), how long a disagreement must last, and how often
+# to ask while all agree (5 hosts x every 10 min stays far inside the
+# sources' free limits).
+ZCASH_REF_DEPTH=6
+ZCASH_REF_PERSIST_MIN=6
+ZCASH_REF_EVERY_MIN=10
+# NU7's Zcash testnet activation height (ZIP 259; set on 2026-10-05).
+# Empty: the NU7 check is skipped. NU7_BRANCH_ID: ZIP 259's consensus
+# branch ID, as zebrad prints it in getblockchaininfo.
+NU7_ACTIVATION_HEIGHT="${NU7_ACTIVATION_HEIGHT:-}"
+[[ "${NU7_ACTIVATION_HEIGHT}" =~ ^[1-9][0-9]*$ ]] || NU7_ACTIVATION_HEIGHT=""
+NU7_BRANCH_ID=77190ad9
+# Planned maintenance markers (host/maint.sh). A mute ends by itself; one
+# set further out than MUTE_MAX_MIN is refused (a typo must not silence a
+# host for days).
+MUTE_FILE=/etc/sova/.mute-until
+MUTE_MAX_MIN=240
+KEEPER_PAUSED_FILE=/etc/sova/.keeper-paused
 STATE_DIR=/var/lib/sova-health
 mkdir -p "${STATE_DIR}"
 HOST="$(hostname)"
 
 say() { logger -t sova-health -- "$*"; echo "$*"; }
+fmt_time() { date -u -d "@$1" '+%Y-%m-%d %H:%M UTC' 2>/dev/null || date -u -r "$1" '+%Y-%m-%d %H:%M UTC' 2>/dev/null || printf '@%s' "$1"; }
+
+# mute_init: MUTED_UNTIL is the mute's end (epoch seconds) while a planned-
+# maintenance mute is on, else empty. An expired, unreadable or too-long
+# marker is removed, and says so.
+MUTED_UNTIL=""
+mute_init() {
+  local until reason now
+  MUTED_UNTIL=""
+  [[ -f "${MUTE_FILE}" ]] || return 0
+  until="$(sed -n 1p "${MUTE_FILE}" 2>/dev/null)"
+  reason="$(sed -n 2p "${MUTE_FILE}" 2>/dev/null)"
+  now="$(date +%s)"
+  if ! [[ "${until}" =~ ^[0-9]+$ ]]; then
+    rm -f "${MUTE_FILE}"
+    say "mute: ${MUTE_FILE} is unreadable ('${until:0:40}'): removed, alerts on"
+  elif ((until <= now)); then
+    rm -f "${MUTE_FILE}"
+    say "mute: planned maintenance ended at $(fmt_time "${until}")${reason:+ (${reason})}: marker removed, alerts go to Telegram again"
+  elif ((until - now > MUTE_MAX_MIN * 60)); then
+    rm -f "${MUTE_FILE}"
+    say "mute: until $(fmt_time "${until}") is more than ${MUTE_MAX_MIN} min away: refused and removed, alerts on"
+  else
+    MUTED_UNTIL="${until}"
+    say "mute: planned maintenance${reason:+ (${reason})}, no Telegram until $(fmt_time "${until}") ($(((until - now + 59) / 60)) min left); findings are still logged"
+  fi
+  return 0
+}
 
 # A host.env from an older kit sets NULL_RUN_ALERT (a count of null blocks,
 # replaced by NULL_SEALED_MAX_MIN): accepted, ignored, noted.
@@ -125,6 +203,11 @@ say() { logger -t sova-health -- "$*"; echo "$*"; }
 alert() {
   local key="$1"
   shift
+  if [[ -n "${MUTED_UNTIL}" ]]; then
+    # Logged, not sent, no stamp: still true after the mute, it goes out then.
+    say "ALERT ${key}: $* [muted: planned maintenance until $(fmt_time "${MUTED_UNTIL}"), not sent]"
+    return 0
+  fi
   say "ALERT ${key}: $*"
   local stamp="${STATE_DIR}/${key}.last" now
   now="$(date +%s)"
@@ -171,6 +254,103 @@ persisted() {
 rpc() { # url method [params-json]
   curl -fsS --max-time 5 -H 'Content-Type: application/json' \
     --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$2\",\"params\":${3:-[]}}" "$1"
+}
+
+# ---- Zcash fork (docs/design/nu7-readiness.md §4.2) ---------------------------
+# ref_hash <url> <height>: the block hash a reference source gives for
+# <height>, lower-case hex; empty when it doesn't answer or doesn't have it.
+ref_hash() {
+  local url="$1" h="$2" out
+  if [[ "${url}" == *'{height}'* ]]; then
+    out="$(curl -fsS --max-time 10 -A sova-health "${url//\{height\}/${h}}" 2>/dev/null |
+      jq -r '.hash // .blockHash // .result.hash // empty' 2>/dev/null)" || out=""
+  else
+    out="$(rpc "${url}" getblockhash "[${h}]" 2>/dev/null | jq -r '.result // empty' 2>/dev/null)" || out=""
+  fi
+  out="$(tr 'A-F' 'a-f' <<<"${out}")"
+  [[ "${out}" =~ ^[0-9a-f]{64}$ ]] && printf '%s' "${out}"
+}
+
+ref_name() { local x="${1#*://}"; printf '%s' "${x%%/*}"; }
+
+# Our zebrad's chain against independent sources: the hash at tip -
+# ZCASH_REF_DEPTH. Every source that answers disagrees, for
+# ZCASH_REF_PERSIST_MIN: our zebrad is on another chain (a pre-NU7 zebrad
+# following old-rules blocks, or a deep reorg it missed), and Sova here
+# follows it. A source that disagrees while another agrees with us is
+# logged: that source is the odd one. None answering is not a finding.
+check_zcash_reference() { # tip
+  [[ -n "${ZCASH_REFERENCE_URLS}" && "$1" =~ ^[0-9]+$ ]] || return 0
+  local h=$(($1 - ZCASH_REF_DEPTH)) ours url urls theirs agree=0 differ="" asked=0 next="${STATE_DIR}/zcash_ref.next" now
+  now="$(date +%s)"
+  if [[ -f "${next}" ]] && ((now < $(cat "${next}"))); then
+    return 0 # agreed at the last check; next one after ZCASH_REF_EVERY_MIN
+  fi
+  ours="$(rpc "${ZEBRA_URL}" getblockhash "[${h}]" 2>/dev/null | jq -r '.result // empty' 2>/dev/null)" || ours=""
+  if ! [[ "${ours}" =~ ^[0-9a-fA-F]{64}$ ]]; then
+    say "zcash reference: our zebrad gave no hash for ${h}; not judged this pass"
+    return 0
+  fi
+  ours="$(tr 'A-F' 'a-f' <<<"${ours}")"
+  IFS=, read -ra urls <<<"${ZCASH_REFERENCE_URLS}"
+  for url in ${urls[@]+"${urls[@]}"}; do
+    [[ -n "${url}" ]] || continue
+    asked=$((asked + 1))
+    theirs="$(ref_hash "${url}" "${h}")"
+    if [[ -z "${theirs}" ]]; then
+      say "zcash reference: $(ref_name "${url}") gave no hash for ${h}"
+    elif [[ "${theirs}" == "${ours}" ]]; then
+      agree=$((agree + 1))
+    else
+      differ+="${differ:+, }$(ref_name "${url}") has ${theirs:0:16}..."
+    fi
+  done
+  if ((agree > 0)); then
+    say "zcash reference: block ${h} (tip - ${ZCASH_REF_DEPTH}) is ${ours:0:16}... here and at ${agree} of ${asked} reference(s)${differ:+; but ${differ}: that source is on another chain}"
+    clear_alert zcash_ref_fork
+    echo $((now + ZCASH_REF_EVERY_MIN * 60)) >"${next}"
+  elif [[ -z "${differ}" ]]; then
+    say "zcash reference: none of ${asked} reference(s) answered for block ${h}; not judged this pass"
+  elif ! persisted zcash_ref_fork "${ZCASH_REF_PERSIST_MIN}"; then
+    say "zcash reference: block ${h} is ${ours:0:16}... here, but ${differ}; under ${ZCASH_REF_PERSIST_MIN} min so far (a reorg settles in minutes)"
+  else
+    alert zcash_ref_fork "ZCASH FORK? zebrad here is on another chain than every reference that answers, for ${ZCASH_REF_PERSIST_MIN}+ min: block ${h} (tip - ${ZCASH_REF_DEPTH}) is ${ours:0:16}... here, but ${differ}. Sova on this host follows zebrad. A zebrad that missed a network upgrade (NU7) follows an old-rules chain: check its image and getblockchaininfo; if the keeper burns into this chain, stop it (docs/design/nu7-readiness.md §4.2)"
+  fi
+}
+
+# NU7 (NU7_ACTIVATION_HEIGHT set): zebrad must know NU7 at that height
+# before it, and be on NU7's branch from it on. Before: an upgrade list
+# without NU7 there is a zebrad that will stop at the height (zebrad_nu7).
+# At or past it: a next-block or tip branch other than NU7's is a pre-NU7
+# zebrad, stalled at the height - 1 or following an old-rules chain
+# (zcash_fork). getblockchaininfo's upgrades map is keyed by branch ID.
+check_nu7() { # getblockchaininfo-json tip
+  [[ -n "${NU7_ACTIVATION_HEIGHT}" && "$2" =~ ^[0-9]+$ ]] || return 0
+  local info="$1" tip="$2" H="${NU7_ACTIVATION_HEIGHT}" at next chaintip
+  at="$(jq -r --arg b "${NU7_BRANCH_ID}" '.result.upgrades[$b].activationheight // empty' <<<"${info}" 2>/dev/null)"
+  next="$(jq -r '.result.consensus.nextblock // "?"' <<<"${info}" 2>/dev/null | tr 'A-F' 'a-f')"
+  chaintip="$(jq -r '.result.consensus.chaintip // "?"' <<<"${info}" 2>/dev/null | tr 'A-F' 'a-f')"
+  if ((tip + 1 < H)); then
+    clear_alert zcash_fork
+    if [[ "${at}" == "${H}" ]]; then
+      say "nu7: zebrad activates NU7 (${NU7_BRANCH_ID}) at ${H}, $((H - tip)) blocks from its tip ${tip}"
+      clear_alert zebrad_nu7
+    elif [[ -z "${at}" ]]; then
+      alert zebrad_nu7 "zebrad here has no NU7 upgrade (branch ${NU7_BRANCH_ID}); NU7 activates at Zcash height ${H}, $((H - tip)) blocks from its tip ${tip}. Upgrade zebrad (ZEBRA_IMAGE + ZEBRA_IMAGE_DIGEST, deploy.sh) before then, or it stops at ${H} or follows an old-rules chain"
+    else
+      alert zebrad_nu7 "zebrad here activates NU7 at ${at}, but NU7_ACTIVATION_HEIGHT is ${H}: a zebrad for another NU7 height, or a wrong NU7_ACTIVATION_HEIGHT in config.env"
+    fi
+    return 0
+  fi
+  clear_alert zebrad_nu7
+  if [[ "${next}" == "${NU7_BRANCH_ID}" ]] && { ((tip < H)) || [[ "${chaintip}" == "${NU7_BRANCH_ID}" ]]; }; then
+    say "nu7: zebrad is on NU7 (tip ${tip}, activation ${H}, chaintip ${chaintip}, nextblock ${next})"
+    clear_alert zcash_fork
+  elif ((tip < H)); then
+    alert zcash_fork "zebrad here is at ${tip}, one block before NU7 (${H}), but will build the next block on branch ${next}, not NU7's ${NU7_BRANCH_ID}: a pre-NU7 zebrad; it stops at ${tip} or follows an old-rules chain, and Sova here with it. Upgrade zebrad (docs/design/nu7-readiness.md §4.2)"
+  else
+    alert zcash_fork "ZCASH FORK: zebrad here is at ${tip}, past NU7's activation height ${H}, on branch ${chaintip} (next ${next}), not NU7's ${NU7_BRANCH_ID}: a pre-NU7 zebrad following an old-rules chain, and Sova here follows it. Upgrade zebrad; stop the keeper if it burns here (docs/design/nu7-readiness.md §4.2)"
+  fi
 }
 
 # ---- block latency (docs/design/faster-blocks.md §4) -------------------------------
@@ -290,11 +470,25 @@ check_null_run() { # head
   net_alert null_run "${what}: nobody is burning, so no transaction can be mined${keeper}"
 }
 
+# The keeper pause (host/maint.sh keeper-pause): planned, not a fault.
+keeper_paused() { [[ -f "${KEEPER_PAUSED_FILE}" ]]; }
+paused_text() {
+  local since reason
+  since="$(sed -n 's/^since=//p' "${KEEPER_PAUSED_FILE}" 2>/dev/null)"
+  reason="$(sed -n 's/^reason=//p' "${KEEPER_PAUSED_FILE}" 2>/dev/null)"
+  [[ "${since}" =~ ^[0-9]+$ ]] && since=" since $(fmt_time "${since}")" || since=""
+  printf 'keeper paused (planned)%s%s: sova-keeper and sova-node stopped by keeper-pause, no burns or blocks from this keeper; ./deploy.sh keeper-resume starts them' \
+    "${since}" "${reason:+ (${reason})}"
+}
+
 # The keeper host's own burner (a host finding, from that host). It stops
 # by design when its per-run budget is spent; either way blocks go null.
 check_keeper() {
   systemctl cat sova-keeper >/dev/null 2>&1 || return 0
-  if systemctl is-active --quiet sova-keeper; then
+  if keeper_paused; then
+    say "$(paused_text)"
+    clear_alert keeper_down
+  elif systemctl is-active --quiet sova-keeper; then
     clear_alert keeper_down
   else
     alert keeper_down "sova-keeper is $(systemctl is-active sova-keeper 2>/dev/null): nothing here is burning (budget spent? journalctl -u sova-keeper)"
@@ -468,6 +662,19 @@ check_memory() {
     awk 'NR <= 3 { printf "%s%s %d MB", (NR > 1 ? ", " : ""), $2, $1 / 1024 }')"
   alert mem_low "only ${avail_mb} MB available (alert under ${MEM_ALERT_MB} MB, ${passes} passes in a row); swap used ${swap}; top RSS: ${top:-?}"
 }
+# The keeper's own node, stopped by keeper-pause: says so, and the sova-node
+# checks below are skipped (no sova_down, keeper_isolated).
+node_paused() {
+  keeper_paused || return 1
+  systemctl is-active --quiet sova-node && return 1
+  say "sova-node stopped: $(paused_text)"
+  clear_alert sova_down
+  clear_alert keeper_no_peers
+  clear_alert keeper_isolated
+  return 0
+}
+
+mute_init
 check_memory
 check_keeper
 
@@ -501,10 +708,12 @@ else
   else
     clear_alert zebrad_lag
   fi
+  check_nu7 "${zinfo}" "${ztip}"
+  check_zcash_reference "${ztip}"
 fi
 
 # ---- sova node ------------------------------------------------------------------
-if systemctl is-enabled --quiet sova-node 2>/dev/null; then
+if systemctl is-enabled --quiet sova-node 2>/dev/null && ! node_paused; then
   SOVA_URL="http://127.0.0.1:${SOVA_HTTP_PORT:-8545}"
   if ! systemctl is-active --quiet sova-node; then
     alert sova_down "sova-node is not running"

@@ -15,3 +15,6 @@ A SIP starts as an idea in the
 [SIPs category of Discussions](https://github.com/sova-chain/sova/discussions/categories/sips),
 then opens as a pull request to `sips/`. See
 [`CONTRIBUTING.md`](../../../CONTRIBUTING.md).
+
+Ideas that could become SIPs, from following NU7 to wallet-native burns:
+[What could come next](../../../docs/ideas/future-sips.md).

@@ -234,9 +234,9 @@ wait_for_balance_change() {
 # ever changes, the grep below fails LOUDLY and immediately, before any
 # live regtest/build time is spent -- update EXPECTED_REWARD_WEI here (and
 # TWO_EPOCH_REWARD_WEI) to match.
-# Since C8 (SIP-3 wiring) the draft constant aliases the schedule's base
-# reward; the value is unchanged (6_250_000_000_000 gwei = 6,250 SOVA), so
-# the guard follows the alias to its one definition.
+# Since SIP-3 revision 2 (ZIP 218) the draft constant is a literal again
+# (6,250 SOVA, the flat regtest/testnet reward); the alias form is still
+# accepted for older trees.
 DRIVER_RS="${ROOT}/crates/engine/src/driver.rs"
 SCHEDULE_RS="${ROOT}/crates/consensus/src/schedule.rs"
 DRIVER_CONST_LINE="$(grep -F 'pub const DRAFT_EPOCH_REWARD_GWEI' "${DRIVER_RS}" 2>/dev/null || true)"

@@ -41,12 +41,16 @@ export const CONTRACTS = {
 // The owner-picked positioning line (docs/marketing/positioning.md).
 export const EDGE_LINE = 'The programmable edge of the shielded pool.';
 
-// Constants from sips/sip-3.md (Constants) and sips/sip-1.md (dust floor).
-export const REWARD_SOVA = '6,250';
-export const HALVING_EPOCHS = '1,680,000';
-export const SLOW_START_EPOCHS = '20,000';
+// Constants from sips/sip-3.md (Constants, revision 2: Zcash NU7 / ZIP 218)
+// and sips/sip-1.md (dust floor). REWARD_SOVA is mainnet's full per-epoch
+// reward after the slow start; the public testnet and regtest mint a flat
+// FLAT_REWARD_SOVA every epoch (sips/sip-3.md, Revision 2).
+export const REWARD_SOVA = '2,083.33332';
+export const FLAT_REWARD_SOVA = '6,250';
+export const HALVING_EPOCHS = '5,040,000';
+export const SLOW_START_EPOCHS = '60,000';
 export const MIN_BURN_ZAT = '1,000';
-export const BLOCK_SECONDS = 75; // Zcash's target spacing; one epoch per Zcash block
+export const BLOCK_SECONDS = 75; // Zcash's target spacing (25 after NU7); one epoch per Zcash block. Unused.
 
 // Regtest transcript, shortened. Values from mcp/docs/walkthrough.md (epoch 1)
 // and box/up/README.md (node log line, balance hex); formats are the tools' own
@@ -114,8 +118,8 @@ export const sips = [
   },
   {
     n: 3, id: 'sip-3', file: 'sip-3.md', title: 'Emission schedule', st: 'accepted',
-    sum: '6,250 SOVA per epoch after a 20,000-epoch slow start, halving every 1,680,000 epochs, Zcash’s own interval.',
-    note: 'Numbers locked; the schedule starts at mainnet. The public testnet mints a flat 6,250 SOVA per epoch.',
+    sum: '2,083.33332 SOVA per 25-second epoch after a 60,000-epoch slow start, halving every 5,040,000 epochs, Zcash’s own interval after NU7.',
+    note: 'Numbers locked; revision 2 follows Zcash NU7 (ZIP 218), same issuance per day (accepted 2026-09-29). The schedule starts at mainnet. The public testnet mints a flat 6,250 SOVA per epoch.',
   },
   {
     n: 4, id: 'sip-4', file: 'sip-4-draft-zcash-state-precompile.md', title: 'Zcash state precompile', st: 'draft',

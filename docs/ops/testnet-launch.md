@@ -321,13 +321,17 @@ the gitleaks CI scan.
 | `test/byo-dry-run.sh` | Offline proof that the optional byo path works (a byo keeper validates, renders and appears in every launch stage) and that the default example is all-Hetzner |
 | `test/null-sealed-stub.sh` | Offline test of the `null_run` rule (`health.sh`) and its `smoke.sh` twin against a local JSON-RPC stub: recent sealed, 50 min old, none within the bound, RPC hiccups, bursts, a slow Zcash, a young chain |
 | `test/peer-alerts-stub.sh` | Offline test of `keeper_isolated` and `rejecting_blocks` (`health.sh`) on canned `sova-node` journal lines and a fake clock: 0 peers for 4 and 6 min, a peer that connects and drops at once, ×2 and ×3, normal peers, INVALID blocks ×2 and ×3 from one peer, spread over peers, before a restart |
-| `deploy.sh` → `host/setup-host.sh` | Per-role setup over SSH. `deploy.sh check` validates the config, `deploy.sh render` writes and lints every host's files locally |
+| `test/zcash-fork-stub.sh` | Offline test of `zcash_ref_fork`, `zebrad_nu7` and `zcash_fork` (`health.sh`) with a fake zebrad and fake reference sources (JSON-RPC and explorer) on two chains and a fake clock: agreement, a fork for 4 and 6 min, one odd source, silent sources, NU7 unknown / at another height / known, one block before and past the height, on and off the NU7 branch |
+| `test/zebra-kit-stub.sh` | Offline test of the zebrad rollout kit: `zebra-ready.sh` against a fake zebrad and reference and a fake clock (clean restart, a format upgrade finishing and not, no RPC, stuck behind, a syncing or new zebrad, no reference, NU7 at / not at the height, the image digest, a panic); `setup_zebrad`'s mute → restart → wait order; `maint.sh` mute and keeper pause/resume; `health.sh` muted / expired / refused marker and the paused keeper; `smoke.sh hosts` digest, NU7, `--only`, a paused keeper |
+| `deploy.sh` → `host/setup-host.sh` | Per-role setup over SSH. `deploy.sh check` validates the config, `deploy.sh render` writes and lints every host's files locally. `--only <host> --zebra-only`: zebrad alone (image, config, health env; nothing else restarts). Every zebrad restart mutes that host's Telegram (`ZEBRA_RESTART_MUTE_MIN`, 15) and waits until zebrad is ready (`ZEBRA_READY_TIMEOUT_MIN`, 15), or fails. `keeper-pause` / `keeper-resume`, `mute <min>` / `unmute` run `host/maint.sh` on the host |
+| `host/zebra-ready.sh` | The readiness wait after a zebrad restart (RPC, image digest, NU7 height, state format upgrade, caught up vs the references); by hand on a host: `sudo /usr/local/lib/sova-infra/zebra-ready.sh wait` |
+| `host/maint.sh` | Planned maintenance on one host: the Telegram mute (`/etc/sova/.mute-until`) and the keeper pause (`/etc/sova/.keeper-paused`); installed as `/usr/local/lib/sova-infra/maint.sh` |
 | `cloudflare.sh` | DNS, tunnels (incl. the checkout relayer's host on the faucet tunnel), the RPC firewall Worker (with the RPC rate limit), the WAF rate-limit rule (faucet `/drip`, relayer `/reserve` + `/claim`), R2 bucket + domain, teardown |
 | `epoch-base.sh` | Proposes, pins and records the epoch base B |
 | `bootnodes.sh` | The final bootnode list, `testnet.env`, `seeds.json` (with the genesis hash the node hosts printed), the `chain.rs` constant, `--verify` |
 | `deploy-contracts.sh` | The day-one contracts: `keygen`, `plan`, `deploy`, `verify` (runs `contracts/script/deploy-kit.sh`, the same code as `box/deploy-dapps.sh`) |
 | `publish.sh` | Join files and zebrad snapshots to R2 |
-| `smoke.sh` | Edge (incl. the published genesis hash, and SIP-7's `ZcashBlocks.latest()` and `sova_getZcashBlocks`), host, mint and contract checks |
+| `smoke.sh` | Edge (incl. the published genesis hash, and SIP-7's `ZcashBlocks.latest()` and `sova_getZcashBlocks`), host, mint and contract checks. `hosts [--only <host>]` also checks the running zebrad against `ZEBRA_IMAGE_DIGEST` and, with `NU7_ACTIVATION_HEIGHT` set, NU7's activation height; a paused keeper passes, a muted host is noted |
 
 **Budget** (server prices from the Hetzner API on 2026-09-24, incl. VAT;
 volume price [est] from infra-m1): **Hetzner only** (all four servers,
@@ -356,6 +360,21 @@ out of memory and nothing was sent. Expect the same network alert twice,
 one from each. The other hosts log network findings only. `deploy.sh
 check` warns if only one host is named.
 
+**Planned maintenance.** A host's Telegram can be muted for a while
+(`./deploy.sh mute <1..240> [--only <host>]`, `unmute`; marker
+`/etc/sova/.mute-until`): `health.sh` keeps logging every finding, `ALERT`
+lines included (marked `[muted …, not sent]`), sends nothing, writes no
+dedupe stamp (a problem that outlasts the mute is sent at once), and
+removes the marker on its first pass after it expires. Every zebrad
+restart by `deploy.sh` mutes its host for `ZEBRA_RESTART_MUTE_MIN` (15).
+The keeper pause (`./deploy.sh keeper-pause` / `keeper-resume`; marker
+`/etc/sova/.keeper-paused`; `docs/ops/nu7-upgrade.md` 3.3) stops
+`sova-keeper` and the keeper's `sova-node` and keeps them stopped
+(systemd and `setup-host.sh` respect it); the keeper's `health.sh` then
+logs `keeper paused (planned)` instead of `keeper_down`, `sova_down` and
+`keeper_isolated`. Other hosts are not muted by either: their
+`block_age` during a pause is real.
+
 Every host also gets a `SWAP_GB` (default 4; 0 = none) `/swapfile`, in
 `/etc/fstab`, and `vm.swappiness=10` (`/etc/sysctl.d/60-sova-swap.conf`).
 An active `/swapfile` (such as the ones made by hand on 2026-09-27) is left
@@ -366,8 +385,11 @@ active`.
 | --- | --- | --- |
 | `mem_low` | `MemAvailable` under `MEM_ALERT_MB` (300) on 2 passes in a row (~2 min), any host | The alert lists swap use and the top 3 processes by RSS. `sova` near the top: reth's caches (the 2026-09-27 stall was its 4 GiB state cache, capped since v0.1.12). Restart the unit or resize the box (`hcloud server change-type`). |
 | `disk_*` | `/` or `/var/lib/sova` ≥ 80% | Grow the volume (`hcloud volume resize`, then `resize2fs`; an optional byo keeper on AWS: `docs/ops/keeper-aws.md`, "Operating it") |
-| `zebrad_down`, `zebrad_lag` | RPC dead, or more than 20 blocks behind `estimatedheight` | Our Zcash view is stale, so C5 stalls |
+| `zebrad_down`, `zebrad_lag` | RPC dead, or more than 20 blocks behind `estimatedheight` | Our Zcash view is stale, so C5 stalls. Muted for `ZEBRA_RESTART_MUTE_MIN` after a `deploy.sh` zebrad restart; if it outlasts that, the restart itself failed its readiness wait |
 | `sova_down` | Unit or RPC down | |
+| `zcash_ref_fork` | Any host, when `ZCASH_REFERENCE_URLS` is set: our zebrad's block hash 6 below its tip differs from every reference source that answers, on every pass for 6 minutes (asked every 10 min while they agree, every pass while they don't; a source that doesn't answer or doesn't have the block is skipped) | **Our zebrad is on another Zcash chain** (docs/design/nu7-readiness.md §4.2), and Sova on this host follows it. Usually a zebrad that missed a network upgrade (NU7) and follows an old-rules chain; see `zcash_fork`. Check the image (`docker inspect zebrad`) and `getblockchaininfo` `upgrades`/`consensus`; if the keeper burns into this chain, stop `sova-keeper`. When one source disagrees and another agrees with us, it is only logged: that source is the odd one |
+| `zebrad_nu7` | Any host, when `NU7_ACTIVATION_HEIGHT` is set, before that height: zebrad's `getblockchaininfo.upgrades` has no NU7 (`77190ad9`), or has it at another height | **This zebrad will stop at NU7** or follow an old-rules chain. Upgrade it (`ZEBRA_IMAGE` + `ZEBRA_IMAGE_DIGEST`, `deploy.sh`). "at another height": the image or `NU7_ACTIVATION_HEIGHT` is wrong |
+| `zcash_fork` | Any host, when `NU7_ACTIVATION_HEIGHT` is set, from the height − 1 on: zebrad's `consensus.nextblock` (or, past the height, `consensus.chaintip`) is not NU7's branch `77190ad9` | **A pre-NU7 zebrad**: stalled at the height − 1, or past it on an old-rules chain that Sova here follows. Upgrade zebrad; stop the keeper if it is burning into that chain (docs/design/nu7-readiness.md §4.2) |
 | `epoch_lag` | (zebrad tip − B + 1) − sova head > 10 epochs (~12 min) | **"WE LAG (infra)"**: the reference node (public RPC) is ahead of us, so it's our problem. **"NETWORK STALLED (miner matter)"**: the reference is stuck too, and nobody is sealing. That's not an infra failure; check the keeper. On `rpc-1` itself there is no reference, so the alert says it can't tell. |
 | `block_age` | The newest Sova block is older than `BLOCK_AGE_ALERT_MIN` (10 min) | A block's time is its Zcash block's. The alert says whether zebrad's tip is old too (**Zcash is slow**; Sova waits for it, nothing to fix) or not (**SOVA STUCK**: look at the keeper and `epoch_lag`). A 5-minute gap is normal. Sent by the `HEALTH_NETWORK_ALERT_HOSTS`. |
 | `null_run` | No SIP-6 sealed block for more than `NULL_SEALED_MAX_MIN` (45) minutes. The check walks back from the head to the newest sealed block and times it by its block time (its Zcash block's); it stops once the null blocks span the limit (an alert), or at 1800 blocks (60 min of 2 s blocks), where a shorter span is logged and judged on a later pass. If the RPC doesn't answer every block, the pass is skipped | Heights advance on null blocks but nobody is burning, so no transaction can be mined. Check `sova-keeper` (a spent per-run budget, `KEEPER_BUDGET_ZAT`, stopped it on 2026-09-25 and every block was null for an hour) and restart it. Timed, not counted: a demand-mode keeper seals only for pending transactions plus a heartbeat every `KEEPER_HEARTBEAT_SECS` (30 min; 45 = 1.5×), and a Zcash burst of 3 s blocks is hundreds of null blocks. When no Sova block at all has come for that long, it is only logged: that is `block_age`'s finding (Zcash slow, or Sova stuck). `smoke.sh edge` fails on the same rule; it walks at most 600 blocks through the public edge and prints an uncounted `note` when a burst makes those span less than the limit. `NULL_RUN_ALERT` (the old block count) is ignored, with a warning. Sent by the `HEALTH_NETWORK_ALERT_HOSTS`. |
@@ -497,6 +519,17 @@ itself to 30 requests per 10 s, under the edge's 50 per IP.
   provider's console; on AWS, release its Elastic IP.)
 - **Emergency "project goes dark":** `systemctl stop sova-node` on our
   hosts. The network is unaffected by design; this is the drill.
+
+### Zebra upgrades (Zcash NU7, 2026-10-05/06)
+
+A new zebrad rolls out host by host: `ZEBRA_IMAGE` +
+`ZEBRA_IMAGE_DIGEST` in `config.env`, then `./deploy.sh --only <host>
+--zebra-only` (zebrad alone, muted, and it waits until zebrad is ready or
+fails), then `./smoke.sh hosts --only <host>` before the next one. The NU7 upgrade (testnet activation 2026-10-06, the
+height set on 10-05) has its own runbook: pre-flight, verifying and
+rolling out the Zebra release, the laptop's zebrad, the activation watch
+and its decision tree, and the Telegram drafts:
+[`docs/ops/nu7-upgrade.md`](nu7-upgrade.md).
 
 ### Checkpoint refresh (every release; first one about a day in)
 

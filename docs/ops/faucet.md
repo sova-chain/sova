@@ -69,6 +69,16 @@ Start from `crates/burn-wallet/faucet/faucet.example.toml`. Every value in
 it is the built-in default, and a test keeps the two in sync. Unknown keys
 are an error.
 
+Each drip is signed for the consensus branch zebrad reports for its next
+block (`getblockchaininfo` → `consensus.nextblock`), so drips follow a
+network upgrade such as NU7 as soon as zebrad does; the drip log line names
+the branch. A branch ID this faucet doesn't know is refused (logged as
+`drip to ... not built: refusing to sign ...`; the requester gets
+`node_error` and no cooldown is recorded): upgrade sova-faucet.
+`expiry_delta` (optional, at least 4) sets how many blocks an unmined drip
+lives before its inputs are freed; unset, it is 40 before NU7 and 120 from
+NU7 on (ZIP 218).
+
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `network` | *(required)* | `test` or `regtest`. `main` is refused |

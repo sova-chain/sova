@@ -15,6 +15,30 @@
 #               Seeds go first. Each node host records the genesis hash
 #               its installed `sova genesis-hash` prints
 #               (out/servers/<name>.genesis_hash; bootnodes.sh publishes it).
+#   ./deploy.sh [--dry-run] --only <server> --zebra-only
+#       zebrad only, on one host (a Zebra release, e.g. NU7): write its
+#       host.env, then on the host pull the image, rewrite zebrad.env /
+#       zebrad.toml and the health env, and restart zebrad if they changed:
+#       muted for ZEBRA_RESTART_MUTE_MIN, then the readiness wait
+#       (host/zebra-ready.sh; fails the command when zebrad isn't ready in
+#       ZEBRA_READY_TIMEOUT_MIN). No pass 1, no binaries, and no sova-node,
+#       faucet, relayer, keeper or cloudflared step: nothing else restarts.
+#       Records out/servers/<name>.zebra_ready (the timings).
+#       (The full deploy restarts zebrad the same way, wait included, when
+#       its image or config changed.)
+#   ./deploy.sh [--dry-run] keeper-pause [--only <keeper>] [--reason TEXT]
+#   ./deploy.sh [--dry-run] keeper-resume [--only <keeper>]
+#       The keeper pause (host/maint.sh): pause writes /etc/sova/.keeper-paused
+#       and stops sova-keeper, then the keeper's sova-node (no burns, no new
+#       blocks on whatever its zebrad follows). Nothing starts them while the
+#       marker exists (systemd, setup-host.sh); health.sh says "keeper paused
+#       (planned)". resume removes it, starts sova-node, waits for its RPC
+#       and a minute, then starts sova-keeper if it was running when paused.
+#   ./deploy.sh [--dry-run] mute <minutes> [--only <server>] [--reason TEXT]
+#   ./deploy.sh [--dry-run] unmute [--only <server>]
+#       Planned-maintenance mute (host/maint.sh): health.sh keeps logging but
+#       sends no Telegram until it expires (1..240 min; removed by the first
+#       health pass after). Every host without --only.
 #   ./deploy.sh alerts
 #       Push TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID / TELEGRAM_THREAD_ID (optional,
 #       a forum topic) from YOUR environment
@@ -43,19 +67,42 @@ CMD=deploy
 ONLY=""
 RENDER_DIR=""
 SYSTEMD_VERIFY=0
+ZEBRA_ONLY=0
+REASON=""
+MUTE_MIN=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=1 ;;
     --only) ONLY="${2:?--only needs a server name}"; shift ;;
     --out) RENDER_DIR="${2:?--out needs a directory}"; shift ;;
     --systemd-verify) SYSTEMD_VERIFY=1 ;;
+    --zebra-only) ZEBRA_ONLY=1 ;;
+    --reason) REASON="${2:?--reason needs a text}"; shift ;;
     alerts) CMD=alerts ;;
+    keeper-pause | keeper-resume | unmute) CMD="$1" ;;
+    mute)
+      CMD=mute
+      if [[ $# -ge 2 && "$2" != --* ]]; then
+        MUTE_MIN="$2"
+        shift
+      fi
+      ;;
     check | render) CMD="$1"; DRY_RUN=1 ;;
     -h | --help) usage; exit 0 ;;
     *) die "unknown argument '$1'" ;;
   esac
   shift
 done
+
+if [[ ${ZEBRA_ONLY} == 1 ]]; then
+  [[ "${CMD}" == deploy ]] || die "--zebra-only is a deploy (./deploy.sh --only <server> --zebra-only)"
+  [[ -n "${ONLY}" ]] || die "--zebra-only needs --only <server>: zebrad is rolled one host at a time"
+fi
+if [[ "${CMD}" == mute ]]; then
+  if ! [[ "${MUTE_MIN}" =~ ^[0-9]+$ ]] || ((MUTE_MIN < 1 || MUTE_MIN > 240)); then
+    die "mute needs 1..240 minutes (./deploy.sh mute 30 --only <server>), got '${MUTE_MIN}'"
+  fi
+fi
 
 load_config
 if [[ "${CMD}" == check || "${CMD}" == render ]]; then
@@ -69,6 +116,9 @@ else
 fi
 EXTRA_BOOTNODES="${EXTRA_BOOTNODES:-}"
 REMOTE_DIR=/tmp/sova-infra-kit
+if [[ -n "${ONLY}" ]] && ! server_entry "${ONLY}" >/dev/null; then
+  die "--only ${ONLY}: no such server in SERVERS"
+fi
 
 is_node_role() { [[ "$1" == seed || "$1" == rpc || "$1" == keeper ]]; }
 
@@ -132,12 +182,17 @@ NULL_SEALED_MAX_MIN=${NULL_SEALED_MAX_MIN}
 MEM_ALERT_MB=${MEM_ALERT_MB}
 KEEPER_ISOLATED_MIN=${KEEPER_ISOLATED_MIN}
 KEEPER_NODE_ID=$(keeper_node_id)
+ZCASH_REFERENCE_URLS=${ZCASH_REFERENCE_URLS}
+NU7_ACTIVATION_HEIGHT=${NU7_ACTIVATION_HEIGHT}
 HEALTH_NETWORK_ALERTS=$(network_alerts_for "${name}")
 SWAP_GB=${SWAP_GB}
 KEEPER_PER_EPOCH_ZAT=${KEEPER_PER_EPOCH_ZAT:-10000}
 KEEPER_BUDGET_ZAT=${KEEPER_BUDGET_ZAT:-35000000}
 KEEPER_LIFETIME_BUDGET_ZAT=${KEEPER_LIFETIME_BUDGET_ZAT:-1000000000}
 KEEPER_MIN_BURN_INTERVAL_SECS=${KEEPER_MIN_BURN_INTERVAL_SECS:-30}
+ZEBRA_READY_TIMEOUT_MIN=${ZEBRA_READY_TIMEOUT_MIN}
+ZEBRA_READY_LAG=${ZEBRA_READY_LAG}
+ZEBRA_RESTART_MUTE_MIN=${ZEBRA_RESTART_MUTE_MIN}
 EOF
   # The checkout relayer runs on the faucet host only.
   if [[ "${role}" == faucet && "${CHECKOUT_RELAYER}" == 1 ]]; then
@@ -211,6 +266,7 @@ remote_setup() { # server-entry bootnodes [--enode-only]
   kit_scp "${name}" "${REMOTE_DIR}" "${envf}"
   kit_ssh "${name}" "mv ${REMOTE_DIR}/${name}.host.env ${REMOTE_DIR}/host.env"
   local logf="${OUT_DIR}/servers/${name}.setup.log"
+  [[ "${3:-}" != --zebra-only ]] || logf="${OUT_DIR}/servers/${name}.zebra-only.log"
   # A full setup re-records the node's genesis hash (KIT-OUT genesis_hash,
   # `sova genesis-hash` on the host): drop the old one first, so a stale
   # hash never outlives a change of release or SOVA_SIP7.
@@ -274,6 +330,74 @@ cmd_deploy() {
     [[ -s "${f}" ]] && log "checkout relayer: fund $(cat "${f}") with SOVA (runbook: Checkout relayer)"
   done
   return 0
+}
+
+# zebrad only, on one host (--only <server> --zebra-only).
+cmd_zebra_only() {
+  local s name t0
+  s="$(server_entry "${ONLY}")"
+  name="$(srv_name "${s}")"
+  mkdir -p "${OUT_DIR}/servers"
+  [[ "${DRY_RUN}" == 1 ]] && log "DRY RUN: nothing is copied or run"
+  log "${name}: zebrad only: ${ZEBRA_IMAGE}${ZEBRA_IMAGE_DIGEST:+@${ZEBRA_IMAGE_DIGEST}}, NU7_ACTIVATION_HEIGHT=${NU7_ACTIVATION_HEIGHT:-<unset>}"
+  log "${name}: on a restart: Telegram muted ${ZEBRA_RESTART_MUTE_MIN} min, then wait up to ${ZEBRA_READY_TIMEOUT_MIN} min for zebrad to be ready. No pass 1, binaries, sova-node, faucet, relayer, keeper or cloudflared"
+  rm -f "${OUT_DIR}/servers/${name}.zebra_ready"
+  t0="$(date +%s)"
+  remote_setup "${s}" "$(bootnodes_for "${name}")" --zebra-only
+  [[ "${DRY_RUN}" != 1 ]] || return 0
+  if [[ -s "${OUT_DIR}/servers/${name}.zebra_ready" ]]; then
+    log "${name}: zebrad restarted and ready, $(($(date +%s) - t0)) s in all: $(cat "${OUT_DIR}/servers/${name}.zebra_ready") (log: ${OUT_DIR}/servers/${name}.zebra-only.log)"
+  else
+    log "${name}: zebrad unchanged, not restarted ($(($(date +%s) - t0)) s)"
+  fi
+}
+
+# host/maint.sh on one host, sent on stdin (works whatever kit the host last
+# got). Arguments are shell-quoted for the remote shell.
+remote_maint() { # server args...
+  local name="$1" q
+  shift
+  q="$(printf ' %q' "$@")"
+  if [[ "${DRY_RUN}" == 1 ]]; then
+    echo "+ ssh sova-admin@${name} sudo bash -s --${q} < host/maint.sh"
+    return 0
+  fi
+  kit_ssh "${name}" "sudo bash -s --${q}" <"${KIT_DIR}/host/maint.sh"
+}
+
+# The keeper to pause or resume: --only (must be a keeper), else the first.
+keeper_target() {
+  local k="${ONLY}"
+  if [[ -n "${k}" ]]; then
+    [[ "$(srv_role "$(server_entry "${k}")")" == keeper ]] || die "${k} is not a keeper host"
+  else
+    k="$(servers_with_role keeper | sed -n 1p)"
+    [[ -n "${k}" ]] || die "no keeper server in SERVERS"
+  fi
+  printf '%s' "${k}"
+}
+
+cmd_keeper() { # keeper-pause | keeper-resume
+  local k
+  k="$(keeper_target)" || exit 1
+  if [[ "$1" == keeper-pause ]]; then
+    remote_maint "${k}" keeper-pause "${REASON:-planned}"
+  else
+    remote_maint "${k}" keeper-resume
+  fi
+}
+
+cmd_mute() { # mute | unmute
+  local s name
+  for s in "${SERVERS[@]}"; do
+    name="$(srv_name "${s}")"
+    [[ -z "${ONLY}" || "${ONLY}" == "${name}" ]] || continue
+    if [[ "$1" == mute ]]; then
+      remote_maint "${name}" mute "${MUTE_MIN}" "${REASON:-planned maintenance}"
+    else
+      remote_maint "${name}" unmute
+    fi
+  done
 }
 
 cmd_alerts() {
@@ -407,7 +531,9 @@ cmd_render() {
 }
 
 case "${CMD}" in
-  deploy) cmd_deploy ;;
+  deploy) if [[ ${ZEBRA_ONLY} == 1 ]]; then cmd_zebra_only; else cmd_deploy; fi ;;
+  keeper-pause | keeper-resume) cmd_keeper "${CMD}" ;;
+  mute | unmute) cmd_mute "${CMD}" ;;
   alerts) cmd_alerts ;;
   check) cmd_check ;;
   render) cmd_render ;;

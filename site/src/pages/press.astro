@@ -2,11 +2,13 @@
 // Press kit: one-liners and short description (docs/marketing/positioning.md),
 // logos (brand/, copied to public/brand/), palette (brand/readme.md), name
 // usage (positioning.md "What we never claim" and "Terminology", Ashwings from
-// contracts/src/Ashwings.sol), and the "what it isn't" list (notClaims, the
-// same positioning rules), background in Rob's framing (as /story) and the
-// community links (Rob, 2026-09-23). Sources: site/README.md.
+// contracts/src/Ashwings.sol), the "write it as" guidance (writeAs: the same
+// positioning rules, "What we never claim" and "Terminology", stated as what to
+// write, Rob 2026-09-29: never describe Sova by negatives), background in Rob's
+// framing (as /story) and the community links (Rob, 2026-09-23). Sources:
+// site/README.md.
 import Site from '../layouts/Site.astro';
-import { notClaims, SOCIAL } from '../data/sova';
+import { SOCIAL } from '../data/sova';
 
 const logos = [
   { name: 'Wordmark, gold', use: 'on dark backgrounds', bg: 'dark', img: '/brand/sova-wordmark-gold.svg', files: [['SVG', '/brand/sova-wordmark-gold.svg'], ['PNG', '/brand/sova-wordmark-gold.png']] },
@@ -16,6 +18,15 @@ const logos = [
   { name: 'Mark, gold on black', use: 'avatars and icons, dark', bg: 'dark', mark: true, img: '/brand/sova-mark-gold-round.svg', files: [['SVG round', '/brand/sova-mark-gold-round.svg'], ['SVG square', '/brand/sova-mark-gold-square.svg']] },
   { name: 'Mark, deep gold on white', use: 'avatars and icons, light', bg: 'light', mark: true, img: '/brand/sova-mark-deep-gold-round.svg', files: [['SVG round', '/brand/sova-mark-deep-gold-round.svg'], ['SVG square', '/brand/sova-mark-deep-gold-square.svg']] },
   { name: 'Mark, inverted', use: 'large avatars', bg: 'dark', mark: true, img: '/brand/sova-mark-inverted-round.png', files: [['PNG round', '/brand/sova-mark-inverted-round.png'], ['PNG square', '/brand/sova-mark-inverted-square.png']] },
+];
+const writeAs = [
+  ['Burn-mined, anchored to Zcash’s proof of work', 'Formally, Proof of Burn. Destroying ZEC mines SOVA, and Zcash’s proof of work orders Sova’s blocks.'],
+  ['A sidechain of Zcash', 'Its own consensus, anchored to Zcash by burns.'],
+  ['Execution is public; privacy is how you fund your way in', 'Every contract call and every state change is visible.'],
+  ['ZEC stays on Zcash', 'Wrapped ZEC is a separate custodial product, run by Sova Labs at wz.cash, outside the protocol.'],
+  ['SOVA pays gas', 'Write it as gas, the fee for every transaction on Sova.'],
+  ['Every SOVA begins as ZEC burned for good', 'A burn pays to a script with no known key, so the ZEC leaves circulation. Sova’s footprint on Zcash is the burns, at Zcash’s normal fee.'],
+  ['Write about what it does', 'Price and returns stay out of the story.'],
 ];
 const palette = [
   { name: 'Gold', hex: '#F4B728', use: 'accent on dark' },
@@ -27,7 +38,7 @@ const palette = [
 ---
 <Site
   title="Sova press kit"
-  description="Sova press kit: one-liners, a short description, background, what Sova isn’t, logo files, colours, how to write the names Sova, SOVA, SIP and Ashwings, and where to find the community."
+  description="Sova press kit: one-liners, a short description, background, how to describe Sova, logo files, colours, how to write the names Sova, SOVA, SIP and Ashwings, and where to find the community."
   current="/press"
   cmd="ls press/"
   status="pre-release · public testnet live"
@@ -46,11 +57,9 @@ const palette = [
   <h2>background</h2>
   <blockquote class="q">Sova started as a venture-backed project focused on Bitcoin interoperability, an EVM chain on the OP Stack with native BTC. The company decided not to go ahead with that plan and shelved it, and went on to other work, including intent-based solving around Zcash on NEAR. Sova came back as a public-good experiment in support of the Zcash network: an EVM chain that reads Zcash, mined by burning ZEC, where the ZEC stays on Zcash. Most sidechains for Bitcoin have been built by companies and depend on them; Zcash leaves room for a chain that belongs to no company. <a href="/story">The full story</a>.</blockquote>
 
-  <h2>what it isn’t</h2>
-  <ul class="not">
-    {notClaims.map(([h, d]) => <li><span class="x">[ -- ]</span> <span><b>{h}.</b> <span class="dim">{d}</span></span></li>)}
-    <li><span class="x">[ -- ]</span> <span><b>Not a PoW chain.</b> <span class="dim">Burn-mined, and ordered by Zcash’s proof of work.</span></span></li>
-    <li><span class="x">[ -- ]</span> <span><b>No price talk.</b> <span class="dim">SOVA pays gas. Write about what it does.</span></span></li>
+  <h2>write it as</h2>
+  <ul class="as">
+    {writeAs.map(([h, d]) => <li><span class="ok">[ ok ]</span> <span><b>{h}.</b> <span class="dim">{d}</span></span></li>)}
   </ul>
 
   <h2>logos</h2>
@@ -108,11 +117,11 @@ const palette = [
   .pal .sw { width: 46px; height: 46px; flex: 0 0 auto; border: 1px solid rgba(251, 243, 220, 0.25); }
   .pn { color: var(--cream); }
   .ph { color: var(--g3); }
-  .not { list-style: none; padding: 0; margin: 0; }
-  .not li { display: grid; grid-template-columns: 7ch 1fr; gap: 6px; margin: 0 0 6px; max-width: none; }
-  .not b { color: var(--cream); font-weight: 400; }
-  .x { color: var(--ember); }
+  .as { list-style: none; padding: 0; margin: 0; }
+  .as li { display: grid; grid-template-columns: 7ch 1fr; gap: 6px; margin: 0 0 6px; max-width: none; }
+  .as b { color: var(--cream); font-weight: 400; }
+  .ok { color: var(--g); }
   @media (max-width: 600px) {
-    .not li { grid-template-columns: 1fr; gap: 0; margin-bottom: 10px; }
+    .as li { grid-template-columns: 1fr; gap: 0; margin-bottom: 10px; }
   }
 </style>
