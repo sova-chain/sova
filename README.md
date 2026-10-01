@@ -44,8 +44,8 @@ footprint on Zcash is the burns, at Zcash's normal fee.
 - **Join the public testnet.** Run a node and mine with testnet ZEC:
   [the join guide](docs/guides/testnet.md). Chain ID 82330. Look around first
   in the [explorer](https://explorer.testnet.sova.io); get testnet ZEC from
-  the [faucet](https://faucet.testnet.sova.io); public RPC
-  `https://rpc.testnet.sova.io`.
+  the [faucet](https://faucet-testnet.sova.io); public RPC
+  `https://rpc-testnet.sova.io`.
 - **Run it locally.** One command starts a private Zcash regtest node, a Sova
   node and a miner ([below](#run-it-locally)).
 - **Read the specs.** The protocol is written down as SIPs in

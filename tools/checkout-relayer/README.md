@@ -4,7 +4,7 @@ Reserves and claims orders on `AshwingsZecCheckout` for buyers who hold no
 SOVA, and can watch the seller's Zcash t-address to claim paid orders
 automatically. On a test network it can also drip SOVA to new addresses,
 enough for one Ashwings mint (`DRIP=1`; `/ashwings/mint` step 2). Design and flow: `docs/design/ashwing-zec-checkout.md`.
-The project runs it publicly at `https://checkout.testnet.sova.io`, which
+The project runs it publicly at `https://checkout-testnet.sova.io`, which
 is the default relayer of `/ashwings/buy`. The testnet kit deploys it on
 the faucet host (`CHECKOUT_RELAYER=1`; `docs/ops/testnet-launch.md`,
 "Checkout relayer").

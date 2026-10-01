@@ -42,7 +42,7 @@ Fill in the four placeholders on the board the moment each is known.
 | --- | --- | --- | --- |
 | `sova-seed-2` | seed (second bootnode) | root disk only (no volume) | nothing public: the canary |
 | `sova-seed-1` | seed, `seed-1.testnet.sova.io`, network alerts, snapshot source | 60 GB volume | one of two bootnodes |
-| `sova-rpc-1` | public RPC (`rpc.testnet.sova.io`), network alerts | 40 GB volume | the public RPC's view of new blocks |
+| `sova-rpc-1` | public RPC (`rpc-testnet.sova.io`), network alerts | 40 GB volume | the public RPC's view of new blocks |
 | `sova-faucet-1` | faucet + checkout relayer (both read this zebrad) | 40 GB volume | drips and checkout claims |
 | `sova-keeper-1` | the only guaranteed sealer (mine-mode node + `sova-keeper` burner) | 40 GB volume | **all new Sova blocks** for the restart |
 
@@ -134,7 +134,7 @@ h sova-faucet-1 'sudo journalctl -u sova-faucet --since -24h --no-pager | grep -
 Expect `drip <txid>: … (fee … zat, … input(s), branch 37a5165b (Nu6_3),
 expiry height …)`. No drip in 24 h? Make one: `sova-miner --network test
 --data-dir /tmp/nu7-preflight init`, then `curl -s -X POST -d
-'{"address":"tm…"}' https://faucet.testnet.sova.io/drip`, and check the
+'{"address":"tm…"}' https://faucet-testnet.sova.io/drip`, and check the
 line again.
 
 Sealed blocks: `./smoke.sh edge` (a sealed block within 45 min) and
@@ -611,7 +611,7 @@ defaults; these catch it.
 | Health, every host | `h <host> 'sudo journalctl -t sova-health --since -10min --no-pager \| grep -E "nu7:\|zcash reference\|ALERT"'` | `nu7: zebrad is on NU7 (tip …, activation H7, chaintip 77190ad9, nextblock 77190ad9)`; `zcash reference: block … here and at 2 of 2 reference(s)` |
 | Keeper burns | `h sova-keeper-1 'sudo journalctl -u sova-keeper --since -30min --no-pager \| grep -E "signed for consensus branch\|error\|rejected" \| tail -8'` | the burn for the activation block: `signed for consensus branch 77190ad9 (Nu7), zebrad's next block H7 (tip on 37a5165b), expiry height ≈ H7+120`; after it `(tip on 77190ad9)` |
 | Faucet drips | a fresh drip (as in 1.2), then its journal line | `branch 77190ad9 (Nu7)`, and the txid mined (`laptop getrawtransaction "[\"<txid>\",1]" \| jq .result.height`) |
-| Sova block `S7` | `cast block $S7 --field extraData --rpc-url https://rpc.testnet.sova.io` and the scan below | exists; sealed blocks (97-byte `extraData`) resume after `S7` |
+| Sova block `S7` | `cast block $S7 --field extraData --rpc-url https://rpc-testnet.sova.io` and the scan below | exists; sealed blocks (97-byte `extraData`) resume after `S7` |
 | Sova nodes don't hold | `h <host> 'sudo journalctl -u sova-node --since -30min --no-pager \| grep -cE "sip-7 hold\|sova-hold: zcash anchor mismatch"'` on seeds, rpc, keeper | 0 |
 | Telegram | `zcash_fork`, `zcash_ref_fork`, `zebrad_nu7`, `block_age`, `null_run`, `epoch_lag`, `c5_reject`, `rejecting_blocks` | none |
 

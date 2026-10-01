@@ -39,16 +39,16 @@ import { TESTNET, SOCIAL, REPO, repo } from '../data/sova';
 
     <h2>Where it came from</h2>
     <p>Sova began as a venture-backed project to bring Bitcoin into an EVM. We decided not to go ahead with that plan, and set it aside. The company turned to other work, mostly intent-based solving, and much of that was Zcash on NEAR.</p>
-    <p>Most sidechains for Bitcoin have been built by companies and depend on them. Zcash leaves room to try the other way: a chain that belongs to no company, launched fairly and run by the people who use it. Sova came back in that form, as a public-good experiment in support of the Zcash network. <a href="/story">The full story</a>.</p>
+    <p>Most sidechains for Bitcoin have been built by companies and depend on them. Zcash leaves room to try the other way: a chain that belongs to no company, launched fairly and run by the people who use it. Sova came back in that form, as a public-good experiment in support of the Zcash network. Sova Labs, the company, open-sourced the project as Sova Chain. Think of ConsenSys and Ethereum: Sova Labs builds for the chain and doesn’t own it. We run some of the nodes and mine, as anyone can. <a href="/story">The full story</a>.</p>
 
     <h2>Join the testnet</h2>
     <ul class="bul">
       <li><strong>The <a href={repo.blob(TESTNET.guide)}>join guide</a></strong> goes from nothing to a synced Zcash node, a Sova node that checks the genesis hash, a funded miner, and sealing blocks with your own key if you want to.</li>
       <li><strong>Release v0.1.14</strong> ships prebuilt binaries for Linux x86_64 and Apple Silicon.</li>
       <li><strong>A zebrad snapshot</strong> shortens the Zcash sync from hours to minutes.</li>
-      <li><strong>The faucet</strong> at <a href={`${TESTNET.faucet}/status`}><code>faucet.testnet.sova.io</code></a> sends 0.1 testnet ZEC a day per address, enough for a few hundred burns.</li>
+      <li><strong>The faucet</strong> at <a href={`${TESTNET.faucet}/status`}><code>faucet-testnet.sova.io</code></a> sends 0.1 testnet ZEC a day per address, enough for a few hundred burns.</li>
       <li><strong>The explorer</strong> at <a href={TESTNET.explorer}><code>explorer.testnet.sova.io</code></a> shows blocks and transactions.</li>
-      <li><strong>Chain ID {TESTNET.chainId}.</strong> Public RPC at <code>rpc.testnet.sova.io</code>.</li>
+      <li><strong>Chain ID {TESTNET.chainId}.</strong> Public RPC at <code>rpc-testnet.sova.io</code>.</li>
     </ul>
     <p>To try it with no network at all, <code>./box/up.sh</code> in a clone of the repo runs a Zcash regtest node, a Sova node and a miner on your laptop.</p>
 

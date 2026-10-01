@@ -9,7 +9,7 @@ import testnetDeployments from '../../../infra/testnet/deployments/sova-testnet.
 // public testnet's RPC (docs/ops/testnet-launch.md, B5 f; read-only, rate
 // limited per IP). Each page still takes ?rpc= per visit, e.g.
 // ?rpc=http://127.0.0.1:8545 for the local box.
-export const SOVA_RPC = 'https://rpc.testnet.sova.io';
+export const SOVA_RPC = 'https://rpc-testnet.sova.io';
 
 // The public testnet (docs/ops/testnet-launch.md; seeds.json `courtesy`;
 // docs/guides/testnet.md). Project-run conveniences, never load-bearing.
@@ -18,7 +18,7 @@ export const SOVA_RPC = 'https://rpc.testnet.sova.io';
 export const TESTNET = {
   chainId: testnetDeployments.chainId, // 82330
   rpc: SOVA_RPC,
-  faucet: 'https://faucet.testnet.sova.io',
+  faucet: 'https://faucet-testnet.sova.io',
   downloads: 'https://dl.testnet.sova.io',
   explorer: 'https://explorer.testnet.sova.io',
   guide: 'docs/guides/testnet.md',

@@ -21,7 +21,7 @@
 //! written to `RpcServerArgs` ([`apply`]) so the node config tells the
 //! truth, and a later reth that wires the flag through gets the same value.
 //!
-//! **Through the public RPC** (`rpc.testnet.sova.io`, the Cloudflare
+//! **Through the public RPC** (`rpc-testnet.sova.io`, the Cloudflare
 //! Worker in `infra/testnet/worker/rpc-firewall.mjs`), Cloudflare cuts a
 //! proxied request that hasn't answered in ~100 s (HTTP 524). The Worker
 //! therefore clamps the call's `timeout_ms` to 90 s, so a slow block comes

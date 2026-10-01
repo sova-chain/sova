@@ -135,7 +135,7 @@ PEER_FLAP_WINDOW_MIN=5
 REJECT_ALERT=3
 REJECT_WINDOW_MIN=10
 # Another node's public RPC to tell "we lag" from "network stalled"
-# (e.g. https://rpc.testnet.sova.io on a seed host). Empty: can't tell.
+# (e.g. https://rpc-testnet.sova.io on a seed host). Empty: can't tell.
 HEALTH_REFERENCE_RPC="${HEALTH_REFERENCE_RPC:-}"
 # Independent Zcash sources to compare our zebrad's chain with
 # (check_zcash_reference): comma-separated; a URL with {height} is an

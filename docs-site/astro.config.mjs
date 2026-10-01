@@ -97,7 +97,7 @@ export default defineConfig({
           items: [
             { label: 'Whitepaper', link: 'https://sova.io/paper', attrs: { target: '_blank' } },
             { label: 'Explorer', link: 'https://explorer.testnet.sova.io', attrs: { target: '_blank' } },
-            { label: 'Faucet', link: 'https://faucet.testnet.sova.io', attrs: { target: '_blank' } },
+            { label: 'Faucet', link: 'https://faucet-testnet.sova.io', attrs: { target: '_blank' } },
           ],
         },
       ],

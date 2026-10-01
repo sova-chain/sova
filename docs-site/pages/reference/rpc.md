@@ -9,7 +9,7 @@ Zcash blocks the chain anchors.
 
 ## Public RPC
 
-`https://rpc.testnet.sova.io`, and any node run with
+`https://rpc-testnet.sova.io`, and any node run with
 `SOVA_RPC_PROFILE=public`, serves only these methods:
 
 <!-- generate: rpc-allowlist -->

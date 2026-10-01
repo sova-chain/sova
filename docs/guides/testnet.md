@@ -176,7 +176,7 @@ Compare a block hash with the public RPC at the same height:
 ```bash
 H=$(rpc http://127.0.0.1:8545 eth_blockNumber | jq -r .result)
 rpc http://127.0.0.1:8545 eth_getBlockByNumber "[\"$H\",false]" | jq -r .result.hash
-rpc https://rpc.testnet.sova.io eth_getBlockByNumber "[\"$H\",false]" | jq -r .result.hash
+rpc https://rpc-testnet.sova.io eth_getBlockByNumber "[\"$H\",false]" | jq -r .result.hash
 ```
 
 The two hashes match: your node is verifying the testnet. It catches up
@@ -207,7 +207,7 @@ way, and back it up.
 ### 3b. Get TAZ from the faucet
 
 ```bash
-curl -s -X POST -d '{"address":"tm..."}' https://faucet.testnet.sova.io/drip
+curl -s -X POST -d '{"address":"tm..."}' https://faucet-testnet.sova.io/drip
 ```
 
 It sends 0.1 TAZ to a `tm…` address, once per address and per IP every

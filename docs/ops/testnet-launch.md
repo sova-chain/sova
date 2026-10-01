@@ -90,7 +90,7 @@ hardware 2FA and the project email, with you as sole owner (D4).
    | Account | Workers R2 Storage | Edit | the bucket's `dl.` custom domain |
    | Zone | DNS | Edit | the seed, rpc and faucet records |
    | Zone | Zone WAF | Edit | the faucet's rate-limit rule |
-   | Zone | Workers Routes | Edit | `rpc.testnet.sova.io/*` → the Worker |
+   | Zone | Workers Routes | Edit | `rpc-testnet.sova.io/*` → the Worker |
 
    Set Account Resources to *Include → your account*, and Zone Resources
    to *Include → Specific zone → sova.io*. A 30-day expiry is fine: the
@@ -222,7 +222,7 @@ f. **Stranger guide.** Fill every `<<…>>` placeholder in
    when rendered, names the script behind each), then wire the `data-placeholder="testnet"` spans
    in `site/src/pages/mine.astro` and `site/src/pages/node.astro` to it.
    Point the live pages at the network: `SOVA_RPC` in
-   `site/src/data/sova.ts` becomes `https://rpc.testnet.sova.io` (`/pulse`
+   `site/src/data/sova.ts` becomes `https://rpc-testnet.sova.io` (`/pulse`
    needs nothing else; `ZcashBlocks` is the fixed predeploy), and the
    `/ashwings/*` pages' contract addresses come from
    `deployments/sova-testnet.json`. Deploy the site.
@@ -244,10 +244,10 @@ R2 only makes sure the names are free.
 | Name | Type | Points to | Proxy | Made by |
 | --- | --- | --- | --- | --- |
 | `seed-1.testnet.sova.io` | A + AAAA | `sova-seed-1`'s IPv4/IPv6 | **DNS only** (P2P can't be proxied, so seed IPs are public) | `cloudflare.sh dns` |
-| `rpc.testnet.sova.io` | CNAME | `<tunnel-id>.cfargotunnel.com` | proxied | `cloudflare.sh tunnels` |
-| `rpc.testnet.sova.io/*` | Worker route | `sova-testnet-rpc-firewall` | — | `cloudflare.sh worker` |
-| `faucet.testnet.sova.io` | CNAME | `<tunnel-id>.cfargotunnel.com` | proxied | `cloudflare.sh tunnels` |
-| `checkout.testnet.sova.io` | CNAME | the faucet host's `<tunnel-id>.cfargotunnel.com` | proxied | `cloudflare.sh tunnels` (with `CHECKOUT_RELAYER=1`) |
+| `rpc-testnet.sova.io` | CNAME | `<tunnel-id>.cfargotunnel.com` | proxied | `cloudflare.sh tunnels` |
+| `rpc-testnet.sova.io/*` | Worker route | `sova-testnet-rpc-firewall` | — | `cloudflare.sh worker` |
+| `faucet-testnet.sova.io` | CNAME | `<tunnel-id>.cfargotunnel.com` | proxied | `cloudflare.sh tunnels` |
+| `checkout-testnet.sova.io` | CNAME | the faucet host's `<tunnel-id>.cfargotunnel.com` | proxied | `cloudflare.sh tunnels` (with `CHECKOUT_RELAYER=1`) |
 | `dl.testnet.sova.io` | R2 custom domain (Cloudflare manages the record) | bucket `sova-testnet-dl` | proxied | `cloudflare.sh r2` |
 
 More seeds get `seed-2.`, `seed-3.` and so on. The HTTP RPC (8545),
@@ -274,11 +274,11 @@ a. **A stranger's node syncs.** Download the release tarball and verify
    Pass: its log shows `p2p: discovery on … bootnode(s)`, `sova/1:
    peer active` and `expectations: enforcing settlements`, and
    `cast block latest --field hash` matches between it and
-   `https://rpc.testnet.sova.io` at the same height.
+   `https://rpc-testnet.sova.io` at the same height.
 
 b. **A faucet drip.** Make a fresh address with `sova-miner --network test
    --data-dir /tmp/x init`, then run `curl -s -X POST -d
-   '{"address":"tm…"}' https://faucet.testnet.sova.io/drip`. Pass: you
+   '{"address":"tm…"}' https://faucet-testnet.sova.io/drip`. Pass: you
    get a txid, it confirms within a block or two, and a second drip to
    the same address gets `429 address_cooldown`.
 
@@ -292,7 +292,7 @@ d. **The day-one contracts answer.** Run `./smoke.sh contracts`. Pass:
    each of WSOVA, the factory, the router, Multicall3, Ashwings (and the
    market) shows `ok`. That means the code matches the release build and
    the getters (`factory()`, `WETH()`, `treasury()`, …) return the
-   recorded values, all through `https://rpc.testnet.sova.io`.
+   recorded values, all through `https://rpc-testnet.sova.io`.
 
 Also: `./smoke.sh all` shows 0 failed. Still open for M1 after launch
 (infra-m1 §5): the 24 h switch-off drill, with our boxes **and the
@@ -308,8 +308,8 @@ the gitleaks CI scan.
 | Server | Type / location [est] | Runs | Inbound |
 | --- | --- | --- | --- |
 | `sova-seed-1` | Hetzner CX33, fsn1, 60 GB volume | zebrad, sova (follow-only, C5-enforcing) | SSH (admin IPs), Sova P2P 30303 tcp+udp, Zcash P2P 18233 |
-| `sova-rpc-1` | Hetzner CX23, nbg1, 40 GB volume | zebrad, sova (follow-only, `SOVA_RPC_PROFILE=public`), cloudflared → `rpc.testnet.sova.io` | SSH only |
-| `sova-faucet-1` | Hetzner CX23, hel1, 40 GB volume | zebrad, `sova-faucet` (its own hot key, D5), `sova-checkout-relayer` (its own hot key; Node LTS), cloudflared → `faucet.testnet.sova.io`, `checkout.testnet.sova.io` | SSH only |
+| `sova-rpc-1` | Hetzner CX23, nbg1, 40 GB volume | zebrad, sova (follow-only, `SOVA_RPC_PROFILE=public`), cloudflared → `rpc-testnet.sova.io` | SSH only |
+| `sova-faucet-1` | Hetzner CX23, hel1, 40 GB volume | zebrad, `sova-faucet` (its own hot key, D5), `sova-checkout-relayer` (its own hot key; Node LTS), cloudflared → `faucet-testnet.sova.io`, `checkout-testnet.sova.io` | SSH only |
 | `sova-keeper-1` | Hetzner CX23, fsn1, 40 GB volume | zebrad, sova in **mine** mode (SIP-6: signs with the keeper's miner key), `sova-keeper` (disclosed, D8) | SSH only |
 
 | Script | What it does |
@@ -431,7 +431,7 @@ before its SIP-6 timestamp, so a Zcash reorg makes it a hold, not an
 invalid block). Until every host runs v0.1.14 the restart is the fix;
 after that, a `rejecting_blocks` alert is a new bug worth an audit note.
 
-### Checkout relayer (`checkout.testnet.sova.io`)
+### Checkout relayer (`checkout-testnet.sova.io`)
 
 `tools/checkout-relayer` on the faucet host (`CHECKOUT_RELAYER=1`, the
 "Checkout relayer" block of `config.env`): it sends `reserve` and `claim`
@@ -453,7 +453,7 @@ itself to 30 requests per 10 s, under the edge's 50 per IP.
 - **Fund.** Send SOVA from any funded wallet, for example the deployer:
   `cast send --keystore ~/.config/sova-testnet/deployer/keystore.json
   --password-file ~/.config/sova-testnet/deployer/password --rpc-url
-  https://rpc.testnet.sova.io <relayer address> --value 5ether`. A
+  https://rpc-testnet.sova.io <relayer address> --value 5ether`. A
   reserve and a claim together take about 282k gas, which is about 2e-12
   SOVA at the 7-wei base fee, so a few SOVA lasts for good. What matters
   is staying above the floor.
@@ -481,7 +481,7 @@ itself to 30 requests per 10 s, under the edge's 50 per IP.
   restarts. POSTs answer once the transaction is mined, or with 202 and a
   tx hash after 25 s (a proxy won't hold a request through a slow Sova
   block). The page then waits for the receipt itself.
-- **Smoke** (`smoke.sh edge`): `/status` through `checkout.testnet.sova.io`
+- **Smoke** (`smoke.sh edge`): `/status` through `checkout-testnet.sova.io`
   answers on chain 82330 for listing 1. The address is the recorded one,
   the balance is at or above the 1 SOVA alert floor, it is accepting, and
   CORS grants `https://sova.io` and no other origin. `/status` carries no
@@ -654,8 +654,8 @@ Section 0 settled the schedule (`flat`) and the chain ID (82330) on
 
   | Endpoint | Where | Limit | Over it |
   | --- | --- | --- | --- |
-  | `rpc.testnet.sova.io` | the RPC Worker's `RPC_RATELIMIT` binding (`RPC_RATELIMIT_REQUESTS` / `RPC_RATELIMIT_PERIOD`) | 50 per 10 s; `OPTIONS` preflights not counted | HTTP 429, JSON-RPC error -32005, CORS, `Retry-After: 10` (exposed to pages) |
-  | `faucet.testnet.sova.io/drip` | the zone's one free-plan WAF rule (`CF_RATELIMIT_REQUESTS_PER_10S`) | 50 per 10 s, then blocked 10 s | Cloudflare's own 429, no CORS: fine, no page calls the faucet cross-origin |
+  | `rpc-testnet.sova.io` | the RPC Worker's `RPC_RATELIMIT` binding (`RPC_RATELIMIT_REQUESTS` / `RPC_RATELIMIT_PERIOD`) | 50 per 10 s; `OPTIONS` preflights not counted | HTTP 429, JSON-RPC error -32005, CORS, `Retry-After: 10` (exposed to pages) |
+  | `faucet-testnet.sova.io/drip` | the zone's one free-plan WAF rule (`CF_RATELIMIT_REQUESTS_PER_10S`) | 50 per 10 s, then blocked 10 s | Cloudflare's own 429, no CORS: fine, no page calls the faucet cross-origin |
 
   The RPC's limit moved into the Worker because the WAF rule runs first
   and its 429 has no CORS headers, so `/pulse` and `/ashwings` saw a

@@ -208,7 +208,7 @@ node agrees. Your node has no blocks yet; see
 
 It sends 0.1 TAZ (10,000,000 zat) and answers with a `txid`. Limits: one
 drip per address and one per IP per 24 hours, a daily cap for everyone,
-and a transparent address (`tm…`) only. `curl -s https://faucet.testnet.sova.io/status`
+and a transparent address (`tm…`) only. `curl -s https://faucet-testnet.sova.io/status`
 shows whether it's accepting drips.
 
 The drip can be spent once it's in a block, about one Zcash block after
@@ -278,7 +278,7 @@ Zcash testnet explorer, for example
 Its SOVA:
 
 ```bash
-cast balance --ether --rpc-url https://rpc.testnet.sova.io 0xbd8a560dfb415d4babb99662dc157267d166b7c9
+cast balance --ether --rpc-url https://rpc-testnet.sova.io 0xbd8a560dfb415d4babb99662dc157267d166b7c9
 ```
 
 ### Let an agent mine
@@ -377,7 +377,7 @@ sova-miner --data-dir ~/.sova-testnet/miner export-evm-key --i-understand
 It prints the key on stdout (its warnings go to stderr). Anyone who sees
 it can take both your SOVA and your TAZ. Import it into an EVM wallet and
 add the network: chain ID `82330`, currency `SOVA`, RPC
-`https://rpc.testnet.sova.io` (or your own `http://127.0.0.1:8545`).
+`https://rpc-testnet.sova.io` (or your own `http://127.0.0.1:8545`).
 
 No wallet app, for example on a server: Foundry's `cast`
 (`curl -L https://foundry.paradigm.xyz | bash`, then
@@ -388,9 +388,9 @@ locally and sends through any RPC. SOVA has 18 decimals, so `1ether` is
 
 ```bash
 KEY=$(sova-miner --data-dir ~/.sova-testnet/miner export-evm-key --i-understand)   # warnings still show; only the key lands in KEY
-cast send --rpc-url https://rpc.testnet.sova.io --private-key "$KEY" 0x<to address> --value 1ether
+cast send --rpc-url https://rpc-testnet.sova.io --private-key "$KEY" 0x<to address> --value 1ether
 unset KEY
-cast balance --ether --rpc-url https://rpc.testnet.sova.io 0x<evm address>
+cast balance --ether --rpc-url https://rpc-testnet.sova.io 0x<evm address>
 ```
 
 `cast send` waits for the receipt and prints it (`status 1` is success).
@@ -435,7 +435,7 @@ Spend it on an Ashwing: [Mint an Ashwing](../../docs-site/pages/start/ashwings.m
 | `0 bootnode(s)` in the discovery line, or never `sova/1: peer active` | `SOVA_BOOTNODES` empty or not exported, or outbound `30303` blocked | Check `echo $SOVA_BOOTNODES`; allow outbound TCP and UDP `30303`; then [No peers after 5 minutes](#no-peers-after-5-minutes) |
 | `bad SOVA_BOOTNODES entry` | A mangled enode | Copy the line from `testnet.env` exactly |
 | Head stays low while peers are connected | Your zebrad isn't synced: the node syncs only as far as its zebrad has scanned | Finish 1d |
-| Head stopped moving | Compare `eth_blockNumber` with `https://rpc.testnet.sova.io`. If the public RPC is stuck too, the network is waiting for a sealer, not you | Nothing to fix locally. Running a sealing node (4) helps |
+| Head stopped moving | Compare `eth_blockNumber` with `https://rpc-testnet.sova.io`. If the public RPC is stuck too, the network is waiting for a sealer, not you | Nothing to fix locally. Running a sealing node (4) helps |
 | `settlement mismatch at height ...` | A block contradicts your own zebrad | Check your zebrad is on Zcash testnet and synced. If you restored a snapshot, re-check its hash with an explorer; if in doubt, full-sync |
 | `SOVA_EPOCH_BASE is required for sova-testnet` or `... contradicts the sova-testnet epoch base` | The env didn't carry the network's epoch base, or carries another | Use the unedited `testnet.env` |
 | `expectations poll failed; retrying` every 2 seconds | The node can't reach zebrad's RPC, for example while zebrad restarts | Nothing, if zebrad is coming back; otherwise see the next row |

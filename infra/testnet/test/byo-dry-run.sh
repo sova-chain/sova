@@ -117,7 +117,7 @@ check "render: faucet gets /etc/sova/checkout-relayer.env" test -f "${FE}"
 ASHW="$(jq -r .ashwings "${KIT}/deployments/sova-testnet.json")"
 ASHW_BLOCK="$(jq -r .deployments.ashwings.block "${KIT}/deployments/sova-testnet.json")"
 for kv in HOST=127.0.0.1 PORT=18791 CORS_ORIGIN=https://sova.io TRUST_PROXY_HEADER=cf-connecting-ip \
-  SOVA_RPC_URL=https://rpc.testnet.sova.io RPC_PER_10S=30 ZCASH_RPC_URL=http://127.0.0.1:18232 ZCASH_NET=test LISTINGS=1 \
+  SOVA_RPC_URL=https://rpc-testnet.sova.io RPC_PER_10S=30 ZCASH_RPC_URL=http://127.0.0.1:18232 ZCASH_NET=test LISTINGS=1 \
   "ASHWINGS=${ASHW}" "START_BLOCK=${ASHW_BLOCK}" STATE_FILE=/var/lib/sova/checkout-relayer/state.json \
   MAX_OPEN_RESERVATIONS=20 RESERVE_PER_IP_PER_HOUR=3 MIN_BALANCE_WEI=100000000000000000; do
   check "render: checkout-relayer.env has ${kv}" grep -qxF "${kv}" "${FE}"
@@ -151,11 +151,11 @@ for h in sova-seed-1 sova-rpc-1 sova-keeper-1; do
 done
 out="$(cd "${KIT}" && kit ./cloudflare.sh --dry-run tunnels ratelimit 2>&1)"
 check "cloudflare.sh tunnels: checkout host on the faucet tunnel, relayer paths only" \
-  hasF '{"hostname":"checkout.testnet.sova.io","path":"^/(reserve|claim|drip|status(/[0-9]{1,30})?)$","service":"http://127.0.0.1:18791"' "${out}"
+  hasF '{"hostname":"checkout-testnet.sova.io","path":"^/(reserve|claim|drip|status(/[0-9]{1,30})?)$","service":"http://127.0.0.1:18791"' "${out}"
 check "cloudflare.sh tunnels: faucet routes unchanged" \
-  hasF '{"hostname":"faucet.testnet.sova.io","path":"^/(drip|status)$","service":"http://127.0.0.1:18790"' "${out}"
+  hasF '{"hostname":"faucet-testnet.sova.io","path":"^/(drip|status)$","service":"http://127.0.0.1:18790"' "${out}"
 check "cloudflare.sh tunnels: proxied CNAME for the checkout host" \
-  hasF '"name":"checkout.testnet.sova.io","content":"<sova-testnet-sova-faucet-1-id>.cfargotunnel.com","proxied":true' "${out}"
+  hasF '"name":"checkout-testnet.sova.io","content":"<sova-testnet-sova-faucet-1-id>.cfargotunnel.com","proxied":true' "${out}"
 check "cloudflare.sh ratelimit: /reserve and /claim in the WAF rule" \
   hasF 'or (http.request.uri.path eq \"/reserve\") or (http.request.uri.path eq \"/claim\")' "${out}"
 out="$(cd "${KIT}" && kit ./deploy.sh --dry-run 2>&1)"

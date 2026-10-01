@@ -25,7 +25,7 @@ UTC−4), as marked.
 | 1. Download and verify the release, zebrad from the snapshot, node at the tip, block 0 hash | **Partial.** The release checksum verified, the snapshot SHA-256 matched the guide, zebrad reached the tip, and `sova genesis-hash` matched. The Sova node never passed block 0, so "`eth_blockNumber` within 2 blocks of the public RPC" fails | `sova-box-bin-linux-x86_64.tar.gz: OK`, `sova: OK`, `sova-miner: OK`. Snapshot `e78e551d…c4a3` equals the guide's value, and `snapshot.sh verify` printed `node block 4390524: 000007d5…57bb == manifest OK`. `sova genesis-hash` printed `0xb7391a4a…0b71`, as does `seeds.json`. The node's `eth_blockNumber` stayed `0x0` while the public RPC was at ~4,830 |
 | 2. Peer with the public network using only what the guide and `testnet.env` give | **Fail** | `Status connected_peers=0 latest_block=0` for 72 min on the unedited `testnet.env` (and 0 over every earlier attempt from 16:27Z). Details in F1 |
 | 3. Mine: `init`, faucet drip, burn, SOVA on the node and on the public RPC | **Pass on Zcash and on the public RPC. Fail on the own node** (at block 0, no peers) | Below |
-| 4. Send one tx from the mined SOVA through your own node, confirm it on the public RPC | **Fail through the own node, pass through the public RPC** | The own node answered `insufficient funds for gas * price + value: have 0 want 1000000000000000000`. Sent through `https://rpc.testnet.sova.io` instead: tx `0x481097bd05097ff300c4fdd1f1506abb56bda0bac12de6d53ebc6448d5073172`, 1 SOVA to `0x…dEaD`, block 4822, status 1, 21,000 gas, mined 10 s after sending |
+| 4. Send one tx from the mined SOVA through your own node, confirm it on the public RPC | **Fail through the own node, pass through the public RPC** | The own node answered `insufficient funds for gas * price + value: have 0 want 1000000000000000000`. Sent through `https://rpc-testnet.sova.io` instead: tx `0x481097bd05097ff300c4fdd1f1506abb56bda0bac12de6d53ebc6448d5073172`, 1 SOVA to `0x…dEaD`, block 4822, status 1, 21,000 gas, mined 10 s after sending |
 
 ### AC3 detail
 
@@ -171,8 +171,8 @@ network to see whether it reproduces.
   answered **NXDOMAIN** for `dl.testnet.sova.io`, while Google and
   Cloudflare DoH already returned the Cloudflare A records. It resolved
   at 15:51Z.
-- `faucet.testnet.sova.io` stayed cached as `CNAME cname.vercel-dns.com`
-  (TTL 4502 s left at 15:50Z). `curl https://faucet.testnet.sova.io/status`
+- `faucet-testnet.sova.io` stayed cached as `CNAME cname.vercel-dns.com`
+  (TTL 4502 s left at 15:50Z). `curl https://faucet-testnet.sova.io/status`
   failed with a TLS error (exit 60, peer 66.33.60.130) until about
   16:54Z.
 - The resolver had also cached `sova.io NS tate/barbara.ns.cloudflare.com`,

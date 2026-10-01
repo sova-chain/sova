@@ -23,8 +23,8 @@
   ],
   "courtesy": {
     "note": "Project-run conveniences, never load-bearing. Any peer works as a bootnode.",
-    "rpc": "https://rpc.testnet.sova.io",
-    "faucet": "https://faucet.testnet.sova.io",
+    "rpc": "https://rpc-testnet.sova.io",
+    "faucet": "https://faucet-testnet.sova.io",
     "downloads": "https://dl.testnet.sova.io"
   }
 }

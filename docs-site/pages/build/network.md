@@ -10,17 +10,17 @@ Add the Sova testnet to any EVM wallet or tool:
 | Network name | Sova testnet |
 | Chain ID | `82330` (`0x1419a`) |
 | Currency | `SOVA`, 18 decimals |
-| RPC | `https://rpc.testnet.sova.io` |
+| RPC | `https://rpc-testnet.sova.io` |
 | Explorer | [`https://explorer.testnet.sova.io`](https://explorer.testnet.sova.io) |
 
 The Ashwings mint page adds the network for you. Foundry works as is:
-`cast balance --ether --rpc-url https://rpc.testnet.sova.io <address>`.
+`cast balance --ether --rpc-url https://rpc-testnet.sova.io <address>`.
 
 ## Getting SOVA
 
 SOVA comes only from burning ZEC. [Mine some](../start/mine.md) with testnet
 ZEC from the faucet at
-[`faucet.testnet.sova.io`](https://faucet.testnet.sova.io). A miner's key
+[`faucet-testnet.sova.io`](https://faucet-testnet.sova.io). A miner's key
 is an ordinary EVM key: `sova-miner export-evm-key --i-understand` prints
 it for your wallet ([spending it](../../../docs/guides/testnet-reference.md#5-check-your-earnings)).
 

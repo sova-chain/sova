@@ -172,7 +172,7 @@ or the relayer.
 ## Part 2: a ZEC-only buyer, through the public relayer (same day, 16:49–16:53 UTC)
 
 After finding 1, Rob chose to run the checkout relayer publicly
-(`https://checkout.testnet.sova.io`, relayer `0x73aa9Fa93e4EECDb0A49c3df50F50A0eFb01F9b9`,
+(`https://checkout-testnet.sova.io`, relayer `0x73aa9Fa93e4EECDb0A49c3df50F50A0eFb01F9b9`,
 funded 5 SOVA, watcher on). `/ashwings/buy` now defaults to it (`fa2c4da`).
 This run proves a buyer with **no EVM wallet and no SOVA** gets an owl.
 

@@ -463,7 +463,7 @@ a WAF/Worker rate limit on `explorer.`, and a reset runbook entry
 3. **Batches:** a larger Worker batch cap that counts each call, or a
    patched Otterscan build with `batchMaxCount: 10`?
 4. **Hostname:** `explorer.testnet.sova.io` on Pages, with the RPC at
-   `rpc.testnet.sova.io`? Or a separate `explorer-rpc.` Worker route with
+   `rpc-testnet.sova.io`? Or a separate `explorer-rpc.` Worker route with
    its own, tighter limit (infra-m1 §2 suggested the latter)?
 5. **Upstream:** open issues for reth's `ots_searchTransactions*` gap and
    the `ots_hasCode` integer-param mismatch? These are code-level bug
