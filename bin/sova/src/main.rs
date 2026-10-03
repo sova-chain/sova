@@ -754,7 +754,13 @@ async fn run() -> eyre::Result<()> {
             .ok()
             .and_then(|s| s.parse().ok())
             .map_or(consensus::sealer::DEFAULT_RANK_STEP, Duration::from_secs);
-        let core = SealerCore::new(
+        // A restart scans from just below the head, not from the base: the
+        // sealer never acts on settled history (engine::driver::sealer_scan_start).
+        let scan_from = engine::driver::sealer_scan_start(
+            base_height,
+            node.provider.best_block_number().unwrap_or(0),
+        );
+        let core = SealerCore::new_from(
             SealerConfig {
                 our_address,
                 schedule,
@@ -762,6 +768,7 @@ async fn run() -> eyre::Result<()> {
                 sip6: sip6_chain_id.is_some(),
             },
             base_height,
+            scan_from,
             100,
         );
         let head_provider = node.provider.clone();

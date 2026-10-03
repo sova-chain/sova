@@ -1,0 +1,18 @@
+[package]
+name = "scan-bench"
+description = "Times the expectations follower's Zcash rescan against a zebrad (read-only RPC)"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+# Standalone on purpose: a measurement tool, not part of the node's build
+# graph. It links the real `consensus` crate (Follower + ZebradClient), so
+# the "follower" mode times exactly what bin/sova runs on start.
+[workspace]
+
+[dependencies]
+consensus = { path = "../../crates/consensus" }
+serde_json = { version = "1.0", features = ["std"] }
+ureq = { version = "2", default-features = false }
+hex = "0.4"

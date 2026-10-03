@@ -26,11 +26,19 @@ pub struct ZebradClient {
 
 impl ZebradClient {
     /// Client for a zebrad RPC endpoint, e.g. `http://127.0.0.1:18232`.
+    ///
+    /// Every call times out (10 s to connect, 30 s in all): a zebrad that
+    /// stops answering must surface as an error the callers retry, not
+    /// block a follower forever (the laptop zebrad after its disk vanished,
+    /// 2026-10-01).
     #[must_use]
     pub fn new(url: impl Into<String>) -> Self {
         Self {
             url: url.into(),
-            agent: ureq::Agent::new(),
+            agent: ureq::AgentBuilder::new()
+                .timeout_connect(std::time::Duration::from_secs(10))
+                .timeout(std::time::Duration::from_secs(30))
+                .build(),
         }
     }
 

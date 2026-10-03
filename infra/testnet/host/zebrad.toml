@@ -1,6 +1,7 @@
 # zebrad (Zcash testnet) on an M1 testnet host. Mounted read-only into the
 # container at /home/zebra/.config/zebrad.toml (the path box/regtest's
-# compose file proves for zfnd/zebra:6.3.0). setup-host.sh substitutes
+# compose file proves for zfnd/zebra:6.3.0 and 7.0.0-rc.0; 7.0.0-rc.0 loads
+# this file unchanged). setup-host.sh substitutes
 # @ZEBRA_P2P_PORT@ and @ZEBRA_RPC_PORT@.
 
 [network]

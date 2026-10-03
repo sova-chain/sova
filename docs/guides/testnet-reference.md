@@ -31,7 +31,7 @@ work with outbound connections only. Opening `30303` (TCP and UDP) and
 | | |
 | --- | --- |
 | **OS** | Prebuilt binaries: Linux x86_64 and macOS on Apple Silicon. Anything else: build from source. |
-| **Tools** | Docker (zebrad runs from the official `zfnd/zebra:6.3.0` image), `curl`, `jq`, `zstd` (snapshot restore), `git`. Optional: `aria2c` (faster snapshot download), `python3` (decimal balances), Foundry's `cast` (sending SOVA from the command line). A fresh Debian or Ubuntu has none of the command-line tools: `sudo apt install curl jq zstd git aria2 python3`. |
+| **Tools** | Docker (zebrad runs from the official `zfnd/zebra:7.0.0-rc.0` image), `curl`, `jq`, `zstd` (snapshot restore), `git`. Optional: `aria2c` (faster snapshot download), `python3` (decimal balances), Foundry's `cast` (sending SOVA from the command line). A fresh Debian or Ubuntu has none of the command-line tools: `sudo apt install curl jq zstd git aria2 python3`. |
 | **Disk** | Zcash testnet state measured **12 GB** at height 4,382,331 (2026-09-22). A snapshot restore needs about twice that while the archive and the state both exist. The project's own nodes use 40 GB volumes. Plan on 40 GB free. |
 | **Time** | From zero, a zebrad testnet sync took about **12 hours** in our own run (2026-09-22, native zebrad on a laptop with an external SSD). The snapshot restore is the fast path: download, check, start, and zebrad only syncs from the snapshot's height. |
 | **Machine size** | The project's keeper (zebrad, a sealing Sova node and a miner) runs on 4 vCPU and 8 GB RAM (a Hetzner CX33) with a 40 GB volume. |
@@ -56,8 +56,10 @@ download: a checksum beside the file only proves the download is intact.
 **What `restore` checks.** It checks `SHA256SUMS`, checks that
 `snapshot.json` belongs to this archive, refuses a non-empty target, and
 refuses archives holding anything but zebrad state. The state format
-must match the zebrad version in `snapshot.json` (`zfnd/zebra:6.3.0`,
-state format 28). An older zebrad ignores it and full-syncs.
+must open with the zebrad you run: the published snapshot is from
+`zfnd/zebra:6.3.0` (state format 28), and `zfnd/zebra:7.0.0-rc.0` moves it
+to format 29 on first start, without a resync. An older zebrad ignores a
+newer format and full-syncs.
 
 Keep `cache_dir = "/var/lib/sova/zebrad"` in `zebrad.toml` as written in
 1a: that is where the container sees `~/.sova-testnet/zebrad-state`

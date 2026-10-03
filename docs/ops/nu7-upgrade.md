@@ -24,17 +24,17 @@ live there, git-ignored, and `deploy.sh` ships that checkout's `host/`.
 
 | Name | Value | Where it comes from |
 | --- | --- | --- |
-| `H7` | NU7's Zcash testnet activation height | ZIP 259 ("To be set on OCT 5"; open zips PR #1370 would make it divisible by 3), and the release's own table (2.2c). Both must agree. |
-| `S7` | `H7 − 4,388,499`: the Sova block anchored to the first NU7 Zcash block | Epoch base B = 4,388,500 (`seeds.json`), `S = H − B + 1` |
-| `REL` | The NU7 Zebra release as Docker Hub tags it, e.g. `7.0.0` (no `v`; the git tag is `v$REL`) | ZcashFoundation/zebra releases |
-| `DIGEST` | `sha256:…` of the `zfnd/zebra:$REL` multi-arch index | 2.2b |
+| `H7` | **4,465,026** (expected around 10-06) | Zebra v7.0.0-rc.0 release notes, and the image's own table: an empty ephemeral testnet node lists `77190ad9 NU7 @4465026` (2.2c, run 2026-10-03) |
+| `S7` | **76,527** (`H7 − 4,388,499`): the Sova block anchored to the first NU7 Zcash block | Epoch base B = 4,388,500 (`seeds.json`), `S = H − B + 1` |
+| `REL` | **`7.0.0-rc.0`** (Docker Hub tag; git tag `v7.0.0-rc.0`, commit `6d1e414d6f55e4180d0e47baaa934bf97d5b4fec`, GitHub-verified). A release candidate, but published as a full release (`isPrerelease: false`), so Docker Hub has it. `zfnd/zebra:latest` still points at 6.4.2: always use the tag | ZcashFoundation/zebra releases, 2026-10-02 |
+| `DIGEST` | **`sha256:d534756d899bc44ce0c7ad6d1672a540d0eb588f8c2face4674298ebb091abca`** (multi-arch index; linux/amd64 manifest `sha256:4496df7553bd5449eb40e4d1d7537356ae765105a8447ad0bdec1f365197e905`, linux/arm64 `sha256:ffc6c7ab786247575a8986e01956c006fb5fee6e722a93221996e935aab7cb0a`). `gh attestation verify` exit 0, `refs/tags/v7.0.0-rc.0` from `zfnd-build-docker-image.yml`. Both platforms print `zebrad 7.0.0-rc.0`; RPC build `v7.0.0-rc.0`, subversion `/Zebra:7.0.0-rc.0/`, protocol 170180 | 2.2b, run 2026-10-03 |
 | NU7 branch | `77190ad9` | ZIP 259 |
 | NU6.3 branch | `37a5165b` (today's) | zebrad `getblockchaininfo` |
 | Pinned today | `zfnd/zebra:6.3.0` @ `sha256:52a67e543906c98a0ed1599e2ce3ee238fc05b40592ae26ee5914ddb6ede51e3`, state format 28.0.0 | live `config.env`; `https://dl.testnet.sova.io/zebrad-testnet/latest.json` |
 | Latest pre-NU7 | `zfnd/zebra:6.4.2` @ `sha256:6faf86c426d6fbdb2c10c9abde9c78d60bb0ef6d8742f05fa05eee9e7975c11d` (index), state format 28.0.0. Provenance verified 2026-09-29 (`refs/tags/v6.4.2`) | 1.5 dry run |
-| Expected state format | **28.1.0**: Zebra's `nu7-zips` branch (2026-09-25) bumps the minor version for the NSM reserve and says "No resync or data migration is needed". Wider records appear only from NU7 on, so a pre-NU7 zebrad can't read a database that has passed `H7` | `zebra-state/src/constants.rs` on `nu7-zips`; confirm on the release (2.2d) |
+| State format | **29.0.0, a new major**, not the 28.1.0 the `nu7-zips` branch had. On first start 7.0.0 *moves* `state/v28/testnet` to `state/v29/testnet` (an `fs::rename`, no copy, no resync) and from then on writes the wider NSM records (`ValueBalance` 48 → 56 bytes, `BlockInfo` 52 → 60) **for every new block, before `H7` too**. 6.3.0 can't read them. So once a host has run 7.0.0 there is no rollback to 6.3.0 without a v28 backup taken before (1.7) | `zebra-state/src/constants.rs` at `v7.0.0-rc.0`; release notes ("Retain a v28 backup before upgrading for rollback") |
 
-Fill in the four placeholders on the board the moment each is known.
+All four values are known (2026-10-03).
 
 ### Hosts
 
@@ -157,9 +157,13 @@ plain transfer (`docs/ops/keeper-miner.md`).
 
 ### 1.4 Disk headroom
 
-The upgrade itself needs little: the new image (~120 MB, root disk) and an
-in-place format bump (28.0 → 28.1 expected, no copy). The snapshot in 1.6
-needs about one state's size again on `sova-seed-1`.
+The upgrade itself needs little: the new image (~120 MB, root disk) and a
+directory move (`state/v28` → `state/v29`, a rename on the same
+filesystem, no copy). The v28 backup (2.4b) is hardlinks plus a copy of the
+~1,000-block non-finalized backup: a few hundred MB at first, growing only
+as 7.0.0 compacts away SST files the backup still holds (at most one
+state's size, ~12 GB, if it ran for days). The snapshot in 1.6 needs about
+one state's size again on `sova-seed-1`.
 
 ```bash
 for s in $HOSTS; do echo "== $s"; h $s 'df -h --output=target,size,used,avail,pcent / /var/lib/sova | tail -n +2; sudo du -sh /var/lib/sova/zebrad'; done
@@ -215,7 +219,7 @@ it stays usable for joiners until the post-activation snapshot (3.4).
 
 | When | Rollback | Notes |
 | --- | --- | --- |
-| Release day, before `H7` | `config.env` back to `out/config.env.pre-nu7` (6.3.0 pin, `NU7_ACTIVATION_HEIGHT=""`), `./deploy.sh --only <host> --zebra-only` | Only if the NU7 image misbehaves (crash loop, won't sync). Zebra's notes say pre-NU7 writes keep the 28.0 layout, so 6.3.0 should reopen the state; if it doesn't, restore 1.6's snapshot. 6.3.0 still stops at `H7`: this buys time, it doesn't fix anything |
+| Release day, before `H7` | Stop zebrad, put back the host's v28 backup (2.4b), `config.env` back to `out/config.env.pre-nu7` (6.3.0 pin, `NU7_ACTIVATION_HEIGHT=""`), `./deploy.sh --only <host> --zebra-only` | Only if the NU7 image misbehaves (crash loop, won't sync). **7.0.0 writes the wider v29 records from its first block, before `H7` too, and moves `state/v28` away**: 6.3.0 started on that state silently creates a new empty database and resyncs from genesis (~12 h; seen on regtest 2026-10-03, tip 1348 → 0). With the 2.4b backup put back it reopens at the backed-up tip (regtest: same tip and hash, 1,000 non-finalized blocks restored). No backup: 1.6's snapshot. 6.3.0 still stops at `H7`: this buys time, it doesn't fix anything |
 | After `H7` | **No rollback to a pre-NU7 zebrad** | It rejects NU7 blocks and can't read the NU7-wide records. Forward only: a patched Zebra release, or 1.6's snapshot + the fixed release |
 | sova-miner / sova-faucet | `SOVA_RELEASE_TAG` back one tag, `./deploy.sh --only <host>` | Anything older than v0.1.16 can't sign for `77190ad9`: after `H7` there is no older tag to go back to |
 | Laptop | swap the two binary paths in the 2.6 command | before `H7` only |
@@ -240,8 +244,11 @@ out, even before the release.
 ### 2.2 Verify the release before anything runs it
 
 ```bash
-REL=7.0.0   # example: the Docker Hub tag
+REL=7.0.0-rc.0   # the Docker Hub tag (2026-10-02); a later 7.0.0 repeats 2.2-2.3
 ```
+
+Done for `7.0.0-rc.0` on 2026-10-03: a-e below all pass, the values are in
+section 0.
 
 **a. The GitHub release, its tag and commit.**
 
@@ -251,7 +258,8 @@ gh api "repos/ZcashFoundation/zebra/commits/v$REL" --jq '{sha, verified: .commit
 ```
 
 `isPrerelease` must be `false`: Zebra's workflow pushes Docker Hub images
-only for full releases. Zebra's tags are made by `zebra-release[bot]` and
+only for full releases. (`v7.0.0-rc.0` is an "rc" by name but `false`
+here, and its image exists.) Zebra's tags are made by `zebra-release[bot]` and
 are not signed; the commit is (GitHub-verified). Note the commit `sha`
 for 2.6.
 
@@ -310,10 +318,11 @@ gh api "repos/ZcashFoundation/zebra/contents/zebra-state/src/constants.rs?ref=v$
   grep -nE '^const DATABASE_FORMAT_(VERSION|MINOR_VERSION|PATCH_VERSION)'
 ```
 
-Expected `28 / 1 / 0` (in-place, no resync). If the major is not 28, read
-the version-history comment above it: "restorable from the previous major"
-means in place (as 27 → 28 was); otherwise the new zebrad full-syncs, about
-12 h per host. In that case upgrade `sova-seed-2` first and let it sync,
+`v7.0.0-rc.0`: `29 / 0 / 0`, "restorable from the previous major": the
+v28 directory is moved to `state/v29` on first start (no resync), and
+from then on 6.3.0 can't read the database (section 0, 1.7). If the major
+is not "restorable from the previous major", the new zebrad full-syncs,
+about 12 h per host. In that case upgrade `sova-seed-2` first and let it sync,
 then carry its state to the others with `box/testnet/snapshot.sh`
 (create on seed-2, restore on each), and tell joiners in notice (b).
 
@@ -333,7 +342,39 @@ ZcashFoundation/zebra`). Look for:
   `valuePools` / `chainSupply` (SIP-7, row F1);
 - ZIP 317 fee changes (row B3); a required upgrade path; known issues.
 
+What `v7.0.0-rc.0` changes for us (checked 2026-10-03):
+
+- **Config:** `zebrad generate` prints the same defaults as 6.3.0 (no
+  diff). The stricter loading (subsidy schedules, funding streams,
+  out-of-order heights, public magic on custom testnets) only touches
+  `[network.testnet_parameters]`, which no public-Testnet config of ours
+  sets (hosts' `host/zebrad.toml`, the guide's, the laptop's). The box
+  configs (`box/regtest/zebrad.toml`, `box/testnet/test/zebrad-regtest.toml`)
+  and the NU5..NU6.3 = 1, NU7 = 120 regtest config load and mine on it.
+- **RPC we read:** `getblockchaininfo` `consensus` / `upgrades` /
+  `estimatedheight`, `getblock` `valuePools` (still six, NSM excluded) /
+  `chainSupply` / `trees`, `getrawtransaction` fields: unchanged in shape
+  (2.3). `getblocktemplate`'s `mutable` drops `transactions` / `prevblock`:
+  nothing of ours reads a template (box `mine.sh` uses `generate`; the
+  laptop's internal miner is inside zebrad).
+- **Mining:** public Testnet mining now requires a synced zebrad (the
+  laptop's internal miner pauses while it catches up). After NU7 a
+  min-difficulty block needs a gap **over 450 s** (18 target spacings),
+  not the 150 s assumed before (3.3).
+- **Peers:** protocol 170180; the NU7 minimum is applied by height, so
+  6.3.0 and 7.0.0 peers keep talking until `H7`, and 7.0.0 drops pre-NU7
+  peers from `H7` on.
+- **State:** v29 (section 0, 1.7, 2.4b).
+
 ### 2.3 Regtest gates on the laptop
+
+**Docker on the laptop can't bind-mount from `~/Documents`** (found
+2026-10-03): the mount hangs in Docker Desktop's file sharing, and every
+later container start queues behind it until Docker Desktop restarts.
+`nu7-burn.sh` and the blocks below mount from `mktemp -d` (`/var/folders`,
+which works); keep any other mounted file out of `~/Documents` too (box
+and sim compose files mount from the checkout: run those from a copy
+under `/private/tmp`).
 
 **Burns across NU7** (B1/B4), with the exact image:
 
@@ -346,7 +387,25 @@ ZEBRAD_IMAGE="zfnd/zebra@$DIGEST" box/regtest/nu7-burn.sh                  # NU7
 Pass: `NU7 BURN TEST PASSED` (a burn before NU7, one in the activation
 block signed `77190ad9`, one after; the old-branch burn refused).
 
-**Value pools across NU7** (F1). Not scripted yet (gap K4); by hand:
+Run on `7.0.0-rc.0`, 2026-10-03 (the same test against a hand-started
+container, NU5..NU6.3 at 1, NU7 at 120): burns `fc58a7e5…` mined at 118
+signed `37a5165b`, `e5e785db…` mined at 120 (the activation block) signed
+`77190ad9`, `e6886b66…` mined at 121 signed `77190ad9`; the burn signed
+for `37a5165b` at the activation block refused with `-25 … transaction
+uses an incorrect consensus branch id`. Repeated on a chain seeded like
+public Testnet (`initial_nsm_value_balance = 55768414957`,
+`nsm_reissuance_height = 125`): same result.
+
+**Value pools across NU7** (F1). Run on `7.0.0-rc.0` on 2026-10-03, both
+chains above: every block 1..139 has exactly the six `valuePools`
+(`transparent, sprout, sapling, orchard, lockbox, ironwood`), NSM is not
+one of them and is not in `chainSupply` (Zebra: "deliberately not a
+pool"), and `range_passes_the_strict_checks` passed 1..128 and 1..139
+with no hold, with Sapling and Ironwood shielded coinbases before and
+after 120, the three burns recognized, NU7's 1/3 subsidy, the NU7 fee
+burn (a block's transparent delta short of the subsidy by the burned
+fee share, and `chainSupply` falling with it), and NSM reissuance from
+125. By hand:
 
 ```bash
 W=$(mktemp -d); cat >"$W/zebrad.toml" <<'EOF'
@@ -377,11 +436,10 @@ sleep 10
 (cd crates/burn-wallet && BURN_WALLET_REGTEST_RPC=http://127.0.0.1:18943 BURN_WALLET_REGTEST_NU7_HEIGHT=220 \
   cargo test --test e2e_regtest_burn -- --ignored --nocapture --exact e2e_regtest_burn_across_nu7)
 r() { curl -fsS -H 'Content-Type: application/json' --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$1\",\"params\":${2:-[]}}" http://127.0.0.1:18943; }
-tip=$(r getblockcount | jq .result); [ "$tip" -lt 260 ] && r generate "[$((260 - tip))]" >/dev/null
 r getblock '["221",1]' | jq -c '.result | {pools: [.valuePools[].id], chainSupply: .chainSupply.chainValueZat}'
-# SIP-7's strict follower over tip-200..tip (spans 220):
-(cd ~/Documents/GitHub/sova-chain && SOVA_TESTNET_RPC=http://127.0.0.1:18943 \
-  cargo test -p consensus --test sip7_testnet -- --ignored --nocapture --exact recent_blocks_pass_the_strict_checks)
+# SIP-7's strict follower over every block (spans 220; one line per block):
+(cd ~/Documents/GitHub/sova-chain && SOVA_TESTNET_RPC=http://127.0.0.1:18943 SOVA_SIP7_FROM=1 \
+  cargo test -p consensus --test sip7_testnet -- --ignored --nocapture --exact range_passes_the_strict_checks)
 docker rm -f sova-f1; rm -rf "$W"
 ```
 
@@ -425,6 +483,43 @@ they wait their turn. (For the same reason a plain `./smoke.sh hosts`
 fails the digest and NU7 checks on every host not rolled yet: gate each
 host with `--only`.)
 
+### 2.4b The v28 backup (each host, just before its upgrade)
+
+7.0.0 moves `state/v28` to `state/v29` and can't be undone without a
+copy (section 0, 1.7). RocksDB never rewrites an `.sst` file, so a backup
+taken while zebrad is stopped can hardlink every `.sst` and copy only the
+small files that do change (`CURRENT`, `MANIFEST-*`, `OPTIONS-*`, the WAL
+`*.log`, `version`). Proven on regtest 2026-10-03 (6.3.0 → 7.0.0 → back).
+`/var/lib/sova` is the data volume (seed-2: the root disk), so the
+backup sits on the same filesystem as the state.
+
+```bash
+./deploy.sh mute 20 --only "$S"
+h "$S" 'sudo bash -s' <<'EOF'
+set -euo pipefail
+Z=/var/lib/sova/zebrad B=/var/lib/sova/zebrad-v28-backup
+[[ -d $Z/state/v28/testnet ]] || { echo "no state/v28/testnet: already upgraded?"; exit 1; }
+systemctl stop zebrad          # docker stop -t 110: RocksDB flushes cleanly
+rm -rf "$B" && mkdir -p "$B/state"
+cp -al "$Z/state/v28" "$B/state/v28"
+find "$B/state/v28" -type f ! -name '*.sst' | while read -r f; do
+  cp --remove-destination "$Z/state/v28/${f#"$B"/state/v28/}" "$f"; done
+cp -a "$Z/non_finalized_state" "$B/"
+cat "$B/state/v28/testnet/version"; du -sh "$B"; df -h /var/lib/sova | tail -1
+EOF
+```
+
+zebrad stays stopped until 2.5's `--zebra-only` starts it on the new image
+(`setup_zebrad` starts a stopped zebrad). Because it wasn't answering
+before that restart, the readiness wait skips its catch-up comparison;
+check the tip against the references by hand (`zinfo`). Put a backup back
+(1.7): `systemctl stop zebrad`, `rm -rf $Z/state $Z/non_finalized_state`,
+`mv $B/state $B/non_finalized_state $Z/`, then the 6.3.0 deploy. Delete
+`$B` once the host is past `H7` (no rollback after that anyway).
+
+The laptop's state is on the APFS SSD: `cp -cR` clones it in place
+(copy-on-write), with its zebrad stopped (2.6).
+
 ### 2.5 Roll the hosts, one at a time
 
 **Order:** `sova-seed-2` (canary) → `sova-seed-1` → `sova-rpc-1` →
@@ -441,6 +536,7 @@ For each host `S`:
 ```bash
 S=sova-seed-2
 zinfo "$S"                                                   # before
+# 2.4b: the v28 backup (stops zebrad)
 ./deploy.sh --only "$S" --zebra-only 2>&1 | tee -a out/nu7-deploy.log
 ```
 
@@ -459,7 +555,14 @@ cloudflared step: nothing but zebrad restarts. Around the restart:
   container runs `ZEBRA_IMAGE_DIGEST`; `upgrades["77190ad9"]` activates at
   `NU7_ACTIVATION_HEIGHT` (a wrong or missing NU7, a wrong image, or a
   zebrad panic fails at once); a state format upgrade launched on this start
-  (`launching upgrade task`) has logged `database format is valid`; and the
+  (`launching upgrade task`) has logged `database format is valid`
+  (7.0.0 on a v28 state logs both within about a second: `moved state
+  cache from ".../state/v28/testnet" to ".../state/v29/testnet"`, `trying
+  to open older database format: launching upgrade task
+  running_version=29.0.0 disk_version=28.0.0`, `marked database format as
+  upgraded`, `database format is valid running_version=29.0.0
+  initial_disk_version=28.0.0`, then `restored blocks from non-finalized
+  backup cache num_blocks_restored=1000`); and the
   tip is no more than `ZEBRA_READY_LAG` (3) blocks further behind the
   `ZCASH_REFERENCE_URLS` JSON-RPC reference than it was before the restart
   (no reference answering: at least its pre-restart tip − 3).
@@ -528,13 +631,16 @@ git -C "$Z" worktree add --detach "/Volumes/Extreme Pro/sova/zebra-nu7-src" "v$R
 "/Volumes/Extreme Pro/sova/zebra-nu7-target/release/zebrad" --version    # zebrad $REL
 ```
 
-If 2.2e shows the `[mining]` keys changed, fix the config file first.
+`[mining]` keys are unchanged in 7.0.0-rc.0 (2.2e). Two differences for
+this node: its internal miner only mines once zebrad is synced (fine: it
+is), and its state moves to `state/v29` on first start, so take the clone
+backup in the swap line below (`cp -cR`, APFS copy-on-write, seconds).
 
 **[Rob]** the swap, one line in a terminal (clean stop of 6.3.0, then the
 NU7 build on the same config, state, ports and log):
 
 ```bash
-pid=$(pgrep -f '/zebra-target/release/zebrad -c'); [ -n "$pid" ] && kill -INT $pid && while kill -0 $pid 2>/dev/null; do sleep 1; done; nohup "/Volumes/Extreme Pro/sova/zebra-nu7-target/release/zebrad" -c "/Volumes/Extreme Pro/sova/zebrad-testnet-mining-sapling.toml" start >> "/Volumes/Extreme Pro/sova/zebrad-testnet-mining.log" 2>&1 &
+pid=$(pgrep -f '/zebra-target/release/zebrad -c'); [ -n "$pid" ] && kill -INT $pid && while kill -0 $pid 2>/dev/null; do sleep 1; done; cp -cR "/Volumes/Extreme Pro/sova/zebra-testnet-state" "/Volumes/Extreme Pro/sova/zebra-testnet-state-v28-backup" && nohup "/Volumes/Extreme Pro/sova/zebra-nu7-target/release/zebrad" -c "/Volumes/Extreme Pro/sova/zebrad-testnet-mining-sapling.toml" start >> "/Volumes/Extreme Pro/sova/zebrad-testnet-mining.log" 2>&1 &
 ```
 
 Then (orchestrator):
@@ -549,8 +655,10 @@ tail -50 "/Volumes/Extreme Pro/sova/zebrad-testnet-mining.log" | grep -iE "forma
 stall is harmless; an old-rules miner isn't):
 `pkill -INT -f '/zebra-target/release/zebrad -c'`.
 
-Rollback before `H7`: the same swap line with `zebra-target` and
-`zebra-nu7-target` exchanged.
+Rollback before `H7`: stop it, move `zebra-testnet-state-v28-backup` back
+to `zebra-testnet-state`, then the same swap line with `zebra-target` and
+`zebra-nu7-target` exchanged (and without the `cp -cR`). 6.3.0 on the
+v29 state would start over from genesis (1.7).
 
 ### 2.7 Join files, guides, box
 
@@ -574,12 +682,14 @@ says v0.1.14 today, v0.1.16 after 10-03).
 | `docs/guides/testnet-reference.md` | line 34 (Tools: image), line 59 (snapshot format), "Keeping it running": a **Zcash network upgrades** bullet with notice (b)'s upgrade command. (Line 95 already says 25 s from NU7 on.) |
 | `infra/testnet/config.env.example` | `ZEBRA_IMAGE` line and its comment ("snapshots must match its state format (6.3.0 = state v28)") |
 | `infra/testnet/host/zebrad.toml` | the "proves for zfnd/zebra:6.3.0" comment |
-| `docs/ops/snapshots.md` | the 6.3.0 / state 28 notes: NU7 zebrad reads 28.0, writes 28.1 |
+| `docs/ops/snapshots.md` | the 6.3.0 / state 28 notes: 7.0.0 opens a v28 snapshot by moving it to `state/v29` (no resync) and writes v29; a v29 snapshot needs 7.0.0 or later |
 | `site/src/pages/node.astro:23`, `site/README.md:186` | only with the box bump below (they describe the box) |
 
 **Box** (regtest; NU7 stays off there, `box/regtest/zebrad.toml` has only
 `NU5 = 1`). Not on the 10-05 critical path: bump on 10-06/07, after the
-fleet. `box/regtest/docker-compose.yml:3`,
+fleet. The pin change is prepared on branch `nu7-zebra7`; `box/sim`
+`run-scenarios.sh` (scenarios 1-4) was run with 7.0.0-rc.0 and NU7 at
+110 on 2026-10-03 (results on the board). `box/regtest/docker-compose.yml:3`,
 `box/testnet/test/docker-compose.yml:7`, `box/up/README.md:15`,
 `box/regtest/README.md` → `zfnd/zebra:$REL`. Gate, with the new image:
 `box/regtest/smoke.sh`, `box/regtest/e2e-burn.sh`,
@@ -677,7 +787,7 @@ already stopped stays stopped, and it says so).
 | Symptom | How you see it | Response |
 | --- | --- | --- |
 | **Release late** (not out, or fails 2.2, by `H7 − 300`) | 2.1 | Post "testnet pauses at Zcash `H7`; resumes when Zebra ships NU7" (Rob; adapt notice (b)). Keep every host on 6.3.0: they stop at `H7 − 1` unless someone mines old rules. **[Rob]** stops the laptop's internal miner (2.6 `pkill` line) by `H7 − 50`. At `H7 − 5`, `./deploy.sh keeper-pause`. When the release lands: 2.2–2.5, then `./deploy.sh keeper-resume`. No new Sova genesis: a stall is recoverable (§4.2) |
-| **Stall: our tip stays at `H7 − 1`** | `block_age` "zebrad's tip … is N s old"; `zinfo` blocks = `H7 − 1` | Ask the references for `H7`. **They don't have it either:** Zcash testnet hasn't mined an NU7 block yet (under NU7 a min-difficulty block is allowed after 150 s). Nothing to do; Sova resumes by itself. **They have it:** our zebrad rejects NU7 blocks. `zinfo`: is `nu7.activationheight` `H7`? Is the image the verified digest? `journalctl -u zebrad` for the rejection. Fix the image (a patched release through 2.2–2.5). Sova is stalled on the right chain meanwhile: that is the safe state. |
+| **Stall: our tip stays at `H7 − 1`** | `block_age` "zebrad's tip … is N s old"; `zinfo` blocks = `H7 − 1` | Ask the references for `H7`. **They don't have it either:** Zcash testnet hasn't mined an NU7 block yet (under NU7 a min-difficulty block is allowed only after a gap over 450 s: 18 × 25 s, zips#1382). Nothing to do; Sova resumes by itself. **They have it:** our zebrad rejects NU7 blocks. `zinfo`: is `nu7.activationheight` `H7`? Is the image the verified digest? `journalctl -u zebrad` for the rejection. Fix the image (a patched release through 2.2–2.5). Sova is stalled on the right chain meanwhile: that is the safe state. |
 | **Old-rules chain** | `zcash_fork` ("past NU7's activation height … on branch 37a5165b"), `zcash_ref_fork`; or a follower's `sova-hold: zcash anchor mismatch` / `c5_reject` | **On the keeper: pause the keeper at once** (`./deploy.sh keeper-pause`), then upgrade its zebrad (`./deploy.sh --only sova-keeper-1 --zebra-only`; the pause holds through it), and `./deploy.sh keeper-resume` once that zebrad is on `77190ad9`. **On a follower** (seed, rpc, faucet): it only hurts itself (it holds the keeper's blocks against its wrong zebrad); upgrade it (`--zebra-only`), `sova-rpc-1` first since it is the public view. The upgraded zebrad reorgs to the NU7 chain if the wrong branch is under 1,000 blocks; deeper, restore 1.6's snapshot. Find who mined the old-rules blocks (the laptop? 2.6). If Sova blocks were built on the dead anchor more than 300 deep (`finalized`, v0.1.16), those nodes wedge: stop, write it up, don't improvise a reset. Post a pause notice |
 | **Burns or drips rejected** | Keeper journal: a send error after a `signed for consensus branch` line; no sealed blocks after `S7`; `null_run` after 45 min; faucet drips fail | Which branch was signed? **`37a5165b` for a block ≥ `H7`:** that host's zebrad is pre-NU7 (`zinfo`): upgrade it. **`77190ad9` and still rejected:** a signing bug. Stop `sova-keeper` (only the burner; the node keeps null blocks on the right chain), capture the error, hotfix v0.1.17, redeploy miner and faucet. Post "no new transactions until the fix; the chain keeps running" |
 | **Burns built just before `H7` expire** | burns signed `37a5165b` for `H7 − 1` that missed it | Expected, not an incident: they can't be mined after `H7` and expire after 40 blocks (~17 min at 25 s), freeing their inputs. A short gap in keeper burns right after `H7` can follow if its UTXOs were in those burns |
@@ -694,7 +804,8 @@ already stopped stays stopped, and it says so).
 - **New snapshot** once `H7 + 1,100` exists (NU7 blocks then sit in the
   finalized database, not only in the non-finalized backup):
   `./publish.sh snapshot`. Its `snapshot.json` should say `zebra_version`
-  `v$REL`, `state_version` `28.1.0`. Test-restore it as in
+  `v$REL`, `state_version` `29.0.0` (`snapshot.sh` takes the highest
+  `state/vN`, so `v29` without a change). Test-restore it as in
   `docs/ops/snapshots.md` step 5, then update guide 1b (URL height and the
   four values) and post height, hash and SHA-256 in that commit.
 - The box bump (2.7), then `site/` copy that names the image.
@@ -726,10 +837,12 @@ are follow-ups.
   zebrad is `ZEBRA_IMAGE_DIGEST` (when pinned), and with
   `NU7_ACTIVATION_HEIGHT` set `upgrades["77190ad9"].activationheight`
   equals it.
-- **K4. F1 isn't scripted.** `nu7-burn.sh` tears its node down before a
-  pool check could run, and `recent_blocks_pass_the_strict_checks` scans
-  `tip − 200` (needs a from/to override for short regtest chains). A
-  `--pools` step would replace 2.3's manual block.
+- **K4. F1 is half scripted.** `range_passes_the_strict_checks`
+  (`crates/consensus/tests/sip7_testnet.rs`, `SOVA_SIP7_FROM` /
+  `SOVA_SIP7_TO`) scans any range strictly and prints each block's pools,
+  transactions and recognized burns (branch `nu7-zebra7`). `nu7-burn.sh`
+  still tears its node down before it could run; a `--pools` step would
+  replace 2.3's manual block.
 - **K5. Zebra image verification isn't scripted**: digest lookup,
   `gh attestation verify` with the tag check, `zebrad --version`, the
   ephemeral-testnet NU7-height probe. A `zebra-verify.sh <tag> <H7>` that
@@ -747,9 +860,10 @@ are follow-ups.
 - **K9. `infra/testnet/published/`** drifts from what is live (v0.1.7
   committed vs v0.1.14 live): `publish.sh join` could copy there.
 - **K10. No Docker-free zebrad path on the hosts.** Zebra pushes Docker
-  Hub images only for full releases. If NU7 ships as a pre-release (or
-  the image lags), the hosts have no route to its cosign-signed Linux
-  tarball. A `ZEBRA_BINARY_URL` + `SHA256SUMS.sigstore.json` path, or a
+  Hub images only for full releases. (Not needed for NU7: `7.0.0-rc.0`
+  was published as a full release and its image exists.) If a later fix
+  ships as a pre-release (or the image lags), the hosts have no route to
+  its cosign-signed Linux tarball. A `ZEBRA_BINARY_URL` + `SHA256SUMS.sigstore.json` path, or a
   documented local image build from the tag, would cover it.
 - **K11. The laptop zebrad is hand-run** (source build, internal miner
   on, `nohup`), so every restart is a Rob step, and a forgotten upgrade
@@ -835,7 +949,9 @@ Rob posts these in t.me/sovazec. Fill in `<REL>`, `<DIGEST>`, `<H7>`,
 > Image digest: `zfnd/zebra@<DIGEST>`. Also need v0.1.16 of `sova` and
 > `sova-miner` (posted Oct 3).
 
-(Keep "No resync" only if 2.2d found 28.x in place.)
+("No resync" holds for 7.0.0-rc.0: it moves the v28 state to v29 in place,
+2.2d. Joiners who might want to go back to 6.3.0 before `H7` need a copy
+of `zebrad-state` first; nobody should.)
 
 ### (c) ~10-06, after 3.2: "done"
 

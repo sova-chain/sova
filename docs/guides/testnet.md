@@ -80,6 +80,10 @@ e78e551d89b66a07b6623b3eb02ea71c5adf532addd510e59b55717adfd2c4a3
 v6.3.0
 ```
 
+The snapshot is from zebrad 6.3.0 (state format 28). The zebrad in 1c
+(7.0.0-rc.0, which knows Zcash testnet's NU7 upgrade) opens it in place:
+on first start it moves the state to format 29, no resync.
+
 Restore into the empty state directory, and keep `cache_dir` as in 1a:
 
 ```bash
@@ -98,7 +102,7 @@ docker run -d --name zebrad --restart unless-stopped \
   -v "$HOME/.sova-testnet/zebrad.toml:/home/zebra/.config/zebrad.toml:ro" \
   -v "$HOME/.sova-testnet/zebrad-state:/var/lib/sova/zebrad" \
   -e RUST_LOG=info \
-  zfnd/zebra:6.3.0
+  zfnd/zebra:7.0.0-rc.0
 ```
 
 Skipped the snapshot? The same command full-syncs from zero (about 12

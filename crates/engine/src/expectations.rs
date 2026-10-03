@@ -436,10 +436,43 @@ pub fn schedule() -> consensus::schedule::Schedule {
         })
 }
 
+/// Blocks one expectations poll scans at most. A restart rescans from the
+/// epoch base (the SIP-7 index and SIP-8 votes need all of history), so
+/// it is fed in chunks: each chunk's epochs are recorded before the next
+/// is fetched, progress is logged, and the scan never holds a runtime
+/// thread for long.
+pub const SCAN_CHUNK: u64 = 500;
+
+/// A view whose tip is capped, so one [`Follower::poll`] scans at most up
+/// to `cap`. Block lookups pass through unchanged (the reorg check and the
+/// pool-accounting state live in the follower, across polls).
+struct CappedView<'a, V> {
+    inner: &'a V,
+    cap: u64,
+}
+
+impl<V: ZcashView> ZcashView for CappedView<'_, V> {
+    fn tip_height(&self) -> Result<u64, consensus::follower::ViewError> {
+        Ok(self.inner.tip_height()?.min(self.cap))
+    }
+    fn block_at(
+        &self,
+        height: u64,
+    ) -> Result<Option<consensus::follower::BlockView>, consensus::follower::ViewError> {
+        self.inner.block_at(height)
+    }
+}
+
 /// Feed [`global`] from a Zcash view: one required-withdrawals entry per
 /// epoch (empty for burn-less epochs), keyed by expected Sova height
 /// (`E − base + 1`), assuming rank-0 seals (v1 rule; see module docs).
-pub async fn run_expectations<V: ZcashView>(
+///
+/// Each poll runs on a blocking thread (`spawn_blocking`): the view's
+/// calls are synchronous, and a full rescan on the async runtime starved
+/// the node's RPC (2026-10-03, keeper: RPC dead for the whole ~6 min
+/// rescan). Polls are capped at [`SCAN_CHUNK`] blocks and repeat without
+/// sleeping while the scan is behind.
+pub async fn run_expectations<V: ZcashView + Send + Sync + 'static>(
     view: V,
     base_height: u64,
     schedule: consensus::schedule::Schedule,
@@ -451,8 +484,46 @@ pub async fn run_expectations<V: ZcashView>(
     let mut follower = Follower::new(base_height, REORG_WINDOW)
         .with_strict_pools(evm::zcash::sip7_active())
         .with_sip8_from(crate::votes::sip8_from());
+    let view = std::sync::Arc::new(view);
+    let started = std::time::Instant::now();
+    let mut caught_up_logged = false;
     loop {
-        match follower.poll(&view) {
+        let cap = follower.next_height().saturating_add(SCAN_CHUNK - 1);
+        let task_view = std::sync::Arc::clone(&view);
+        let (returned, result) = match tokio::task::spawn_blocking(move || {
+            let result = follower.poll(&CappedView {
+                inner: &*task_view,
+                cap,
+            });
+            (follower, result)
+        })
+        .await
+        {
+            Ok(pair) => pair,
+            // The poll panicked: there is no follower to continue with.
+            Err(err) => {
+                tracing::error!(%err, "expectations scan task failed; expectations stopped");
+                return;
+            }
+        };
+        follower = returned;
+        // The poll stopped at the chunk cap, not at the tip: keep going.
+        let behind = follower.next_height() > cap && follower.hold_reason().is_none();
+        if behind {
+            tracing::info!(
+                next = follower.next_height(),
+                elapsed_s = started.elapsed().as_secs(),
+                "expectations: rescanning Zcash history"
+            );
+        } else if !caught_up_logged && result.is_ok() {
+            tracing::info!(
+                next = follower.next_height(),
+                elapsed_s = started.elapsed().as_secs(),
+                "expectations: Zcash scan caught up to the tip"
+            );
+            caught_up_logged = true;
+        }
+        match result {
             Ok(events) => {
                 if let Some(why) = follower.hold_reason() {
                     tracing::error!(%why, "sip-7 hold: zcash scan stopped before this block");
@@ -523,7 +594,9 @@ pub async fn run_expectations<V: ZcashView>(
             }
             Err(err) => tracing::warn!(%err, "expectations poll failed; retrying"),
         }
-        tokio::time::sleep(poll_interval).await;
+        if !behind {
+            tokio::time::sleep(poll_interval).await;
+        }
     }
 }
 

@@ -1341,6 +1341,44 @@ In both failing runs B and C stayed on the stale 9 and did not adopt A's 10
 (on the testnet run of seed 202 they followed A). Either way the network
 sits on a block anchored to a Zcash block zebrad no longer has.
 
+## Keeper restart on a long chain: `restart-long-chain-scenario.sh` (acceptance test, not in nightly yet)
+
+Acceptance test for the fast-restart fix (`docs/design/fast-restart.md`).
+The testnet outage of 2026-10-03: on every start the expectations follower
+rescans every Zcash block from the epoch base in one synchronous
+`Follower::poll()`, the sealer waits for the head's epoch, and then the
+sealer's own follower rescans the same range again. ~63k epochs took ~11.5
+min with the keeper's RPC timing out.
+
+- One node: the keeper A (mine mode, SIP-6/7, sealing keystore, persistent
+  datadir), no peers, its own regtest zebrad behind a counting proxy that
+  adds 4 ms per request (`RESTART_LONG_ZEBRAD_DELAY_MS`), so each block costs
+  ~25 ms and 3,000 epochs rescan like ~14k testnet ones. A runs with
+  `TOKIO_WORKER_THREADS=1` (`RESTART_LONG_TOKIO_WORKERS`), which reproduces
+  the keeper's RPC outage; with 2 workers the laptop keeps RPC up.
+- Grow 3,000 null epochs (`RESTART_LONG_EPOCHS`, chunks of 250), snapshot A's
+  SIP-4/SIP-7 precompile answers for six Zcash heights from `B` to the tip,
+  SIGTERM A, mine one Zcash block, restart A, probe `eth_blockNumber` every
+  second.
+- Pass: (a) A seals the new epoch within 60 s (`RESTART_LONG_BUDGET_S`);
+  (b) its RPC answers within 30 s and every probe after that within 5 s;
+  (c) the precompile answers equal the snapshot; (d) A fetched at most 1,000
+  `getblock`s from zebrad between the exec and the seal
+  (`RESTART_LONG_MAX_BLOCK_FETCHES`): restart cost must not grow with the
+  chain. Then 3 more epochs are sealed.
+
+Isolation: zebrad on `:18482` (project `sova-restart-long-sim`, container
+`sova-zebrad-restart-long`), proxy on `:18483`, A on 11545/11551/31231.
+About 15 minutes, 12 of them regtest zebrad mining the blocks.
+
+### Results on 2026-10-03: fails on `release` `3686661`
+
+| run | workers / epochs | sealed after | RPC first answer | blocks fetched | result |
+|---|---|---|---|---|---|
+| 1 | 2 / 3,000 | 156.2 s (gate held 76.6 s, then the sealer's rescan 79.2 s) | 1.2 s | not counted | FAIL (a) |
+| 2 | 1 / 1,500 | 77.2 s | 74.8 s | not counted | FAIL (a), (b) |
+| 3 (defaults) | 1 / 3,000 | 153.8 s | 148.5 s | 6,003 = 2 × 3,000 + 3 | FAIL (a), (b), (d); (c) PASS |
+
 ## Randomized Zcash reorg stress: `reorg-stress-scenario.sh` (nightly 15 min, local 45 min)
 
 Both serious public-testnet stalls were a Zcash reorg reaching consensus code

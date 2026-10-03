@@ -181,6 +181,12 @@ impl Follower {
         self
     }
 
+    /// The next Zcash height the follower will scan.
+    #[must_use]
+    pub const fn next_height(&self) -> u64 {
+        self.next_height
+    }
+
     /// Why the last poll stopped before the tip under strict pools.
     #[must_use]
     pub fn hold_reason(&self) -> Option<&str> {
@@ -373,6 +379,82 @@ mod tests {
             }
             Ok(self.blocks.borrow().get(height as usize - 1).cloned())
         }
+    }
+
+    /// A view with its tip capped at `cap` (how the engine feeds a rescan
+    /// in chunks, `expectations::run_expectations`).
+    struct Capped<'a> {
+        inner: &'a MockView,
+        cap: std::cell::Cell<u64>,
+    }
+
+    impl ZcashView for Capped<'_> {
+        fn tip_height(&self) -> Result<u64, ViewError> {
+            Ok(self.inner.tip_height()?.min(self.cap.get()))
+        }
+        fn block_at(&self, height: u64) -> Result<Option<BlockView>, ViewError> {
+            self.inner.block_at(height)
+        }
+    }
+
+    /// Fast restart (2026-10-03): scanning in capped chunks yields exactly
+    /// the epochs (and rollbacks) one uncapped poll yields, including a
+    /// reorg that lands between chunks, so the SIP-7 index and expectations
+    /// a chunked rescan builds are the ones every other node builds.
+    #[test]
+    fn chunked_polls_match_one_poll_including_a_reorg_between_chunks() {
+        let chain = MockView::new();
+        for i in 0..40u8 {
+            chain.push(i + 1, Vec::new());
+        }
+        // One poll over the whole chain.
+        let mut whole = Follower::new(1, 10);
+        let mut want = epochs_of(&whole.poll(&chain).unwrap_or_default());
+
+        // The same chain in chunks of 7.
+        let mut chunked = Follower::new(1, 10);
+        let capped = Capped {
+            inner: &chain,
+            cap: std::cell::Cell::new(0),
+        };
+        let mut got = Vec::new();
+        for _ in 0..3 {
+            capped.cap.set(chunked.next_height() + 6);
+            got.extend(epochs_of(&chunked.poll(&capped).unwrap_or_default()));
+        }
+        // Reorg the top 5 blocks while the chunked follower is mid-scan
+        // (it has scanned 21), then finish both.
+        chain.truncate(35);
+        for i in 0..6u8 {
+            chain.push(200 + i, Vec::new());
+        }
+        let whole_after = whole.poll(&chain).unwrap_or_default();
+        let rolled: Vec<_> = whole_after
+            .iter()
+            .filter_map(|e| match e {
+                FollowerEvent::Rollback { to_height } => Some(*to_height),
+                FollowerEvent::Epoch(_) => None,
+            })
+            .collect();
+        assert_eq!(rolled, vec![35]);
+        want.retain(|(h, _, _)| *h <= 35);
+        want.extend(epochs_of(&whole_after));
+        let mut chunked_rolled = Vec::new();
+        while chunked.next_height() <= chain.tip_height().unwrap_or(0) {
+            capped.cap.set(chunked.next_height() + 6);
+            let events = chunked.poll(&capped).unwrap_or_default();
+            for e in &events {
+                if let FollowerEvent::Rollback { to_height } = e {
+                    chunked_rolled.push(*to_height);
+                }
+            }
+            got.extend(epochs_of(&events));
+        }
+        // The chunked follower never saw the replaced blocks: no rollback.
+        assert!(chunked_rolled.is_empty());
+        assert_eq!(got, want);
+        assert_eq!(got.len(), 41);
+        assert_eq!(got.last().map(|e| e.1), Some(h32(205)));
     }
 
     fn epochs_of(events: &[FollowerEvent]) -> Vec<(u64, [u8; 32], usize)> {

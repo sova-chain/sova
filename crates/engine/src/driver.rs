@@ -227,12 +227,37 @@ pub const ABANDON_GRACE_RUNGS: u32 = 2;
 /// late-win sibling still not observed) before it is re-fired.
 pub const RETRIGGER: std::time::Duration = std::time::Duration::from_secs(15);
 
+/// How far below the Sova head a restarted sealer starts its Zcash scan:
+/// twice [`SETTLED_KEEP`], the deepest it ever queues, so a head that comes
+/// down by a full stale scan still finds its epochs queued.
+pub const SEALER_RESCAN_DEPTH: u64 = 2 * SETTLED_KEEP;
+
+/// The Zcash height a sealer restarted with Sova head `sova_head` starts
+/// scanning at: the epoch of Sova height `sova_head - SEALER_RESCAN_DEPTH`
+/// (at least height 1, i.e. `base_height`). Everything below is settled
+/// history `process` would skip anyway; scanning it from the base doubled
+/// every keeper restart (2026-10-03: ~6 min of ~12 at 63k epochs, on top
+/// of the expectations follower's own rescan).
+#[must_use]
+pub fn sealer_scan_start(base_height: u64, sova_head: u64) -> u64 {
+    let first_sova = sova_head.saturating_sub(SEALER_RESCAN_DEPTH).max(1);
+    base_height.saturating_add(first_sova - 1)
+}
+
 impl SealerCore {
     /// A sealer following Zcash from `base_height` with the given window.
     #[must_use]
     pub fn new(config: SealerConfig, base_height: u64, window: usize) -> Self {
+        Self::new_from(config, base_height, base_height, window)
+    }
+
+    /// A sealer for epoch base `base_height` whose Zcash scan starts at
+    /// `scan_from` (>= `base_height`; see [`sealer_scan_start`]).
+    #[must_use]
+    pub fn new_from(config: SealerConfig, base_height: u64, scan_from: u64, window: usize) -> Self {
         Self {
-            follower: Follower::new(base_height, window).with_sip8_from(crate::votes::sip8_from()),
+            follower: Follower::new(scan_from.max(base_height), window)
+                .with_sip8_from(crate::votes::sip8_from()),
             config,
             base_height,
             queue: std::collections::BTreeMap::new(),
@@ -524,7 +549,13 @@ impl SealerCore {
 /// The async sealer loop: poll the Zcash view, stage settlements, and
 /// fire one `()` per epoch into `trigger` — wired to reth's
 /// `MiningMode::trigger` so each Zcash block yields one Sova block.
-pub async fn run_sealer<V: ZcashView>(
+///
+/// Each `process` runs on a blocking thread (`spawn_blocking`), as the
+/// expectations scan does: its Zcash view is synchronous, and a restart's
+/// first poll (up to [`SEALER_RESCAN_DEPTH`] blocks) on the async runtime
+/// starved the node's RPC (restart-long-chain sim, 2026-10-03: two probes
+/// timed out right after the scan gate lifted).
+pub async fn run_sealer<V: ZcashView + Send + Sync + 'static>(
     mut core: SealerCore,
     view: V,
     sova_head: impl Fn() -> u64,
@@ -532,6 +563,7 @@ pub async fn run_sealer<V: ZcashView>(
     trigger: tokio::sync::mpsc::Sender<crate::miner::BuildTarget>,
     poll_interval: std::time::Duration,
 ) {
+    let view = std::sync::Arc::new(view);
     loop {
         let head = sova_head();
         // SIP-4 §7 can only tell whether the head is stale once our own
@@ -550,9 +582,29 @@ pub async fn run_sealer<V: ZcashView>(
             tokio::time::sleep(poll_interval).await;
             continue;
         }
-        match core.process(&view, head, &pending, std::time::Instant::now(), |h| {
-            crate::candidates::global().best(h)
-        }) {
+        let task_view = std::sync::Arc::clone(&view);
+        let task_pending = pending.clone();
+        let (returned, result) = match tokio::task::spawn_blocking(move || {
+            let result = core.process(
+                &*task_view,
+                head,
+                &task_pending,
+                std::time::Instant::now(),
+                |h| crate::candidates::global().best(h),
+            );
+            (core, result)
+        })
+        .await
+        {
+            Ok(pair) => pair,
+            // The poll panicked: there is no core to continue with.
+            Err(err) => {
+                tracing::error!(%err, "sealer task failed; sealer stopped");
+                return;
+            }
+        };
+        core = returned;
+        match result {
             Ok(outcomes) => {
                 for outcome in outcomes {
                     match outcome {
@@ -666,6 +718,24 @@ mod tests {
             txs: Vec::new(),
             pools: None,
         }
+    }
+
+    #[test]
+    fn a_restarted_sealer_scans_from_just_below_the_head() {
+        let base = 4_388_500;
+        // Fresh chain: from the base.
+        assert_eq!(sealer_scan_start(base, 0), base);
+        assert_eq!(sealer_scan_start(base, SEALER_RESCAN_DEPTH), base);
+        // The 2026-10-03 keeper: head 62,735.
+        assert_eq!(
+            sealer_scan_start(base, 62_735),
+            base + 62_735 - SEALER_RESCAN_DEPTH - 1
+        );
+        // Every epoch the sealer may still queue (>= head - SETTLED_KEEP)
+        // is at or above the start.
+        let head = 62_735;
+        let lowest_kept_epoch = base + (head - SETTLED_KEEP) - 1;
+        assert!(sealer_scan_start(base, head) <= lowest_kept_epoch);
     }
 
     #[test]

@@ -24,7 +24,7 @@ Published files, all in one directory:
 
 | File | Contents |
 | --- | --- |
-| `zebrad-testnet-<height>.tar.zst` | `state/v28/testnet/` (the RocksDB database, minus `LOCK` and the `LOG*` info logs) and `non_finalized_state/testnet/` (zebrad's backup of its last ~1,000 blocks). Paths are relative to zebrad's `state.cache_dir`. If `zstd` is missing it falls back to `.tar.gz` and says so. Published snapshots should use zstd. |
+| `zebrad-testnet-<height>.tar.zst` | `state/vN/testnet/` (`v28` from zebrad 6.3.0, `v29` from 7.0.0-rc.0 on: the RocksDB database, minus `LOCK` and the `LOG*` info logs) and `non_finalized_state/testnet/` (zebrad's backup of its last ~1,000 blocks). Paths are relative to zebrad's `state.cache_dir`. If `zstd` is missing it falls back to `.tar.gz` and says so. Published snapshots should use zstd. |
 | `SHA256SUMS` | `<sha256>  <archive name>`, in the format `sha256sum -c` reads. |
 | `snapshot.json` | `network`, `zebra_version`, `state_version`, `height`, `hash`, `created_at`, `sha256`, `size`, plus `archive`, `compression`, `state_bytes_approx`, `contents` and `offline_check`. |
 
@@ -127,9 +127,11 @@ box/testnet/snapshot.sh restore zebrad-testnet-<h>.tar.zst ~/sova/zebra-state
 #    anything other than state/ and non_finalized_state/ (or any links).
 # 3. In zebrad.toml: [state] cache_dir = "~/sova/zebra-state" (absolute path),
 #    network = "Testnet". Use the zebrad version from snapshot.json
-#    (zfnd/zebra:6.3.0, state format 28). An older zebrad ignores the v28
-#    directory and full-syncs. A newer one reuses it only if its format can
-#    be restored from v28, and otherwise deletes it at startup.
+#    (zfnd/zebra:6.3.0, state format 28), or a newer one that can restore
+#    it: zfnd/zebra:7.0.0-rc.0 moves state/v28 to state/v29 at startup (no
+#    resync; 6.3.0 can't read it afterwards). An older zebrad ignores a
+#    newer directory and full-syncs. A newer one that can't restore from
+#    v28 deletes it at startup.
 # 4. Start zebrad. Then:
 box/testnet/snapshot.sh verify --rpc http://127.0.0.1:<rpc-port> --manifest snapshot.json
 # 5. Compare the manifest's hash at that height with an INDEPENDENT source:
