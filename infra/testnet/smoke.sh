@@ -160,7 +160,13 @@ check_null_sealed() { # head (a number)
   fi
 }
 
-port_open() { nc -z -w 5 "$1" "$2" >/dev/null 2>&1; }
+# macOS nc: -w doesn't bound the connect, so a filtered port waits out the
+# TCP connect timeout (~75 s each); -G does. Linux (OpenBSD) nc: -w does.
+if [[ "$(uname)" == Darwin ]]; then
+  port_open() { nc -z -G 5 -w 5 "$1" "$2" >/dev/null 2>&1; }
+else
+  port_open() { nc -z -w 5 "$1" "$2" >/dev/null 2>&1; }
+fi
 
 cmd_edge() {
   local r id h1 h2 m

@@ -203,6 +203,9 @@ impl ExpectedSettlements {
             self.scanned.fetch_min(height, Ordering::SeqCst);
         }
         let floor = height.saturating_add(1);
+        // `fetch_update` is `try_update` from Rust 1.99 (deprecated alias);
+        // keep the name both the local 1.98 and CI's newer stable accept.
+        #[allow(deprecated)]
         let _ = self
             .unwound
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |cur| {
