@@ -75,7 +75,7 @@ a NEAR-custodied vault on Zcash.
 
 ## 1. Motivation
 
-SIP-4 makes Sova **the EVM that can see Zcash**: a contract can verify
+SIP-4 makes Sova **the EVM that reads Zcash**: a contract can verify
 that a real ZEC payment landed on Zcash, with no bridge, oracle or
 custodian. That covers "pay ZEC, get something on Sova" and custody-free
 ZEC↔SOVA trades, and it stays Sova's headline.

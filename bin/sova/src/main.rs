@@ -615,10 +615,15 @@ async fn run() -> eyre::Result<()> {
         // Late-join catch-up: sova/1 hands over tips beyond its bounded
         // ancestor chase; the driver FCUs toward them only once our own
         // zebrad scan covers the target (every synced block then meets an
-        // enforced C5 check). Zero safe/finalized: reth backfills to the
-        // head optimistically only when finalized is unset.
+        // enforced C5 check). Gaps up to PIN_FREE_GAP name our own block at
+        // head - FINALIZED_DEPTH (an ancestor of any target in reach) as
+        // safe/finalized, so reth fetches them by block downloads that follow
+        // every FCU; larger ones stay optimistic (zero safe/finalized: reth
+        // backfills to the head, pinning it; SOVA_SYNC_STALL_EXIT_SECS is the
+        // backstop). 2026-10-01: a pinned tip re-sealed away stalled seed-1.
         if let Some(sync_rx) = engine::candidates::install_sync() {
             let head_provider = node.provider.clone();
+            let sync_provider = node.provider.clone();
             let engine_handle = node.add_ons_handle.beacon_engine_handle.clone();
             sova_tasks.spawn(engine::candidates::run_sync_driver(
                 sync_rx,
@@ -633,11 +638,22 @@ async fn run() -> eyre::Result<()> {
                 },
                 move |target: engine::candidates::SyncTarget| {
                     let engine_handle = engine_handle.clone();
+                    let head = sync_provider.best_block_number().unwrap_or(0);
+                    let anchor = if engine::candidates::pin_free_catch_up(head, target.sova_height)
+                    {
+                        sync_provider
+                            .block_hash(head.saturating_sub(engine::candidates::FINALIZED_DEPTH))
+                            .ok()
+                            .flatten()
+                            .unwrap_or(alloy_primitives::B256::ZERO)
+                    } else {
+                        alloy_primitives::B256::ZERO
+                    };
                     async move {
                         let state = ForkchoiceState {
                             head_block_hash: alloy_primitives::B256::from(target.block_hash),
-                            safe_block_hash: alloy_primitives::B256::ZERO,
-                            finalized_block_hash: alloy_primitives::B256::ZERO,
+                            safe_block_hash: anchor,
+                            finalized_block_hash: anchor,
                         };
                         match engine_handle.fork_choice_updated(state, None).await {
                             Ok(outcome) if outcome.payload_status.is_valid() => Ok(()),

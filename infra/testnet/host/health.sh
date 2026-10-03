@@ -3,8 +3,10 @@
 # (sova-health.timer, every 2 min). Every finding goes to the journal
 # (`journalctl -t sova-health`); ALERT lines also go to Telegram when
 # /etc/sova/health.env sets TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID (and
-# optionally TELEGRAM_THREAD_ID, a topic in a forum group). The
-# same alert is re-sent at most once an hour.
+# optionally TELEGRAM_THREAD_ID, a topic in a forum group). An alert goes
+# out when it first fires, again every ALERT_REPEAT_MIN while it lasts
+# (6 h: Rob 2026-10-02, hourly repeats were too loud), and once more as
+# "resolved" when it clears.
 #
 # Planned maintenance (host/maint.sh; docs/ops/nu7-upgrade.md K7, K12):
 #   mute         /etc/sova/.mute-until (epoch seconds, then a reason; written
@@ -23,9 +25,8 @@
 # HEALTH_NETWORK_ALERTS=1 send them: two, so one dead host can't silence
 # them (deploy.sh: HEALTH_NETWORK_ALERT_HOSTS, by default the rpc host and
 # the first seed; 2026-09-27 the rpc host, then the only sender, ran out of
-# memory and no alert went out). The once-an-hour dedupe is per host, so a
-# network finding reaches Telegram up to twice an hour, once from each: an
-# accepted cost. Unset (a host.env from an older kit): 1 on the rpc host
+# memory and no alert went out). The repeat dedupe is per host, so a
+# network finding reaches Telegram twice, once from each: an accepted cost. Unset (a host.env from an older kit): 1 on the rpc host
 # and on a seed whose hostname ends in -seed-1. The other hosts only log
 # them. Findings about the host itself (memory, disk, zebrad, sova-node,
 # "we lag") come from every host.
@@ -161,8 +162,11 @@ NU7_BRANCH_ID=77190ad9
 MUTE_FILE=/etc/sova/.mute-until
 MUTE_MAX_MIN=240
 KEEPER_PAUSED_FILE=/etc/sova/.keeper-paused
-STATE_DIR=/var/lib/sova-health
+STATE_DIR="${HEALTH_STATE_DIR:-/var/lib/sova-health}"
 mkdir -p "${STATE_DIR}"
+# How often a still-true alert is sent again, in minutes.
+ALERT_REPEAT_MIN="${ALERT_REPEAT_MIN:-360}"
+[[ "${ALERT_REPEAT_MIN}" =~ ^[1-9][0-9]*$ ]] || ALERT_REPEAT_MIN=360
 HOST="$(hostname)"
 
 say() { logger -t sova-health -- "$*"; echo "$*"; }
@@ -209,27 +213,46 @@ alert() {
     return 0
   fi
   say "ALERT ${key}: $*"
-  local stamp="${STATE_DIR}/${key}.last" now
+  local stamp="${STATE_DIR}/${key}.last" first="${STATE_DIR}/${key}.first" now
   now="$(date +%s)"
-  if [[ -f "${stamp}" ]] && ((now - $(cat "${stamp}") < 3600)); then
+  if [[ -f "${stamp}" ]] && ((now - $(cat "${stamp}") < ALERT_REPEAT_MIN * 60)); then
     return 0
   fi
   echo "${now}" >"${stamp}"
-  if [[ -n "${TELEGRAM_BOT_TOKEN:-}" && -n "${TELEGRAM_CHAT_ID:-}" ]]; then
-    # A topic in a forum group, when set.
-    local thread=()
-    [[ -n "${TELEGRAM_THREAD_ID:-}" ]] && thread=(--data-urlencode "message_thread_id=${TELEGRAM_THREAD_ID}")
-    # Token in a curl config on stdin, never on the command line.
-    printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "${TELEGRAM_BOT_TOKEN}" |
-      curl -fsS --max-time 10 -K - \
-        --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
-        "${thread[@]}" \
-        --data-urlencode "text=[sova ${HOST}] ${key}: $*" >/dev/null ||
-      say "telegram send failed"
-  fi
+  [[ -f "${first}" ]] || echo "${now}" >"${first}"
+  tg_send "[sova ${HOST}] ${key}: $*"
 }
 
-clear_alert() { rm -f "${STATE_DIR}/$1.last" "${STATE_DIR}/$1.since" "${STATE_DIR}/$1.passes"; }
+tg_send() { # text
+  [[ -n "${TELEGRAM_BOT_TOKEN:-}" && -n "${TELEGRAM_CHAT_ID:-}" ]] || return 0
+  # A topic in a forum group, when set.
+  local thread=()
+  [[ -n "${TELEGRAM_THREAD_ID:-}" ]] && thread=(--data-urlencode "message_thread_id=${TELEGRAM_THREAD_ID}")
+  # Token in a curl config on stdin, never on the command line.
+  printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "${TELEGRAM_BOT_TOKEN}" |
+    curl -fsS --max-time 10 -K - \
+      --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+      "${thread[@]}" \
+      --data-urlencode "text=$1" >/dev/null ||
+    say "telegram send failed"
+}
+
+# clear_alert <key>: the condition is gone. If an alert about it went out,
+# one "resolved" line follows (logged only while muted).
+clear_alert() {
+  local first="${STATE_DIR}/$1.first" since now
+  if [[ -f "${first}" ]]; then
+    since="$(cat "${first}")"
+    now="$(date +%s)"
+    if [[ -n "${MUTED_UNTIL}" ]]; then
+      say "RESOLVED $1 (alerting since $(fmt_time "${since}")) [muted, not sent]"
+    else
+      say "RESOLVED $1 (alerting since $(fmt_time "${since}"))"
+      tg_send "[sova ${HOST}] ${1}: resolved after $(((now - since + 59) / 60)) min"
+    fi
+  fi
+  rm -f "${STATE_DIR}/$1.last" "${first}" "${STATE_DIR}/$1.since" "${STATE_DIR}/$1.passes"
+}
 
 # A finding about the whole network: sent from two hosts only (see the top).
 net_alert() {
@@ -368,7 +391,18 @@ check_block_age() { # head
     return 0
   fi
   [[ "${ztime}" =~ ^[0-9]+$ ]] && zage=$((now - ztime))
-  if [[ -n "${zage}" ]] && ((zage > limit)); then
+  # This host behind a reference that's ahead: our lag, not a network stall,
+  # and epoch_lag already says "WE LAG" (2026-10-01: a stuck seed-1 sent
+  # "SOVA STUCK" hourly while the network was fine).
+  local ref_hex="" ref=""
+  if [[ -n "${HEALTH_REFERENCE_RPC}" ]]; then
+    ref_hex="$(rpc "${HEALTH_REFERENCE_RPC}" eth_blockNumber 2>/dev/null | jq -r '.result // empty' 2>/dev/null)" || ref_hex=""
+    [[ "${ref_hex}" =~ ^0x[0-9a-fA-F]+$ ]] && ref=$((ref_hex))
+  fi
+  if [[ -n "${ref}" ]] && ((ref > $1 + 2)); then
+    clear_alert block_age
+    say "newest block $1 here is $((age / 60)) min old, but the reference is at ${ref}: this host lags (epoch_lag reports it)"
+  elif [[ -n "${zage}" ]] && ((zage > limit)); then
     clear_alert block_age
     say "newest Sova block $1 is $((age / 60)) min old; zebrad's tip ${ztip} is $((zage / 60)) min old too: Zcash is slow, Sova waits for it"
   elif [[ -n "${zage}" ]]; then

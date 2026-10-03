@@ -827,6 +827,34 @@ const TIP_SLACK: u64 = 2;
 /// forkchoice while the engine downloads or backfills.
 const SYNC_POLL: std::time::Duration = std::time::Duration::from_secs(3);
 
+/// Catch-up gaps up to this many blocks are fetched by the engine's block
+/// downloads, which follow every new forkchoice: the driver's FCU names a
+/// safe/finalized block we already hold, so reth never starts its backfill
+/// pipeline. Beyond it the FCU stays optimistic (zero safe/finalized) and
+/// reth backfills, pinning the target hash until the pipeline finishes.
+/// Under reth's block buffer (64) so a whole gap fits while it connects.
+///
+/// Why (2026-10-01, testnet seed-1, `box/sim/seed-stall-scenario.sh`): a
+/// node 43 blocks behind FCU'd the network tip with zero finalized; reth
+/// pinned its pipeline to that hash, the network re-sealed it away in a
+/// Zcash reorg, no peer served it any more, and every later FCU answered
+/// `Syncing` for 14 h until a restart.
+pub const PIN_FREE_GAP: u64 = 48;
+
+/// Whether a catch-up FCU from `head` to `target` may name a block we
+/// already hold as safe/finalized (see [`PIN_FREE_GAP`]).
+pub fn pin_free_catch_up(head: u64, target: u64) -> bool {
+    target.saturating_sub(head) <= PIN_FREE_GAP
+}
+
+/// Env var: seconds a catch-up may sit with our head frozen while every
+/// FCU answers `Syncing` before the node exits for its supervisor to
+/// restart it (unset or 0: never). The restart drops reth's pinned
+/// pipeline target, which is what cleared the 2026-10-01 stall; it is the
+/// backstop for gaps above [`PIN_FREE_GAP`]. Testnet hosts set it (systemd
+/// `Restart=always`).
+pub const SYNC_STALL_EXIT_ENV: &str = "SOVA_SYNC_STALL_EXIT_SECS";
+
 /// Late-join catch-up (docs/design/p2p-m1.md, Decision 2). Waits for a
 /// [`SyncTarget`], then — **only once our own Zcash scan covers the
 /// target's height** (`watermark`, `None` when the node enforces no C5) —
@@ -837,8 +865,9 @@ const SYNC_POLL: std::time::Duration = std::time::Duration::from_secs(3);
 /// reaches the target; a newer, higher target replaces the old one.
 ///
 /// Like the arbiter this only moves the head toward a block the network
-/// offered; it never builds, and it never finalizes (`fcu` receives just
-/// the target).
+/// offered; it never builds, and it never finalizes anything new (`fcu`
+/// receives just the target; within [`PIN_FREE_GAP`] the caller names a
+/// block it already holds, at FINALIZED_DEPTH, as safe/finalized).
 pub async fn run_sync_driver<H, W, F, Fut>(
     mut rx: tokio::sync::watch::Receiver<Option<SyncTarget>>,
     head_height: H,
@@ -854,6 +883,13 @@ pub async fn run_sync_driver<H, W, F, Fut>(
     // The target the last "catching up" line was logged for: that line is
     // logged once per target, not on every re-assertion.
     let mut announced: Option<SyncTarget> = None;
+    let stall_exit = std::env::var(SYNC_STALL_EXIT_ENV)
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|&secs| secs > 0)
+        .map(std::time::Duration::from_secs);
+    // Our head and when it last moved, for the stall backstop.
+    let mut progress = (head_height(), std::time::Instant::now());
     loop {
         // Targets sent straight into the channel (tests, older callers)
         // join the remembered set.
@@ -879,19 +915,37 @@ pub async fn run_sync_driver<H, W, F, Fut>(
                     );
                     announced = Some(target);
                 }
-                match fcu(target).await {
-                    Ok(()) => {}
-                    Err(status) => tracing::debug!(
-                        target = target.sova_height,
-                        %status,
-                        "catch-up forkchoice pending (engine downloading/backfilling)"
-                    ),
-                }
-                if head_height() >= target.sova_height {
+                let syncing = match fcu(target).await {
+                    Ok(()) => false,
+                    Err(status) => {
+                        tracing::debug!(
+                            target = target.sova_height,
+                            %status,
+                            "catch-up forkchoice pending (engine downloading/backfilling)"
+                        );
+                        status.contains("Syncing")
+                    }
+                };
+                let now_head = head_height();
+                if now_head >= target.sova_height {
                     tracing::info!(height = target.sova_height, "caught up to sync target");
+                }
+                if now_head != progress.0 || !syncing {
+                    progress = (now_head, std::time::Instant::now());
+                } else if let Some(limit) = stall_exit.filter(|l| progress.1.elapsed() >= *l) {
+                    tracing::error!(
+                        head = now_head,
+                        target = target.sova_height,
+                        stalled_secs = limit.as_secs(),
+                        "catch-up stalled: head frozen while every forkchoice answers Syncing \
+                         (reth's backfill pinned to a block no peer serves?); exiting so the \
+                         supervisor restarts the node ({SYNC_STALL_EXIT_ENV})"
+                    );
+                    std::process::exit(75);
                 }
             }
             None => {
+                progress = (head_height(), std::time::Instant::now());
                 let pending = SYNC_TARGETS.lock().map(|t| t.len()).unwrap_or(0);
                 if pending == 0 {
                     // Nothing to do until a new target arrives.
@@ -923,6 +977,21 @@ mod tests {
             sealer_rank: rank,
             block_hash: [hash_byte; 32],
         }
+    }
+
+    #[test]
+    fn catch_up_within_the_pin_free_gap_names_a_held_block() {
+        // The 2026-10-01 seed-1 gap (41315 -> 41358) and the sim's (5 -> 50).
+        assert!(pin_free_catch_up(41_315, 41_358));
+        assert!(pin_free_catch_up(5, 50));
+        assert!(pin_free_catch_up(100, 100 + PIN_FREE_GAP));
+        assert!(!pin_free_catch_up(100, 100 + PIN_FREE_GAP + 1));
+        // A fresh join stays optimistic (reth backfills).
+        assert!(!pin_free_catch_up(0, 40_000));
+        // A target at or below our head is trivially within reach.
+        assert!(pin_free_catch_up(500, 400));
+        // Below reth's block buffer, so a whole gap fits while it connects.
+        const { assert!(PIN_FREE_GAP < 64) };
     }
 
     #[test]

@@ -437,10 +437,10 @@ echo
 echo "==== health.sh (mute, keeper pause)"
 H="${KIT}/host/health.sh"
 {
-  grep -E '^(MUTE_FILE|MUTE_MAX_MIN|KEEPER_PAUSED_FILE)=' "${H}"
-  for f in fmt_time mute_init alert keeper_paused paused_text check_keeper node_paused; do fn "${H}" "${f}"; done
+  grep -E '^(MUTE_FILE|MUTE_MAX_MIN|KEEPER_PAUSED_FILE|ALERT_REPEAT_MIN)=' "${H}"
+  for f in fmt_time mute_init alert tg_send keeper_paused paused_text check_keeper node_paused; do fn "${H}" "${f}"; done
 } >"${TMP}/health-fns.sh"
-for f in fmt_time mute_init alert keeper_paused paused_text check_keeper node_paused; do
+for f in fmt_time mute_init alert tg_send keeper_paused paused_text check_keeper node_paused; do
   grep -q "^${f}() {" "${TMP}/health-fns.sh" || { echo "FAIL  ${f} not found in health.sh"; exit 1; }
 done
 # One health pass: mute_init, then an alert and the keeper checks. SENT

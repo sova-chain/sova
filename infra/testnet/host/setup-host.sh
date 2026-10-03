@@ -455,6 +455,10 @@ node_key_and_enode() {
 # No SOVA_RPC_CORS here on purpose: every host's RPC binds 127.0.0.1, and
 # the only browser-facing path is rpc.<domain> through the edge Worker
 # (worker/rpc-firewall.mjs), which answers CORS itself.
+# SOVA_SYNC_STALL_EXIT_SECS: a catch-up whose head stays frozen while every
+# forkchoice answers Syncing for 10 min exits the node, and systemd
+# (Restart=always) brings it back with reth's pinned backfill target gone
+# (engine::candidates::SYNC_STALL_EXIT_ENV; 2026-10-01 seed-1 stall).
 node_env_text() { # mode-lines rpc-profile
   cat <<EOF
 # Written by setup-host.sh (${ROLE}); re-run deploy.sh to change it.
@@ -474,6 +478,7 @@ SOVA_NAT=extip:${PUBLIC_IPV4}
 SOVA_HTTP_PORT=${SOVA_HTTP_PORT}
 SOVA_AUTH_PORT=${SOVA_AUTH_PORT}
 SOVA_RPC_PROFILE=$2
+SOVA_SYNC_STALL_EXIT_SECS=600
 RUST_LOG=info
 RUST_LOG_STYLE=never
 NO_COLOR=1
