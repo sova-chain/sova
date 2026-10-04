@@ -12,7 +12,7 @@ on a busy one.
 ## Prerequisites
 
 - **Docker** (Docker Desktop on macOS), installed and running. `zebrad`
-  runs in a container (`zfnd/zebra:6.3.0`, about 120 MB on first pull).
+  runs in a container (`zfnd/zebra:7.0.0-rc.0`, about 120 MB on first pull).
 - **curl**.
 - **Free local ports**: 18232 (zebrad RPC), 8545 (Sova RPC), 8551 (Sova
   authrpc) and 30303 (Sova p2p). The script checks them before starting
@@ -31,7 +31,7 @@ on a busy one.
 ## Quickstart
 
 ```bash
-git clone --branch v0.1.14 https://github.com/sova-chain/sova && cd sova
+git clone --branch v0.1.18 https://github.com/sova-chain/sova && cd sova
 ./box/up.sh
 ```
 
@@ -119,7 +119,7 @@ Two things in forge's output look wrong but are not:
 CI (`.github/workflows/box-binaries.yml`) builds release `sova` and
 `sova-miner` for **macOS arm64** and **Linux x86_64** in two situations:
 
-- **A `v*` tag is pushed** (e.g. `v0.1.14`): the binaries are attached to
+- **A `v*` tag is pushed** (e.g. `v0.1.18`): the binaries are attached to
   that tag's **GitHub Release** as `sova-box-bin-darwin-arm64.tar.gz` and
   `sova-box-bin-linux-x86_64.tar.gz` (each holding `sova`, `sova-miner`,
   their `SHA256SUMS`, and a `BUILD-INFO` with the commit and platform),

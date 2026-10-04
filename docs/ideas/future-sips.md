@@ -10,8 +10,8 @@ Four lead. The rest follow.
 
 ### 1. Follow NU7 (ZIP 218)
 
-Zcash's NU7 upgrade reaches testnet on 6 October 2026 and targets mainnet
-on 5 November 2026. [ZIP 218](https://zips.z.cash/zip-0218) sets the block
+Zcash's NU7 upgrade activates on testnet at block 4,465,026 (6 October
+2026) and targets mainnet on 5 November 2026. [ZIP 218](https://zips.z.cash/zip-0218) sets the block
 target to 25 seconds, multiplies the halving interval by 3 and divides the
 per-block subsidy by 3.
 

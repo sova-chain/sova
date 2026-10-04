@@ -64,7 +64,7 @@ export async function rpc<T = any>(url: string, method: string, params: unknown[
 // ---- waiting for a block ----------------------------------------------------
 
 /** The one line shown while a sent transaction waits for its block. */
-export const BLOCK_NOTE = 'Sova makes one block per Zcash block: about a minute (25 seconds after NU7), sometimes longer.';
+export const BLOCK_NOTE = 'Sova makes one block per Zcash block: about 25 seconds from NU7 (6 October), about a minute before, sometimes longer.';
 
 const ticking = new WeakMap<HTMLElement, number>();
 

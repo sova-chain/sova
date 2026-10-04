@@ -224,7 +224,7 @@ it stays usable for joiners until the post-activation snapshot (3.4).
 | sova-miner / sova-faucet | `SOVA_RELEASE_TAG` back one tag, `./deploy.sh --only <host>` | Anything older than v0.1.16 can't sign for `77190ad9`: after `H7` there is no older tag to go back to |
 | Laptop | swap the two binary paths in the 2.6 command | before `H7` only |
 
-### 1.8 Post notice (a) (end of this file) once 1.1 passes.
+### 1.8 Notice (a) is folded into (ab) (end of this file), posted in 2.8.
 
 ---
 
@@ -324,7 +324,7 @@ from then on 6.3.0 can't read the database (section 0, 1.7). If the major
 is not "restorable from the previous major", the new zebrad full-syncs,
 about 12 h per host. In that case upgrade `sova-seed-2` first and let it sync,
 then carry its state to the others with `box/testnet/snapshot.sh`
-(create on seed-2, restore on each), and tell joiners in notice (b).
+(create on seed-2, restore on each), and tell joiners in notice (ab).
 
 **e. Release notes and CHANGELOG** (`gh release view "v$REL" -R
 ZcashFoundation/zebra`). Look for:
@@ -671,15 +671,16 @@ cp out/seeds.json out/testnet.env out/bootnodes.txt out/epoch-base.json publishe
 ```
 
 Commit `published/` (the committed copy still says v0.1.7; the live one
-says v0.1.14 today, v0.1.16 after 10-03).
+said v0.1.14 and `zfnd/zebra:6.3.0` on 10-03: republish with
+`SOVA_RELEASE_TAG="v0.1.18"` before notice (ab)).
 
 **Guides and copy** (commit on `release`, then sync the public repo):
 
 | File | Change |
 | --- | --- |
 | `docs/guides/testnet.md` 1c | `zfnd/zebra:6.3.0` → `zfnd/zebra:$REL` |
-| `docs/guides/testnet.md` 1b | one line: the snapshot is from 6.3.0 (state 28.0), and `$REL` opens it in place. (`TAG=`/`checkout` lines went to v0.1.16 on 10-03.) |
-| `docs/guides/testnet-reference.md` | line 34 (Tools: image), line 59 (snapshot format), "Keeping it running": a **Zcash network upgrades** bullet with notice (b)'s upgrade command. (Line 95 already says 25 s from NU7 on.) |
+| `docs/guides/testnet.md` 1b | one line: the snapshot is from 6.3.0 (state 28.0), and `$REL` opens it in place. (`TAG=`/`checkout` lines went to v0.1.18 on 10-03, branch `docs-v018`.) |
+| `docs/guides/testnet-reference.md` | line 34 (Tools: image), line 59 (snapshot format), "Keeping it running": a **Zcash network upgrades** bullet with notice (ab)'s upgrade command (done 10-03, branch `docs-v018`). (Line 95 already says 25 s from NU7 on.) |
 | `infra/testnet/config.env.example` | `ZEBRA_IMAGE` line and its comment ("snapshots must match its state format (6.3.0 = state v28)") |
 | `infra/testnet/host/zebrad.toml` | the "proves for zfnd/zebra:6.3.0" comment |
 | `docs/ops/snapshots.md` | the 6.3.0 / state 28 notes: 7.0.0 opens a v28 snapshot by moving it to `state/v29` (no resync) and writes v29; a v29 snapshot needs 7.0.0 or later |
@@ -697,7 +698,7 @@ fleet. The pin change is prepared on branch `nu7-zebra7`; `box/sim`
 (SSD target, one suite at a time). A newer Zebra may change regtest
 defaults; these catch it.
 
-### 2.8 Post notice (b) once 2.5 is done and 2.7's join files are live.
+### 2.8 Post notice (ab) once 2.5 is done, 2.7's join files are live and public `main` has the v0.1.18 / 7.0.0-rc.0 guide.
 
 ### 2.9 Go / no-go, by block height
 
@@ -786,7 +787,7 @@ already stopped stays stopped, and it says so).
 
 | Symptom | How you see it | Response |
 | --- | --- | --- |
-| **Release late** (not out, or fails 2.2, by `H7 − 300`) | 2.1 | Post "testnet pauses at Zcash `H7`; resumes when Zebra ships NU7" (Rob; adapt notice (b)). Keep every host on 6.3.0: they stop at `H7 − 1` unless someone mines old rules. **[Rob]** stops the laptop's internal miner (2.6 `pkill` line) by `H7 − 50`. At `H7 − 5`, `./deploy.sh keeper-pause`. When the release lands: 2.2–2.5, then `./deploy.sh keeper-resume`. No new Sova genesis: a stall is recoverable (§4.2) |
+| **Release late** (not out, or fails 2.2, by `H7 − 300`) | 2.1 | Post "testnet pauses at Zcash `H7`; resumes when Zebra ships NU7" (Rob; adapt notice (ab)). Keep every host on 6.3.0: they stop at `H7 − 1` unless someone mines old rules. **[Rob]** stops the laptop's internal miner (2.6 `pkill` line) by `H7 − 50`. At `H7 − 5`, `./deploy.sh keeper-pause`. When the release lands: 2.2–2.5, then `./deploy.sh keeper-resume`. No new Sova genesis: a stall is recoverable (§4.2) |
 | **Stall: our tip stays at `H7 − 1`** | `block_age` "zebrad's tip … is N s old"; `zinfo` blocks = `H7 − 1` | Ask the references for `H7`. **They don't have it either:** Zcash testnet hasn't mined an NU7 block yet (under NU7 a min-difficulty block is allowed only after a gap over 450 s: 18 × 25 s, zips#1382). Nothing to do; Sova resumes by itself. **They have it:** our zebrad rejects NU7 blocks. `zinfo`: is `nu7.activationheight` `H7`? Is the image the verified digest? `journalctl -u zebrad` for the rejection. Fix the image (a patched release through 2.2–2.5). Sova is stalled on the right chain meanwhile: that is the safe state. |
 | **Old-rules chain** | `zcash_fork` ("past NU7's activation height … on branch 37a5165b"), `zcash_ref_fork`; or a follower's `sova-hold: zcash anchor mismatch` / `c5_reject` | **On the keeper: pause the keeper at once** (`./deploy.sh keeper-pause`), then upgrade its zebrad (`./deploy.sh --only sova-keeper-1 --zebra-only`; the pause holds through it), and `./deploy.sh keeper-resume` once that zebrad is on `77190ad9`. **On a follower** (seed, rpc, faucet): it only hurts itself (it holds the keeper's blocks against its wrong zebrad); upgrade it (`--zebra-only`), `sova-rpc-1` first since it is the public view. The upgraded zebrad reorgs to the NU7 chain if the wrong branch is under 1,000 blocks; deeper, restore 1.6's snapshot. Find who mined the old-rules blocks (the laptop? 2.6). If Sova blocks were built on the dead anchor more than 300 deep (`finalized`, v0.1.16), those nodes wedge: stop, write it up, don't improvise a reset. Post a pause notice |
 | **Burns or drips rejected** | Keeper journal: a send error after a `signed for consensus branch` line; no sealed blocks after `S7`; `null_run` after 45 min; faucet drips fail | Which branch was signed? **`37a5165b` for a block ≥ `H7`:** that host's zebrad is pre-NU7 (`zinfo`): upgrade it. **`77190ad9` and still rejected:** a signing bug. Stop `sova-keeper` (only the burner; the node keeps null blocks on the right chain), capture the error, hotfix v0.1.17, redeploy miner and faucet. Post "no new transactions until the fix; the chain keeps running" |
@@ -881,26 +882,32 @@ are follow-ups.
 
 ## Notices (drafts, Rob posts)
 
-Rob posts these in t.me/sovazec. Fill in `<REL>`, `<DIGEST>`, `<H7>`,
-`<S7>` from section 0. Each assumes the step before it is done.
+Rob posts these in t.me/sovazec. (ab) is filled in and ready to paste;
+(c) still has `<REL>`, `<H7>`, `<S7>` (section 0: `7.0.0-rc.0`, 4,465,026,
+76,527). Each assumes the step before it is done.
 
-### (a) ~10-03, after 1.1: "upgrade to v0.1.16 before 10-06"
+### (ab) ~10-03/04, after 2.8's checks: "upgrade before Oct 6"
 
-> **Sova testnet: v0.1.16 is out. Upgrade before Oct 6.**
+Replaces drafts (a) "v0.1.16 is out" and (b) "update zebrad today": both
+upgrades in one post, since v0.1.18 and zebrad 7.0.0-rc.0 are both out.
+Post only once public `main` has the v0.1.18 / 7.0.0-rc.0 guide and
+`https://dl.testnet.sova.io/seeds.json` says `"tag": "v0.1.18"` and
+`"zebra_image": "zfnd/zebra:7.0.0-rc.0"` (2.7, `./publish.sh join`).
+
+> **Sova testnet: upgrade before Oct 6.**
 >
-> Zcash testnet turns on NU7 on Oct 6: 25 s blocks, and a new consensus
-> branch. After it, only burns signed for the new branch get mined.
-> v0.1.16 signs for whatever branch your zebrad says comes next, so it
-> burns straight across the switch. Older sova-miner burns will be
-> rejected.
+> Zcash testnet turns on NU7 at block 4,465,026 (about Oct 6): 25 s
+> blocks and a new consensus branch. After that, only burns signed for
+> NU7 get mined, and a zebrad without NU7 stops at block 4,465,025.
 >
-> Running a node or miner from the join guide:
+> You need sova v0.1.18 and zebrad 7.0.0-rc.0. Same chain, same
+> keystore. No reset, no resync.
 >
 > 1. Stop `sova-miner` and `sova` (ctrl-c).
-> 2. Get v0.1.16:
+> 2. Get v0.1.18:
 > ```
 > cd ~/.sova-testnet
-> TAG=v0.1.16
+> TAG=v0.1.18
 > PLATFORM=linux-x86_64          # or darwin-arm64
 > BASE=https://github.com/sova-chain/sova/releases/download/$TAG
 > curl -fLO "$BASE/SHA256SUMS"
@@ -910,48 +917,34 @@ Rob posts these in t.me/sovazec. Fill in `<REL>`, `<DIGEST>`, `<H7>`,
 > (cd release && sha256sum -c SHA256SUMS)                            # macOS: shasum -a 256 -c SHA256SUMS
 > install -m 0755 release/sova release/sova-miner bin/
 > ```
-> 3. Start `sova` again (`. ./testnet.env && sova`), then `sova-miner`
->    with the same flags.
-> 4. The miner's first lines should say `on branch 37a5165b (Nu6_3)`.
->
-> Same chain, same genesis, same keystore. No reset.
->
-> Next: zebrad, on Oct 5, when Zebra ships its NU7 release. We'll post
-> the exact tag.
-
-### (b) ~10-05, after 2.5 and 2.7: "update zebrad today"
-
-> **Zcash testnet NU7 is tomorrow, at block <H7>. Update zebrad to <REL>
-> today.** A zebrad that isn't updated stops at block <H7 − 1>, and your
-> Sova node stops with it.
->
-> From the join guide (stop `sova-miner` first; `sova` can keep running,
-> it waits for zebrad):
+> 3. Update zebrad (your state carries over):
 > ```
-> docker pull zfnd/zebra:<REL>
+> docker pull zfnd/zebra:7.0.0-rc.0
 > docker stop -t 110 zebrad && docker rm zebrad
 > docker run -d --name zebrad --restart unless-stopped \
 >   -p 127.0.0.1:18232:18232 -p 18233:18233 \
 >   -v "$HOME/.sova-testnet/zebrad.toml:/home/zebra/.config/zebrad.toml:ro" \
 >   -v "$HOME/.sova-testnet/zebrad-state:/var/lib/sova/zebrad" \
 >   -e RUST_LOG=info \
->   zfnd/zebra:<REL>
+>   zfnd/zebra:7.0.0-rc.0
 > ```
-> Your state carries over. No resync. Check it knows NU7:
+> Image digest:
+> `zfnd/zebra@sha256:d534756d899bc44ce0c7ad6d1672a540d0eb588f8c2face4674298ebb091abca`
+> 4. Check zebrad:
 > ```
 > curl -s -H 'Content-Type: application/json' \
 >   --data '{"jsonrpc":"2.0","id":1,"method":"getblockchaininfo","params":[]}' \
->   http://127.0.0.1:18232 | jq '.result.upgrades["77190ad9"]'
+>   http://127.0.0.1:18232 | jq '.result | {blocks, estimatedheight, nu7: .upgrades["77190ad9"]}'
 > ```
-> It should say `"name": "NU7"` and `"activationheight": <H7>`. Once
-> `blocks` is back at the tip, start `sova-miner` again.
+> `nu7` should say `"name": "NU7"` and `"activationheight": 4465026`.
+> Wait until `blocks` is near `estimatedheight`.
+> 5. Start `sova` (`. ./testnet.env && sova`), then `sova-miner` with
+>    the same flags.
 >
-> Image digest: `zfnd/zebra@<DIGEST>`. Also need v0.1.16 of `sova` and
-> `sova-miner` (posted Oct 3).
-
-("No resync" holds for 7.0.0-rc.0: it moves the v28 state to v29 in place,
-2.2d. Joiners who might want to go back to 6.3.0 before `H7` need a copy
-of `zebrad-state` first; nobody should.)
+> After block 4,465,026: each burn line says `signed for consensus
+> branch 77190ad9 (Nu7)` (before it, `37a5165b (Nu6_3)`), and
+> `epoch N: height=…` lines keep coming. Sova block 76,527 is the first
+> on an NU7 Zcash block.
 
 ### (c) ~10-06, after 3.2: "done"
 

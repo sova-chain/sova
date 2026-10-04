@@ -20,8 +20,9 @@ There are two ways to pay:
 
 Paying in TAZ, the buy page reserves your order through a relayer, so you
 need no SOVA, only an address to receive the owl. Pay the exact amount it
-shows within 40 Zcash blocks (about 50 minutes today, about 17 after NU7
-on 6 October), and the owl arrives about three Zcash blocks later.
+shows within 40 Zcash blocks (about 17 minutes at the 25-second blocks of
+NU7, from 6 October; about 50 before), and the owl arrives about three
+Zcash blocks later.
 
 The contract checks the ZEC payment on Zcash itself, through the SIP-4
 precompile: [Read Zcash from a contract](../build/reading-zcash.md).

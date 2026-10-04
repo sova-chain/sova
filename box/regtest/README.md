@@ -23,7 +23,7 @@ docker compose down -v      # stop and discard state
 
 | File | Purpose |
 | --- | --- |
-| `docker-compose.yml` | Runs `zfnd/zebra:6.3.0`, publishes RPC on `127.0.0.1:18232`, healthchecks via `getblockcount`. |
+| `docker-compose.yml` | Runs `zfnd/zebra:7.0.0-rc.0` (was `6.3.0` through 2026-10-03), publishes RPC on `127.0.0.1:18232`, healthchecks via `getblockcount`. |
 | `zebrad.toml` | Regtest network config, mining address, RPC (auth disabled for local convenience), ephemeral state. |
 | `mine.sh` | Mines N blocks on demand via Zebra's native `generate` RPC. |
 | `smoke.sh` | Starts the stack, mines 5 blocks, asserts `getblockcount == 5` and NU5-active, tears down. |

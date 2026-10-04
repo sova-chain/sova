@@ -139,8 +139,10 @@ doubles that sealed nothing.
   block rate: with 30, at most 2,880 burns, about 0.86 TAZ at 10,000 zat
   plus a 20,000 zat fee each. A block that arrives inside the interval
   isn't skipped: its burn is held back and sent as soon as the interval is
-  up, even if no new block has come by then. With ordinary ~75 s blocks
-  and an interval of 30, every block still gets a burn. Re-sends of burns
+  up, even if no new block has come by then. With ~75 s blocks (Zcash
+  before NU7) and an interval of 30, every block still gets a burn; at
+  NU7's ~25 s blocks, 30 allows about five burns for every six blocks, so
+  use less than 25 to keep one in every ordinary block. Re-sends of burns
   already in flight (evicted, or orphaned by a reorg) are the same signed
   bytes and are never held back. The time of the last broadcast is saved
   in `state.json` (`last_burn_broadcast_unix_ms`), so a restart waits out

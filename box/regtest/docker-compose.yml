@@ -1,6 +1,6 @@
 services:
   zebrad:
-    image: zfnd/zebra:6.3.0
+    image: zfnd/zebra:7.0.0-rc.0
     # Both overridable so box/up.sh can run a second box beside this one
     # (SOVA_BOX_ZEBRAD_CONTAINER / SOVA_BOX_ZEBRAD_PORT); the defaults are
     # what every other script in box/ expects.

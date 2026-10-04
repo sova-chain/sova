@@ -3,8 +3,9 @@ title: Timing
 description: Sova makes one block per Zcash block. How to design for it - batch, pipeline, wait for receipts, and count time in Zcash blocks.
 ---
 
-Sova makes one block per Zcash block: about a minute on average today,
-25 seconds after NU7 (6 October on testnet, 5 November on mainnet). Gaps
+Sova makes one block per Zcash block. Zcash targets 25 seconds a block
+from NU7 (6 October 2026 on testnet, 5 November on mainnet) and 75
+seconds before it; testnet averaged about a minute before NU7. Gaps
 several times longer are normal. Zcash testnet also has bursts of blocks a
 few seconds apart. Design for few, full transactions.
 
@@ -27,8 +28,8 @@ few seconds apart. Design for few, full transactions.
 ## Settlement
 
 Sova settles on Zcash. Mints are final at Zcash depth, and a transaction
-is settled once three more epochs are built on it (about four minutes
-today, about 75 seconds after NU7).
+is settled once three more epochs are built on it (about 75 seconds at
+NU7's 25-second blocks, about four minutes before).
 ZEC payments wait for their own confirmations: 3 on testnet, 10 on
 mainnet.
 

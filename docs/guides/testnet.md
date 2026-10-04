@@ -62,7 +62,7 @@ connections):
 
 ```bash
 git clone https://github.com/sova-chain/sova ~/.sova-testnet/src
-git -C ~/.sova-testnet/src checkout v0.1.14
+git -C ~/.sova-testnet/src checkout v0.1.18
 SNAP=~/.sova-testnet/src/box/testnet/snapshot.sh
 mkdir -p ~/.sova-testnet/snapshot && cd ~/.sova-testnet/snapshot
 aria2c -x 8 -s 8 -c https://dl.testnet.sova.io/zebrad-testnet/4390524/zebrad-testnet-4390524.tar.zst
@@ -123,7 +123,7 @@ Wait until `blocks` is within a few blocks of `estimatedheight`.
 
 ```bash
 cd ~/.sova-testnet
-TAG=v0.1.14
+TAG=v0.1.18
 PLATFORM=linux-x86_64          # or darwin-arm64
 BASE=https://github.com/sova-chain/sova/releases/download/$TAG
 curl -fLO "$BASE/SHA256SUMS"

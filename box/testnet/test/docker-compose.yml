@@ -4,7 +4,7 @@
 # State is a bind mount of $SNAP_CACHE_DIR (a temp dir on the internal disk).
 services:
   zebrad:
-    image: zfnd/zebra:6.3.0
+    image: zfnd/zebra:7.0.0-rc.0
     container_name: sova-zebrad-snap
     restart: "no"
     stop_grace_period: 60s
