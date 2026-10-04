@@ -159,6 +159,32 @@ pub(crate) fn apply_ws(rpc: &mut RpcServerArgs, port: Option<u16>) {
     }
 }
 
+/// `SOVA_RPC_DEBUG=1`: add reth's `debug` namespace to the HTTP API of the
+/// `local` profile (127.0.0.1 only), on top of reth's standard
+/// `eth`/`net`/`web3`. For archive tooling: `debug_getRawBlock` is the
+/// block's exact RLP, what the NEAR DA batches and `sova-rebuild export`
+/// carry. Off by default (today's behaviour); refused with the `public`
+/// profile, which never builds `debug` for HTTP. Returns whether it was
+/// applied (for the startup log).
+pub(crate) fn apply_debug(
+    rpc: &mut RpcServerArgs,
+    profile: RpcProfile,
+    on: bool,
+) -> eyre::Result<bool> {
+    if !on {
+        return Ok(false);
+    }
+    if profile == RpcProfile::Public {
+        return Err(eyre::eyre!(
+            "SOVA_RPC_DEBUG=1 is for the local RPC profile only; the public profile never serves debug_*"
+        ));
+    }
+    let mut modules = RpcModuleSelection::STANDARD_MODULES.to_vec();
+    modules.push(RethRpcModule::Debug);
+    rpc.http_api = Some(RpcModuleSelection::from_iter(modules));
+    Ok(true)
+}
+
 /// Allowed browser origins for the HTTP RPC, from `SOVA_RPC_CORS`.
 ///
 /// The value goes to reth's `http_corsdomain` unchanged (after trimming):
@@ -273,6 +299,30 @@ mod tests {
     fn base() -> RpcServerArgs {
         // Exactly how main.rs starts its RPC config.
         RpcServerArgs::default().with_http()
+    }
+
+    #[test]
+    fn rpc_debug_is_opt_in_and_local_only() {
+        let mut rpc = base();
+        assert!(!apply_debug(&mut rpc, RpcProfile::Local, false).unwrap());
+        assert_eq!(rpc, base(), "off = today's config");
+
+        let mut rpc = base();
+        assert!(apply_debug(&mut rpc, RpcProfile::Local, true).unwrap());
+        let api = rpc.http_api.clone().expect("debug pins http.api");
+        for ns in [
+            RethRpcModule::Eth,
+            RethRpcModule::Net,
+            RethRpcModule::Web3,
+            RethRpcModule::Debug,
+        ] {
+            assert!(api.contains(&ns), "{ns} missing");
+        }
+        assert!(!api.contains(&RethRpcModule::Admin));
+
+        let mut rpc = base();
+        RpcProfile::Public.apply(&mut rpc);
+        assert!(apply_debug(&mut rpc, RpcProfile::Public, true).is_err());
     }
 
     #[test]

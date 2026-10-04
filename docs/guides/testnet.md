@@ -172,6 +172,10 @@ sova 2>&1 | tee -a node.log
 
 On a VPS with a public IPv4, also `export SOVA_NAT=extip:<your public IPv4>`.
 [What a good start looks like](testnet-reference.md#what-a-good-start-looks-like).
+`testnet.env` dials the bootnodes directly as static peers, so even
+behind a home router the node should have peers within seconds; discovery
+runs too and finds more
+([How your node finds peers](testnet-reference.md#how-your-node-finds-peers)).
 
 ### 2e. Check it's on the network
 

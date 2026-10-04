@@ -244,8 +244,10 @@ pub fn parse_tx_shielded(tx: &Value) -> Result<TxShielded, String> {
         }
     };
     // Sprout: value into the pool is vpub_old − vpub_new per JoinSplit.
+    // Zebra (6.3, 7.0) names the array `vjoinsplit`; zcashd `vjoinsplit` too.
+    let joinsplits = tx.get("vjoinsplit").or_else(|| tx.get("vJoinSplit"));
     let mut sprout: i64 = 0;
-    if let Some(js) = tx.get("vJoinSplit").and_then(Value::as_array) {
+    if let Some(js) = joinsplits.and_then(Value::as_array) {
         for j in js {
             let old = balance(j.get("vpub_oldZat"), "vJoinSplit.vpub_oldZat")?;
             let new = balance(j.get("vpub_newZat"), "vJoinSplit.vpub_newZat")?;
@@ -285,7 +287,7 @@ pub fn parse_tx_shielded(tx: &Value) -> Result<TxShielded, String> {
             tx.get("ironwood").and_then(|o| o.get("actions")),
             "ironwood.actions",
         )?,
-        joinsplits: count(tx.get("vJoinSplit"), "vJoinSplit")?,
+        joinsplits: count(joinsplits, "vjoinsplit")?,
     };
     let any = summary.deltas.iter().any(|d| *d != 0)
         || summary.sapling_spends
@@ -522,6 +524,22 @@ mod tests {
             check_pools(None, &block, &txs[..2]),
             Err(PoolCheckError::TxSum { pool: 5, .. })
         ));
+    }
+
+    /// Zebra's `getrawtransaction` names the JoinSplit array `vjoinsplit`
+    /// (`zebra-rpc` `transaction.rs`, 6.3.0 and 7.0.0-rc.0): a Sprout
+    /// deshield must count, or the block's Sprout delta holds SIP-7.
+    #[test]
+    fn zebra_vjoinsplit_is_read() {
+        let t = parse_tx_shielded(&json!({
+            "vin": [],
+            "vjoinsplit": [{"vpub_oldZat": 0, "vpub_newZat": 150_000}]
+        }))
+        .unwrap_or_else(|e| panic!("{e}"));
+        let z = t
+            .summary
+            .unwrap_or_else(|| panic!("a JoinSplit is shielded"));
+        assert_eq!((z.deltas[0], z.joinsplits), (-150_000, 1));
     }
 
     #[test]

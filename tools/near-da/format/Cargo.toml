@@ -1,0 +1,9 @@
+[package]
+name = "sovada"
+description = "The SOVADA1 batch format: Sova blocks as posted to NEAR (docs/design/near-da.md)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]

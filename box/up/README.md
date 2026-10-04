@@ -12,7 +12,7 @@ on a busy one.
 ## Prerequisites
 
 - **Docker** (Docker Desktop on macOS), installed and running. `zebrad`
-  runs in a container (`zfnd/zebra:7.0.0-rc.0`, about 120 MB on first pull).
+  runs in a container (`zfnd/zebra:6.3.0`, about 120 MB on first pull).
 - **curl**.
 - **Free local ports**: 18232 (zebrad RPC), 8545 (Sova RPC), 8551 (Sova
   authrpc) and 30303 (Sova p2p). The script checks them before starting

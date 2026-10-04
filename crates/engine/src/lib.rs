@@ -42,6 +42,7 @@ pub mod relay;
 pub mod seal;
 pub mod signer;
 pub mod votes;
+pub mod zcash_cache;
 pub mod zcash_index;
 
 pub use builder::{SovaPayloadBuilder, SovaPayloadBuilderBuilder};

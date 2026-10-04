@@ -8,6 +8,7 @@ members = [
     "crates/miner",
     "bin/sova",
     "bin/sova-miner",
+    "bin/sova-rebuild",
 ]
 # `crates/burn-wallet` is deliberately NOT a member here (and is listed in
 # `exclude` below): it depends on `zcash_primitives` 0.30.x, whose manifest

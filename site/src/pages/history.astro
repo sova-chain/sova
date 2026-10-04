@@ -1,0 +1,211 @@
+---
+// /history: Sova's history on NEAR (Rob, 2026-10-03: "Zcash secures it, NEAR
+// keeps its history"). Every final Sova block is posted to NEAR in batches
+// through the index contract sova-da.testnet (docs/design/near-da.md). This
+// page reads that contract live from public NEAR testnet RPCs in the browser
+// (no server of ours in between) and the Sova head from the public RPC, so
+// the finality gap shows. Copy stays inside near-da.md §11 (the public scope
+// statement). Unlisted until launch: noindex, not in sitePages (nav, footer,
+// sitemap). Logic: src/scripts/history/app.ts. e2e: site/e2e/history.mjs.
+import Site from '../layouts/Site.astro';
+import { SOVA_RPC, TESTNET, repo } from '../data/sova';
+
+const CONTRACT = 'sova-da.testnet';
+// Override per visit: ?contract=<NEAR account>&near=<rpc,rpc>&rpc=<sova rpc>
+const config = {
+  contract: CONTRACT,
+  // Public NEAR testnet RPCs that answer browser CORS (access-control-allow-origin: *,
+  // checked 2026-10-04). Tried in order; the archival one also has old blocks and txs.
+  near: [
+    'https://rpc.testnet.fastnear.com',
+    'https://rpc.testnet.near.org',
+    'https://archival-rpc.testnet.fastnear.com',
+  ],
+  rpc: SOVA_RPC,
+  explorer: TESTNET.explorer,
+  nearExplorer: 'https://testnet.nearblocks.io',
+  page: 20,
+  pollMs: 15_000,
+};
+const doc = repo.blob('docs/design/near-da.md');
+---
+<Site
+  title="Sova history on NEAR"
+  description="Zcash secures Sova. NEAR keeps its history: every final Sova block is posted to NEAR, and anyone can rebuild Sova from there."
+  current="/history"
+  cmd={`sova-near-da info --contract ${CONTRACT}`}
+  status="archive · unlisted"
+  indexable={false}
+>
+  <div id="hist" data-config={JSON.stringify(config)} data-state="wait">
+    <h1>Zcash secures it.<br />NEAR keeps its history.</h1>
+    <p class="lead">Every final Sova block is posted to NEAR. Rebuild Sova from there.</p>
+
+    <section class="live" aria-label="Archive status">
+      <div class="rail" id="rail" aria-hidden="true"></div>
+      <p class="rail-k" aria-hidden="true"><span><i class="sw on"></i>on NEAR</span><span><i class="sw wait"></i>not final yet</span><span>head<i class="sw head"></i></span></p>
+
+      <dl class="nums">
+        <div><dt>sova head</dt><dd id="head">…</dd></div>
+        <div><dt>on NEAR through</dt><dd id="thru">…</dd></div>
+        <div><dt>gap</dt><dd id="gap">…</dd></div>
+      </dl>
+      <p class="why" id="why"># the gap is finality: a block is posted once it’s final on Sova, about two hours after it’s mined.</p>
+
+      <dl class="kv meta">
+        <dt>archive</dt><dd><a data-acct href={`${config.nearExplorer}/address/${CONTRACT}`}>{CONTRACT}</a> <span class="dim">· NEAR testnet</span></dd>
+        <dt>chain id</dt><dd id="chain">…</dd>
+        <dt>batches</dt><dd id="count">…</dd>
+        <dt>posted</dt><dd id="bytes">…</dd>
+        <dt>last batch</dt><dd id="last">…</dd>
+      </dl>
+    </section>
+
+    <p id="status" class="status" data-k="wait" role="status">
+      <span id="st-near">near: reading {CONTRACT}</span><br />
+      <span id="st-sova">sova: reading the head</span><span class="cur" aria-hidden="true"></span>
+      <button type="button" id="retry" class="link" hidden>retry now</button>
+    </p>
+
+    <h2>batches</h2>
+    <div class="batches" role="table" aria-label="Latest batches on NEAR">
+      <div class="hd" role="row">
+        <span role="columnheader">#</span>
+        <span role="columnheader">sova blocks</span>
+        <span role="columnheader" class="n">blocks</span>
+        <span role="columnheader" class="n">size</span>
+        <span role="columnheader">sha256</span>
+        <span role="columnheader">near tx</span>
+        <span role="columnheader"><span class="sr">check</span></span>
+      </div>
+      <div id="rows" role="rowgroup" aria-live="polite"></div>
+    </div>
+    <p id="empty" class="empty" hidden>archive starting: no batches posted yet.<span class="cur" aria-hidden="true"></span></p>
+    <p><button type="button" id="more" class="link" hidden>older batches</button></p>
+
+    <h2>rebuild it yourself</h2>
+<pre class="sh"><code><span class="c"># download every batch from NEAR, checked against the index</span>
+<span class="p">$ </span>sova-near-da fetch --contract {CONTRACT} --out sova-da --expect-chain-id {TESTNET.chainId}
+<span class="c"># check the files offline: one chain, contiguous, hash-linked</span>
+<span class="p">$ </span>sova-near-da verify sova-da --expect-chain-id {TESTNET.chainId}
+<span class="c"># replay every block into a fresh Sova node with its own zebrad</span>
+<span class="p">$ </span>sova-rebuild --jwt jwt.hex sova-da/*.sovada</code></pre>
+    <p class="dim small"># both tools are in <a href={repo.root}>the repo</a>: <code>tools/near-da</code>, <code>bin/sova-rebuild</code>. Detail: <a href={doc}>docs/design/near-da.md</a>.</p>
+
+    <ul class="bul">
+      <li>Every Sova block is posted to NEAR once it is final on Sova (about two hours after it’s mined), in batches; NEAR consensus orders and includes every batch.</li>
+      <li>Sova’s NEAR index contract (<code>{CONTRACT}</code>) lists every batch and refuses gaps, duplicates and blocks that don’t link. With only that account and public NEAR infrastructure, anyone can download Sova’s full history and verify every block with their own Sova node and zebrad.</li>
+      <li>Old batches are served by NEAR archival nodes and neardata.xyz, which are community-run; we keep our own copy too.</li>
+    </ul>
+
+    <p id="cfg" class="dim cfg"></p>
+  </div>
+</Site>
+
+<script>
+  import '../scripts/history/app';
+</script>
+
+<style>
+  .live { border: 1px solid var(--line); border-left: 2px solid var(--g); background: #110e09; padding: 16px 16px 10px; margin: 22px 0 12px; }
+  .live p { max-width: none !important; }
+
+  /* The rail: the last few hundred Sova heights, oldest left. Gold = on NEAR. */
+  .rail { display: flex; gap: 2px; height: 22px; }
+  .rail :global(i) {
+    flex: 1; min-width: 0; border: 1px solid var(--line); background: transparent;
+    transition: background-color 0.35s ease-out, border-color 0.35s ease-out;
+    transition-delay: calc(var(--i) * 12ms);
+  }
+  .rail :global(i.on) { background: var(--g); border-color: var(--g); box-shadow: 0 0 6px rgba(244, 183, 40, 0.25); }
+  .rail :global(i.part) { background: linear-gradient(to right, var(--g) 50%, transparent 50%); border-color: var(--g2); }
+  .rail :global(i.wait) { border-color: var(--g3); }
+  .rail :global(i.head) { background: var(--ember); border-color: var(--ember); animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: 0.35; } }
+  .rail-k { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--g3); margin: 6px 0 14px !important; }
+  .rail-k span { display: inline-flex; align-items: center; gap: 6px; }
+  .sw { display: inline-block; width: 9px; height: 9px; border: 1px solid var(--g3); }
+  .sw.on { background: var(--g); border-color: var(--g); }
+  .sw.head { background: var(--ember); border-color: var(--ember); }
+
+  .nums { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 18px; margin: 0 0 6px; }
+  .nums dt { font-size: 12px; color: var(--g3); letter-spacing: 0.08em; text-transform: uppercase; }
+  .nums dd {
+    margin: 0; font-size: clamp(20px, 4vw, 30px); font-weight: 700; color: var(--g); font-variant-numeric: tabular-nums;
+    text-shadow: 0 0 1px rgba(244, 183, 40, 0.6), 0 0 14px rgba(244, 183, 40, 0.25); white-space: nowrap;
+  }
+  .nums dd.bump { animation: bump 0.9s ease-out; }
+  @keyframes bump { from { color: var(--cream); } }
+  .why { font-size: 13px; color: var(--g3); margin: 0 0 14px !important; }
+  .why[data-k='warn'] { color: var(--ember); }
+  .meta { font-size: 13.5px; margin: 0 0 4px; border-top: 1px dashed var(--line); padding-top: 12px; }
+  .meta dt { color: var(--g3); }
+  .meta dd { font-variant-numeric: tabular-nums; }
+
+  .status { background: #110e09; border: 1px solid var(--line); border-left: 2px solid var(--g3); padding: 6px 12px; margin: 0 0 8px; color: var(--g2); font-size: 12.5px; max-width: none !important; overflow-wrap: anywhere; }
+  .status[data-k='err'] { border-left-color: var(--ember); color: var(--ember); }
+  .status[data-k='ok'] .cur { display: none; }
+  .cur { display: inline-block; width: 0.6em; height: 1.05em; margin-left: 4px; vertical-align: -0.18em; background: currentColor; animation: blink 1.1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  button.link, .batches :global(button.link) {
+    font: inherit; font-size: 12.5px; color: var(--g); background: none; border: 1px solid var(--g3);
+    padding: 1px 8px; cursor: pointer;
+  }
+  button.link:hover, .batches :global(button.link:hover) { border-color: var(--g); color: var(--cream); }
+  button.link:disabled, .batches :global(button.link:disabled) { opacity: 0.5; cursor: progress; }
+  #retry { margin-left: 8px; }
+
+  .batches { font-size: 13.5px; font-variant-numeric: tabular-nums; }
+  .hd, .batches :global(.row) {
+    display: grid; grid-template-columns: 5ch minmax(15ch, 1fr) 7ch 8ch 13ch 12ch 7ch;
+    gap: 0 14px; align-items: baseline; padding: 5px 6px;
+  }
+  .hd { color: var(--g3); border-bottom: 1px solid var(--line); padding-bottom: 3px; }
+  .hd span { font-size: 12px; }
+  .batches :global(.row) { border-bottom: 1px dashed var(--line); }
+  .batches :global(.row:first-child) { border-left: 2px solid var(--g); padding-left: 4px; }
+  .batches :global(.row.in) { animation: in 0.5s ease-out both; }
+  @keyframes in { from { opacity: 0; transform: translateY(-6px); background: rgba(244, 183, 40, 0.14); } }
+  .batches :global(.ix) { color: var(--g3); }
+  .batches :global(.n) { text-align: right; white-space: nowrap; }
+  .batches :global(.sha code) { font-size: 12.5px; background: none; padding: 0; color: var(--text); }
+  .batches :global(.tx) { white-space: nowrap; }
+  .batches :global(.ck) { text-align: right; }
+  .batches :global(.ck button) { font-size: 11.5px; padding: 0 6px; }
+  .batches :global(.res) { grid-column: 1 / -1; font-size: 12.5px; padding: 4px 0 0 7ch; overflow-wrap: anywhere; }
+  .batches :global(.res[data-k='ok']) { color: var(--g); }
+  .batches :global(.res[data-k='ok'])::before { content: '✓ '; }
+  .batches :global(.res[data-k='err']) { color: var(--ember); }
+  .batches :global(.res[data-k='err'])::before { content: '✗ '; }
+  .batches :global(.res[data-k='wait']) { color: var(--g3); }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .empty { color: var(--cream); padding: 10px 6px; border-bottom: 1px dashed var(--line); max-width: none !important; }
+
+  .small { font-size: 13px; }
+  .cfg { font-size: 11.5px; margin-top: 24px; overflow-wrap: anywhere; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .rail :global(i) { transition: none; }
+    .rail :global(i.head), .cur, .nums dd.bump, .batches :global(.row.in) { animation: none; }
+  }
+
+  @media (max-width: 640px) {
+    .nums { grid-template-columns: 1fr 1fr; }
+    .nums div:last-child { grid-column: 1 / -1; }
+    .rail { height: 18px; gap: 1px; }
+    .hd { display: none; }
+    .batches :global(.row) {
+      grid-template-columns: auto 1fr auto; grid-template-areas: 'ix rg ck' 'ix cnt sz' 'ix sha tx' 'res res res';
+      gap: 1px 10px; padding: 8px 2px;
+    }
+    .batches :global(.ix) { grid-area: ix; }
+    .batches :global(.rg) { grid-area: rg; }
+    .batches :global(.ck) { grid-area: ck; }
+    .batches :global(.cnt) { grid-area: cnt; text-align: left; font-size: 12.5px; color: var(--g2); }
+    .batches :global(.cnt)::after { content: ' blocks'; }
+    .batches :global(.sz) { grid-area: sz; font-size: 12.5px; color: var(--g2); }
+    .batches :global(.sha) { grid-area: sha; }
+    .batches :global(.tx) { grid-area: tx; text-align: right; }
+    .batches :global(.res) { grid-area: res; padding-left: 0; }
+  }
+</style>

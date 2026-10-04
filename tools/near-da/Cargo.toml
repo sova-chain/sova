@@ -1,0 +1,32 @@
+# tools/near-da: Sova's NEAR data-availability archive (docs/design/near-da.md).
+#
+# Standalone on purpose (own workspace, own Cargo.lock), like tools/scan-bench:
+# not part of the node's build graph, so nothing here can move reth's
+# dependency resolution, and near-sdk never meets reth.
+#
+#   format/    `sovada`: the SOVADA1 batch format (encode, parse, checks). No
+#              dependencies; shared by the poster, the fetcher, the NEAR
+#              contract and the rebuild tool.
+#   cli/       `sova-near-da`: poster, fetch, verify, index.
+#   contract/  the NEAR index contract (wasm32; `cargo near build`).
+[workspace]
+resolver = "2"
+members = ["format", "cli", "contract"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[profile.release]
+codegen-units = 1
+opt-level = 3
+lto = true
+debug = false
+panic = "abort"
+overflow-checks = true
+
+# The contract is small and pays per byte of code in storage staking.
+[profile.release.package.sova-da-contract]
+opt-level = "z"

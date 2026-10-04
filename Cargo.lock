@@ -9729,6 +9729,27 @@ name = "sova-miner"
 version = "0.1.0"
 
 [[package]]
+name = "sova-rebuild"
+version = "0.1.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-rpc-types",
+ "alloy-rpc-types-eth",
+ "engine",
+ "eyre",
+ "hex",
+ "reth-ethereum",
+ "reth-rpc-layer",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "ureq",
+]
+
+[[package]]
 name = "spki"
 version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10620,7 +10641,10 @@ dependencies = [
  "base64 0.22.1",
  "log",
  "once_cell",
+ "rustls",
+ "rustls-pki-types",
  "url",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]

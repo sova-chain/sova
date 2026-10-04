@@ -10,7 +10,9 @@
 #   out/bootnodes.txt   one enode per line
 #   out/testnet.env     the env a stranger's node sources (SOVA_CHAIN,
 #                       SOVA_EPOCH_BASE, SOVA_EMISSION_SCHEDULE,
-#                       SOVA_SIP6, SOVA_SIP7, SOVA_BOOTNODES, ...)
+#                       SOVA_SIP6, SOVA_SIP7, SOVA_BOOTNODES, ...;
+#                       SOVA_P2P_PEERS = the bootnodes, so a NAT'd node
+#                       has peers at once instead of waiting on discovery)
 #   out/seeds.json      machine-readable: chain ID, genesis hash, epoch
 #                       base, schedule, sip6/sip7, release, bootnodes
 #                       (+ DNS names), RPC/faucet/download URLs
@@ -116,6 +118,12 @@ export SOVA_SIP6=${SOVA_SIP6}
 export SOVA_SIP7=${SOVA_SIP7}
 export SOVA_BOOTNODES=${joined}
 # ---- yours ----
+# Dial the bootnodes directly as static peers, and keep redialing them.
+# Discovery (UDP, seeded from SOVA_BOOTNODES) still runs and finds other
+# peers, but from behind a home NAT it can take many minutes to find its
+# first one; a static peer connects at once and the node syncs from it.
+# Delete this line to rely on discovery alone.
+export SOVA_P2P_PEERS="\${SOVA_BOOTNODES}"
 export SOVA_ZEBRAD_RPC=http://127.0.0.1:${ZEBRA_RPC_PORT}
 export SOVA_DATADIR="\$HOME/.sova-testnet/node"
 # Follows and verifies the chain; seals nothing.

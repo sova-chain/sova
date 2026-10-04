@@ -184,58 +184,26 @@ async fn relay_block(
         return delivered;
     }
 
-    let ExecutionData { payload, sidecar } = data;
-    let block_hash = payload.block_hash();
-
-    // v1's blocks are always Cancun+Prague-shaped (the dev chain spec
-    // activates every hardfork through Prague at genesis, and Sova's
-    // payload builder never computes a block access list), so this is
-    // expected to always succeed; the error path exists so a future
-    // hardfork change fails loudly here rather than relaying a malformed
-    // call.
-    let Some(payload_v3) = payload.as_v3() else {
-        tracing::error!(
-            height,
-            %block_hash,
-            "relay: sealed block is not V3-shaped (pre-Cancun, or BAL-bearing/Amsterdam); \
-             gossip v1 only relays engine_newPayloadV4-shaped blocks, skipping"
-        );
-        return peers
-            .iter()
-            .map(|p| (p.clone(), Some(Delivery::Accepted)))
-            .collect();
+    let block_hash = data.payload.block_hash();
+    let new_payload_params = match new_payload_v4_params(data) {
+        Ok(params) => params,
+        Err(err) => {
+            // v1's blocks are always Cancun+Prague-shaped, so this is
+            // expected never to happen; it exists so a future hardfork
+            // change fails loudly here rather than relaying a malformed
+            // call.
+            tracing::error!(
+                height,
+                %block_hash,
+                %err,
+                "relay: gossip v1 only relays engine_newPayloadV4-shaped blocks, skipping"
+            );
+            return peers
+                .iter()
+                .map(|p| (p.clone(), Some(Delivery::Accepted)))
+                .collect();
+        }
     };
-    let Some(parent_beacon_block_root) = sidecar.parent_beacon_block_root() else {
-        tracing::error!(
-            height,
-            %block_hash,
-            "relay: sealed block has no parent beacon block root; newPayloadV4 requires \
-             Cancun fields, skipping"
-        );
-        return peers
-            .iter()
-            .map(|p| (p.clone(), Some(Delivery::Accepted)))
-            .collect();
-    };
-    let versioned_hashes = sidecar.versioned_hashes().cloned().unwrap_or_default();
-    // `ExecutionPayloadSidecar::from_block` (used by
-    // `SovaEngineTypes::block_to_payload`) always recovers the Prague
-    // fields as `RequestsOrHash::Hash` (the header's `requests_hash`), not
-    // the original request list — exactly the shape a relay between two
-    // nodes that compute identically needs: the receiving node's own
-    // validator re-derives and compares the hash, it doesn't need the
-    // (here, always-empty) request bytes themselves.
-    let execution_requests = sidecar
-        .into_prague()
-        .map(|fields| fields.requests)
-        .unwrap_or_default();
-
-    let new_payload_params = json!([
-        payload_v3,
-        versioned_hashes,
-        parent_beacon_block_root,
-        execution_requests
-    ]);
 
     // ureq is blocking; do the peer round-trips off the async runtime's
     // worker thread. One `spawn_blocking` per block, looping over peers
@@ -285,6 +253,53 @@ async fn relay_block(
         }
     }
     delivered
+}
+
+/// Why a block can't be sent as `engine_newPayloadV4`.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum PayloadShapeError {
+    /// Pre-Cancun, or BAL-bearing (Amsterdam): not a V3 payload.
+    #[error("sealed block is not V3-shaped (pre-Cancun, or BAL-bearing/Amsterdam)")]
+    NotV3,
+    /// No parent beacon block root (Sova's Zcash anchor): newPayloadV4
+    /// requires the Cancun fields.
+    #[error("sealed block has no parent beacon block root; newPayloadV4 requires Cancun fields")]
+    NoParentBeaconRoot,
+}
+
+/// The `engine_newPayloadV4` params for one block, exactly as the relay
+/// sends them: `[payload_v3, versioned_hashes, parent_beacon_block_root,
+/// execution_requests]`. Shared with `bin/sova-rebuild`, which feeds a
+/// node from a block archive through the same wire shape.
+///
+/// v1's blocks are always Cancun+Prague-shaped (the dev chain spec
+/// activates every hardfork through Prague at genesis, and Sova's payload
+/// builder never computes a block access list).
+///
+/// `ExecutionPayloadSidecar::from_block` (used by
+/// `SovaEngineTypes::block_to_payload`) always recovers the Prague fields
+/// as `RequestsOrHash::Hash` (the header's `requests_hash`), not the
+/// original request list — exactly the shape a relay between two nodes
+/// that compute identically needs: the receiving node's own validator
+/// re-derives and compares the hash, it doesn't need the (here,
+/// always-empty) request bytes themselves.
+pub fn new_payload_v4_params(data: ExecutionData) -> Result<Value, PayloadShapeError> {
+    let ExecutionData { payload, sidecar } = data;
+    let payload_v3 = payload.as_v3().ok_or(PayloadShapeError::NotV3)?;
+    let parent_beacon_block_root = sidecar
+        .parent_beacon_block_root()
+        .ok_or(PayloadShapeError::NoParentBeaconRoot)?;
+    let versioned_hashes = sidecar.versioned_hashes().cloned().unwrap_or_default();
+    let execution_requests = sidecar
+        .into_prague()
+        .map(|fields| fields.requests)
+        .unwrap_or_default();
+    Ok(json!([
+        payload_v3,
+        versioned_hashes,
+        parent_beacon_block_root,
+        execution_requests
+    ]))
 }
 
 /// Pushes one block to one peer: `engine_newPayloadV4` only, with a
@@ -354,14 +369,43 @@ fn call_authrpc(
     method: &str,
     params: Value,
 ) -> Result<Value, RelayError> {
+    call_authrpc_with_timeout(url, jwt, method, params, Duration::from_secs(5))
+}
+
+/// [`call_authrpc`] with a caller-chosen HTTP timeout. Public for
+/// `bin/sova-rebuild`, which drives a local node's authrpc the same way
+/// (a large historical block can take longer than the relay's 5 s).
+pub fn call_authrpc_with_timeout(
+    url: &str,
+    jwt: &JwtSecret,
+    method: &str,
+    params: Value,
+    timeout: Duration,
+) -> Result<Value, RelayError> {
+    call_authrpc_with_agent(&ureq::agent(), url, jwt, method, params, timeout)
+}
+
+/// [`call_authrpc_with_timeout`] through a caller-owned `ureq::Agent`, so
+/// consecutive calls reuse one keep-alive connection instead of opening a
+/// new TCP connection each (`bin/sova-rebuild` makes several calls per
+/// block; one connection per call ran a laptop out of ephemeral ports).
+pub fn call_authrpc_with_agent(
+    agent: &ureq::Agent,
+    url: &str,
+    jwt: &JwtSecret,
+    method: &str,
+    params: Value,
+    timeout: Duration,
+) -> Result<Value, RelayError> {
     let token = jwt
         .encode(&Claims::with_current_timestamp())
         .map_err(|e| RelayError::Jwt(e.to_string()))?;
     let body = json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
-    let resp = ureq::post(url)
+    let resp = agent
+        .post(url)
         .set("Authorization", &format!("Bearer {token}"))
         .set("Content-Type", "application/json")
-        .timeout(Duration::from_secs(5))
+        .timeout(timeout)
         .send_string(&body.to_string())
         .map_err(|e| RelayError::Transport(format!("{method}: {e}")))?;
     let text = resp
@@ -378,7 +422,7 @@ fn call_authrpc(
 /// Why one peer's relay attempt failed. Always logged and swallowed by the
 /// caller — never fatal to the relay loop.
 #[derive(Debug, thiserror::Error)]
-enum RelayError {
+pub enum RelayError {
     /// Minting the per-request JWT failed.
     #[error("jwt encode failed: {0}")]
     Jwt(String),

@@ -88,6 +88,18 @@ pub trait ZcashView {
     /// The canonical block at `height`, or `None` if the chain has no
     /// block there (beyond tip, or racing a reorg).
     fn block_at(&self, height: u64) -> Result<Option<BlockView>, ViewError>;
+    /// The canonical block hash at `height` (cheaper than [`Self::block_at`]
+    /// where the backend can answer it alone; zebrad's `getblockhash`).
+    fn hash_at(&self, height: u64) -> Result<Option<[u8; 32]>, ViewError> {
+        Ok(self.block_at(height)?.map(|b| b.hash))
+    }
+    /// What answers this view: network and software build (zebrad's
+    /// `getblockchaininfo.chain` + `getinfo`), or `None` if unknown. A
+    /// persisted copy of the view's answers is only valid for the same
+    /// identity (engine `zcash_cache`).
+    fn node_identity(&self) -> Result<Option<String>, ViewError> {
+        Ok(None)
+    }
 }
 
 /// A recognized burn plus its txid — the epoch ingredient.

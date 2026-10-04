@@ -1,0 +1,49 @@
+# NEAR DA poster (tools/near-da, docs/design/near-da.md): posts every
+# finalized Sova block to the NEAR index contract. Runs beside a sova node
+# (loopback RPC, either profile): raw blocks come from debug_getRawBlock if
+# served, else are rebuilt from eth_* (raw-tx methods on `local`, full tx
+# objects on `public`) and tx-hash/hash/root-checked. Not part of consensus: stopping it stops nothing
+# but the archive. Install steps: docs/design/near-da.md §12.
+#
+# Install (by hand or from setup-host.sh; nothing enables it by default):
+#   /usr/local/bin/sova-near-da                  the binary
+#   /etc/sova/near-da.env                        config (near-da.env.example)
+#   /etc/sova/near-da.key.json   root 0600       the poster's NEAR key (a
+#                                                function-call key: post,
+#                                                set_tx), handed to the
+#                                                service as a credential
+#   useradd --system --no-create-home sova-near-da
+[Unit]
+Description=Sova NEAR DA poster
+Wants=network-online.target sova-node.service
+After=network-online.target sova-node.service
+ConditionPathExists=/etc/sova/near-da.key.json
+
+[Service]
+User=sova-near-da
+Group=sova-near-da
+EnvironmentFile=/etc/sova/near-da.env
+LoadCredential=near-da-key:/etc/sova/near-da.key.json
+StateDirectory=sova/near-da
+ExecStart=/usr/local/bin/sova-near-da poster \
+  --key-file ${CREDENTIALS_DIRECTORY}/near-da-key \
+  --state-file /var/lib/sova/near-da/state.json \
+  --status-file /var/lib/sova/near-da/status.json
+Restart=always
+RestartSec=30
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

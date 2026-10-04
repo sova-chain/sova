@@ -1,0 +1,17 @@
+{
+  "name": "sova-site-e2e",
+  "version": "0.1.0",
+  "description": "Headless-browser checks of site pages against the built site (npm run build in site/ first).",
+  "private": true,
+  "type": "module",
+  "license": "MIT OR Apache-2.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "history": "node history.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "1.63.0"
+  }
+}

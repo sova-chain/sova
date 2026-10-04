@@ -140,10 +140,13 @@ export SOVA_SIP7=1
 export SOVA_BOOTNODES=enode://4788bec82fa9559623dd997cd97a01d0203fc8b419712f3fcfbb186b006496c5896be5daaa9bdabb9d8adaa950b3c6e7a66278d936a30338d1497639be25c17f@2.28.138.164:30303,enode://441e2f90b85bc09efa89eaada71af17b7771a6036181038dbe228d35c1a336e0a9ba01daf082fd6f5373c68783d374e09bf63ac44971c8a2228fa19c6cb6366b@62.238.45.222:30303
 ```
 
-Below its `---- yours ----` line are three values of your own:
-`SOVA_ZEBRAD_RPC=http://127.0.0.1:18232` (your zebrad),
-`SOVA_DATADIR="$HOME/.sova-testnet/node"` (where your node keeps its chain
-and its node key) and `SOVA_FOLLOW_ONLY=1` (2d; step 4 removes it).
+Below its `---- yours ----` line are four values of your own:
+- `SOVA_P2P_PEERS="${SOVA_BOOTNODES}"`: dial the bootnodes directly as
+  static peers (see [How your node finds peers](#how-your-node-finds-peers));
+- `SOVA_ZEBRAD_RPC=http://127.0.0.1:18232`: your zebrad;
+- `SOVA_DATADIR="$HOME/.sova-testnet/node"`: where your node keeps its
+  chain and its node key;
+- `SOVA_FOLLOW_ONLY=1`: 2d; step 4 removes it.
 
 `seeds.json` repeats the same values in JSON, with the genesis hash:
 `jq . seeds.json`.
@@ -165,6 +168,7 @@ In `node.log`:
 datadir: .../.sova-testnet/node (persistent; node key .../.sova-testnet/node/discovery-secret)
 chain profile: sova-testnet (chain ID 82330, 1 genesis alloc account(s))
 p2p: sova/1 gossip enabled; local enode enode://...
+p2p: static peers (2): ...
 p2p: discovery on (discv4 + discv5 on udp 0.0.0.0:30303; dns off; enforce ENR fork id true; nat any; N bootnode(s), no mainnet fallback)
 expectations: enforcing settlements against zebrad at http://127.0.0.1:18232 (epoch base 4388500)
 follow-only mode: no local mining; serving RPC on :8545, receiving blocks over sova/1
@@ -174,6 +178,25 @@ The one genesis account is SIP-7's `ZcashBlocks` contract at
 `0x…5A01`: no account holds SOVA at genesis. You'll also see
 `sip-7 feed: sova_getZcashBlocks over HTTP`, and once a peer connects,
 `sova/1: peer active`.
+
+### How your node finds peers
+
+Two ways, both on by default with `testnet.env`:
+
+- **Static peers** (`SOVA_P2P_PEERS`, set to the bootnodes). The node
+  dials them over TCP 30303 right away and redials any that drop. This is
+  what gets a new node its first peer.
+- **Discovery** (discv4/discv5 over UDP 30303, seeded from
+  `SOVA_BOOTNODES`). The node asks the bootnodes for other nodes and
+  connects to them, so it doesn't depend on the project's seeds staying
+  up. Behind a home router (NAT) it can be slow to find its first peer:
+  in the project's own test (2026-10-04), a laptop on home NAT with
+  discovery alone had 0 peers after 3 minutes, and the same laptop with
+  the bootnodes as static peers had 2 peers at once and synced the whole
+  chain from them in about 2 minutes.
+
+To rely on discovery alone, delete the `SOVA_P2P_PEERS` line. Any Sova
+node's enode works as a static peer too.
 
 ### On a VPS
 
@@ -444,7 +467,7 @@ Spend it on an Ashwing: [Mint an Ashwing](../../docs-site/pages/start/ashwings.m
 | `no SOVA_ZEBRAD_RPC: importing without settlement enforcement (C5 off)` | The env didn't reach `sova` | Run `. ./testnet.env` in the same shell that starts `sova` |
 | `usage: sova ...` and the node exits | An argument other than `genesis-hash`, `--version` or `--help` | Everything else is `SOVA_*` env |
 | `sova genesis-hash` or block 0 isn't `0xb7391a4a83644e1dce95c95348a005febedeaa12fa46eb30ac0dfb5f36f00b71` | Wrong release, or `SOVA_SIP7` isn't `1` | Use `v0.1.18` and the unedited `testnet.env` |
-| `0 bootnode(s)` in the discovery line, or never `sova/1: peer active` | `SOVA_BOOTNODES` empty or not exported, or outbound `30303` blocked | Check `echo $SOVA_BOOTNODES`; allow outbound TCP and UDP `30303`; then [No peers after 5 minutes](#no-peers-after-5-minutes) |
+| `0 bootnode(s)` in the discovery line, `no SOVA_P2P_PEERS`, or never `sova/1: peer active` | `SOVA_BOOTNODES` / `SOVA_P2P_PEERS` empty or not exported, or outbound `30303` blocked | Check `echo $SOVA_BOOTNODES $SOVA_P2P_PEERS`; allow outbound TCP and UDP `30303`; then [No peers after 5 minutes](#no-peers-after-5-minutes) |
 | `bad SOVA_BOOTNODES entry` | A mangled enode | Copy the line from `testnet.env` exactly |
 | Head stays low while peers are connected | Your zebrad isn't synced: the node syncs only as far as its zebrad has scanned | Finish 1d |
 | Head stopped moving | Compare `eth_blockNumber` with `https://rpc-testnet.sova.io`. If the public RPC is stuck too, the network is waiting for a sealer, not you | Nothing to fix locally. Running a sealing node (4) helps |
@@ -491,8 +514,12 @@ within seconds of starting. If it's still at 0 after 5 minutes:
    Kong got 0 peers for almost two hours, while a fresh node on an
    ordinary VPS joined within seconds. Turn off the VPN or proxy, or try
    another network or a small VPS.
-4. **Try the bootnode as a static peer.** This skips discovery and dials
-   it directly, and keeps redialing:
+4. **Check the static peers are set.** `testnet.env` already dials the
+   bootnodes directly, skipping discovery, and keeps redialing them. The
+   start of `node.log` must say `p2p: static peers (2): ...`, and
+   `echo $SOVA_P2P_PEERS` must print the same two enodes as
+   `$SOVA_BOOTNODES`. If it says `no SOVA_P2P_PEERS`, your `testnet.env`
+   predates this default (or the line was deleted); add it back:
 
    ```bash
    . ./testnet.env
@@ -561,7 +588,7 @@ your `node.log` lines, or ask in `t.me/sovazec`.
 | `SOVA_NAT` | `extip:<IPv4>` on a VPS | Default `any` |
 | `SOVA_P2P_ADDR` | optional | Bind IP for P2P, default `0.0.0.0` |
 | `SOVA_DISCOVERY` | optional `off` | Static peers only (`SOVA_P2P_PEERS`) |
-| `SOVA_P2P_PEERS` | optional | Comma-separated enodes to stay connected to |
+| `SOVA_P2P_PEERS` | `"${SOVA_BOOTNODES}"` (the `testnet.env` default) | Comma-separated enodes to dial directly and stay connected to; delete to rely on discovery alone |
 | `SOVA_HTTP_PORT`, `SOVA_AUTH_PORT`, `SOVA_P2P_PORT` | `8545`, `8551`, `30303` | Port overrides |
 | `SOVA_WS_PORT` | optional | WebSocket RPC on 127.0.0.1 (enables `sova_subscribe("zcashBlocks")`) |
 | `SOVA_RPC_CORS` | optional | `*` or a list of origins, for browser pages calling your node |

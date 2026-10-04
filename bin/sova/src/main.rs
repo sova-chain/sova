@@ -95,6 +95,8 @@
 //! reth's standard `eth`/`net`/`web3` over HTTP on 127.0.0.1, unfiltered)
 //! or `public` (read-and-broadcast only: `http.api` pinned to
 //! `eth,net,web3`, then every HTTP method outside the allowlist removed).
+//! `SOVA_RPC_DEBUG=1` adds `debug` to the local profile's HTTP API (for
+//! archive export: `debug_getRawBlock`); refused with `public`.
 //! `SOVA_RPC_CORS` (unset = no CORS headers, today's behaviour; `*` or a
 //! comma-separated origin list) sets reth's `--http.corsdomain` so browser
 //! pages can call the node directly; the box sets `*`.
@@ -317,6 +319,12 @@ async fn run() -> eyre::Result<()> {
     let ws_port = env_u16("SOVA_WS_PORT");
     rpc::apply_ws(&mut node_config.rpc, ws_port);
     rpc_profile.apply(&mut node_config.rpc);
+    // SOVA_RPC_DEBUG=1: `debug` on the local HTTP RPC (archive export).
+    let rpc_debug = rpc::apply_debug(
+        &mut node_config.rpc,
+        rpc_profile,
+        env_flag("SOVA_RPC_DEBUG"),
+    )?;
     rpc_cors.apply(&mut node_config.rpc);
     send_sync::apply(&mut node_config.rpc, send_sync_timeout);
     let jwt = apply_shared_jwt(&mut node_config)?;
@@ -336,7 +344,8 @@ async fn run() -> eyre::Result<()> {
     // SIP-6 (`SOVA_SIP6=1`): seals are required, and checked under this
     // chain's ID, from the first import on — activated before launch,
     // never mid-run.
-    let sip6_chain_id = env_flag("SOVA_SIP6").then(|| node_config.chain.chain().id());
+    let sova_chain_id = node_config.chain.chain().id();
+    let sip6_chain_id = env_flag("SOVA_SIP6").then_some(sova_chain_id);
     if let Some(chain_id) = sip6_chain_id {
         engine::seal::activate(chain_id);
     }
@@ -432,6 +441,11 @@ async fn run() -> eyre::Result<()> {
     println!("sova {VERSION} (pre-release, under construction)");
     println!("{datadir_line}");
     println!("{}", rpc_cors.describe());
+    if rpc_debug {
+        println!(
+            "rpc debug: HTTP also serves the debug namespace (SOVA_RPC_DEBUG=1, local profile)"
+        );
+    }
     // Branch rule (audit 2026-09-23 F1): fork choice only considers
     // candidates attached to our own chain, which needs our canonical hashes.
     // SIP-4 §7: after a Zcash reorg, blocks above the rollback floor are
@@ -548,11 +562,19 @@ async fn run() -> eyre::Result<()> {
         // Before any task runs, so the sealer never sees "no follower"
         // while the follower is merely not scheduled yet.
         engine::expectations::global().mark_enabled();
+        // A persistent datadir keeps the scan's Zcash input, so a restart
+        // replays it instead of rescanning history (engine::zcash_cache).
+        let zcash_cache = std::env::var_os("SOVA_DATADIR")
+            .filter(|v| !v.is_empty())
+            .and_then(|dir| {
+                engine::zcash_cache::CacheConfig::from_env(&PathBuf::from(dir), sova_chain_id)
+            });
         sova_tasks.spawn(engine::expectations::run_expectations(
             ZebradClient::new(url.clone()),
             base_height,
             schedule,
             Duration::from_secs(2),
+            zcash_cache,
         ));
         if let Some(arbiter_rx) = engine::candidates::install_arbiter() {
             let head_provider = node.provider.clone();

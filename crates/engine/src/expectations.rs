@@ -475,11 +475,16 @@ impl<V: ZcashView> ZcashView for CappedView<'_, V> {
 /// the node's RPC (2026-10-03, keeper: RPC dead for the whole ~6 min
 /// rescan). Polls are capped at [`SCAN_CHUNK`] blocks and repeat without
 /// sleeping while the scan is behind.
+///
+/// With `cache` (a persistent datadir), the scan's input is kept in
+/// [`crate::zcash_cache`]: a restart replays the verified blocks through
+/// this same follower instead of fetching history from zebrad again.
 pub async fn run_expectations<V: ZcashView + Send + Sync + 'static>(
     view: V,
     base_height: u64,
     schedule: consensus::schedule::Schedule,
     poll_interval: std::time::Duration,
+    cache: Option<crate::zcash_cache::CacheConfig>,
 ) {
     global().mark_enabled();
     // SIP-7: the follower that feeds the index holds on missing or
@@ -487,22 +492,45 @@ pub async fn run_expectations<V: ZcashView + Send + Sync + 'static>(
     let mut follower = Follower::new(base_height, REORG_WINDOW)
         .with_strict_pools(evm::zcash::sip7_active())
         .with_sip8_from(crate::votes::sip8_from());
+    let (view, mut cache) = match cache {
+        None => (crate::zcash_cache::CachedView::live(view), None),
+        Some(config) => match tokio::task::spawn_blocking(move || {
+            crate::zcash_cache::prepare(view, &config, base_height, REORG_WINDOW as u64)
+        })
+        .await
+        {
+            Ok(prepared) => prepared,
+            Err(err) => {
+                tracing::error!(%err, "zcash cache setup failed; expectations stopped");
+                return;
+            }
+        },
+    };
     let view = std::sync::Arc::new(view);
     let started = std::time::Instant::now();
     let mut caught_up_logged = false;
     loop {
         let cap = follower.next_height().saturating_add(SCAN_CHUNK - 1);
         let task_view = std::sync::Arc::clone(&view);
-        let (returned, result) = match tokio::task::spawn_blocking(move || {
+        let (returned, returned_cache, result) = match tokio::task::spawn_blocking(move || {
             let result = follower.poll(&CappedView {
                 inner: &*task_view,
                 cap,
             });
-            (follower, result)
+            // Persist before the events are applied: the cache is input, so
+            // a crash in between only means the next start replays them.
+            if let (Ok(events), Some(c)) = (&result, cache.as_mut())
+                && let Err(err) = crate::zcash_cache::persist(c, &task_view, events)
+            {
+                tracing::warn!(%err, "zcash cache: write failed; caching off until restart");
+                task_view.stop_recording();
+                cache = None;
+            }
+            (follower, cache, result)
         })
         .await
         {
-            Ok(pair) => pair,
+            Ok(triple) => triple,
             // The poll panicked: there is no follower to continue with.
             Err(err) => {
                 tracing::error!(%err, "expectations scan task failed; expectations stopped");
@@ -510,6 +538,7 @@ pub async fn run_expectations<V: ZcashView + Send + Sync + 'static>(
             }
         };
         follower = returned;
+        cache = returned_cache;
         // The poll stopped at the chunk cap, not at the tip: keep going.
         let behind = follower.next_height() > cap && follower.hold_reason().is_none();
         if behind {

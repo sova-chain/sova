@@ -1,0 +1,40 @@
+[package]
+name = "sova-rebuild"
+description = "Rebuilds a fresh Sova node from a block archive (NEAR DA batch files), verifying every block through the node's own consensus"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+# A workspace member, not a standalone tool under tools/: it reuses the
+# node's own code (crates/engine's relay wire shape and authrpc client,
+# `SovaEngineTypes::block_to_payload`, the SIP-6 seal check) and decodes
+# blocks with the exact reth/alloy types the node uses, from the same
+# Cargo.lock. A separate workspace would pin its own reth graph and could
+# drift from the node it feeds.
+[dependencies]
+alloy-consensus = { version = "2.4.2", default-features = false, features = ["std", "serde"] }
+alloy-eips = { version = "2.4.2", default-features = false, features = ["std", "serde"] }
+alloy-primitives.workspace = true
+alloy-rlp = "0.3"
+alloy-rpc-types = { workspace = true, features = ["engine"] }
+alloy-rpc-types-eth = { workspace = true, features = ["std", "serde"] }
+engine = { path = "../../crates/engine" }
+hex.workspace = true
+reth-ethereum = { workspace = true, features = ["node", "network"] }
+reth-rpc-layer.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+# `tls`: `--expect-rpc https://…` / `export --rpc https://…`. It is ureq's
+# rustls 0.23 (ring) + webpki-roots 0.26 backend; all three are already in
+# Cargo.lock and in every node binary (reth's alloy-transport-ws), so it adds
+# no crate, and no native TLS library or system cert store dependency.
+ureq = { workspace = true, features = ["tls"] }
+eyre.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

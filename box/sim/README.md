@@ -1574,3 +1574,68 @@ the pre-fix run happened not to produce that sequence. It happened in all
 5 `release` runs at depth ≤ 1 (seeds 202, 404, 505, 808, 909). Until it is
 fixed, a run passes only with `REORG_STRESS_RECOVERY_MIN=15`, which lets
 the 33-block self-heal happen.
+
+## Rebuild from the archive alone: `rebuild-from-archive-scenario.sh` (acceptance test, not in nightly yet)
+
+The NEAR data-availability claim (2026-10-03): anyone can rebuild Sova's full
+history from the archive alone, with no Sova peers, every block verified by
+their own node against their own zebrad. `bin/sova-rebuild` is the rebuild
+side; this scenario proves it against batch files in the shared format v1
+(`SOVADA1\0` | chain id | first height | count | (height | hash | len | RLP)*),
+so it works before the NEAR poster/fetcher is wired.
+
+- **A** (mine mode, SIP-6 + SIP-7, sealing keystore, persistent datadir, no
+  peers, `SOVA_RPC_DEBUG=1`) builds 300 epochs on a regtest zebrad: a
+  recorder contract whose calls store `keccak(returndata)` of a 0x5A00
+  precompile call at slot `number()` (SIP-4 `anchor`/`blockAt`/`txInfo`/
+  `burnInfo`, SIP-7 `poolTotals`/`blockStats`), so the state root depends on
+  the Zcash index's answers; real SIP-1 burns while transactions are mined
+  (under SIP-6 a burn-less epoch is a null block and carries no
+  transactions); a live depth-2 Zcash reorg under a null tip, which A
+  re-seals.
+- `sova-rebuild export` writes A's blocks 1..N as batch files (40 per file).
+  With `debug_getRawBlock` the export is repeated through the `eth_*`
+  reconstruction and the files must be byte-identical.
+- `--verify-only` (no node) passes the archive (chain id, contiguity,
+  `keccak(rlp(header))` = recorded hash, parent links from A's genesis, body
+  roots, SIP-6 seals) and refuses a copy missing a middle batch (gap) and a
+  copy with one byte of a transaction's signature flipped (transactions
+  root).
+- **B** starts fresh: follow-only, SIP-6 + SIP-7, own datadir, the same
+  zebrad through a proxy adding 25 ms per request (so its Zcash scan lags
+  and blocks get held), relay transport with no `SOVA_PEERS`, no
+  `SOVA_P2P_PEERS`, no bootnodes. Blocks reach it only as
+  `engine_newPayloadV4` on its authrpc from `sova-rebuild`; its own arbiter
+  makes them head.
+- Rebuilding B from the tampered archive must stop with exit 2 at the
+  tampered height, with B's own reason, after importing everything below.
+  Rebuilding the same B from the good archive resumes there and must end at
+  A's head; the tool checks it against the archive's last block, `--expect`
+  and `--expect-rpc`, and the script checks B = A at every height (hash and
+  state root), the recorder's slots, 76 SIP-4/SIP-7 precompile answers at
+  four blocks, at least one hold waited out, and `net_peerCount` 0.
+- Rebuilding B once more, with every block present (step 6), must import
+  nothing, look up at most `2 + N/10000` blocks (first, every 10,000th,
+  last: the archive's hash links prove the rest), and open at most 4 new
+  sockets on B's authrpc port (`netstat`/`ss`, TIME_WAIT included). The
+  tool before keep-alive opened one connection per present block, and a
+  60k-block resume exhausted macOS's ephemeral ports (os error 49).
+
+Isolation: zebrad on `:18456` (project `sova-rebuild-sim`, container
+`sova-zebrad-rebuild`), A on 11845/11851/18457, B on 11855/11861/18458, B's
+zebrad proxy on `:18459`. About 2.5 minutes.
+
+### Results on 2026-10-03 (`rebuild` branch, debug build)
+
+| run | config | result |
+|---|---|---|
+| 1 | first draft | FAIL at setup: the recorder deploy never mined. Under SIP-6 a burn-less epoch is a null block (no transactions); the script now keeps the burner running while transactions are mined. |
+| 2 | B's zebrad direct (no proxy), tamper at #6 | **PASS**, 148 s. Export 300 blocks / 8 files in 0.6 s, debug and `eth_*` byte-identical. B rejected #6 (`INVALID: block hash mismatch`), then rebuilt 295 blocks in 22.4 s (13.2 blocks/s). No hold: B's scan outran the tool. |
+| 3 | defaults (25 ms proxy, tamper at #155) | **PASS**, 186 s. B held 4 blocks ahead of its scan (`sova-hold: no settlement record at scanned height 1` and others); the tool waited them out. It imported 1..154 in 39.6 s, rejected #155, then rebuilt 155..300 in 16.4 s (8.9 blocks/s). |
+
+Per-block import time on B grows with height: about 7 ms at block 10, 30 ms
+at 100, 62 ms at 200 and 91 ms at 290 (debug build). A's own sealing shows
+the same curve (3 / 33 / 63 / 94 ms at 2 / 100 / 200 / 300), so the cost is
+in the node's block execution, not in the rebuild path. The state-root job
+stays at µs. This needs a profile before rebuilding a 60k+ block testnet
+history.

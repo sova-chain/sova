@@ -92,6 +92,31 @@ impl ZcashView for ZebradClient {
             .ok_or_else(|| ViewError::Backend("getblockcount: not a u64".to_string()))
     }
 
+    fn hash_at(&self, height: u64) -> Result<Option<[u8; 32]>, ViewError> {
+        let Some(hash_val) = self.call("getblockhash", json!([height]))? else {
+            return Ok(None);
+        };
+        let hash_hex = hash_val
+            .as_str()
+            .ok_or_else(|| ViewError::Backend("getblockhash: not a string".to_string()))?;
+        hash_from_hex(hash_hex).map(Some)
+    }
+
+    fn node_identity(&self) -> Result<Option<String>, ViewError> {
+        let chain = self.call_required("getblockchaininfo", json!([]))?;
+        let info = self.call_required("getinfo", json!([]))?;
+        let text = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_owned();
+        let (subversion, build) = (text(&info, "subversion"), text(&info, "build"));
+        // Neither the build nor the version: nothing to tie a cache to.
+        if subversion.is_empty() && build.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(format!(
+            "{}|{subversion}|{build}",
+            text(&chain, "chain")
+        )))
+    }
+
     fn block_at(&self, height: u64) -> Result<Option<BlockView>, ViewError> {
         // Out-of-range height (or a mid-reorg race) is None, not an error.
         let Some(hash_val) = self.call("getblockhash", json!([height]))? else {
