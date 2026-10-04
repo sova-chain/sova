@@ -57,7 +57,7 @@ You need Docker running. Clone the latest release tag, so the box can
 download prebuilt binaries (Linux x86_64 and Apple Silicon):
 
 ```bash
-git clone --branch v0.1.18 https://github.com/sova-chain/sova && cd sova
+git clone --branch v0.1.19 https://github.com/sova-chain/sova && cd sova
 ./box/up.sh          # up; mining in under a minute with prebuilt binaries
 ./box/up.sh status   # block height, the miner's SOVA balance, settled epochs
 ./box/up.sh down     # clean teardown

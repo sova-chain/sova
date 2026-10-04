@@ -10,7 +10,7 @@ become SOVA on your own machine.
 ./box/up.sh down      # clean teardown
 ```
 
-From a checkout of a release tag (`git clone --branch v0.1.18
+From a checkout of a release tag (`git clone --branch v0.1.19
 https://github.com/sova-chain/sova`), `./box/up.sh` downloads that
 release's prebuilt binaries for Linux x86_64 or Apple Silicon and reaches
 the first mint in under a minute. Anywhere else, the first run builds from
