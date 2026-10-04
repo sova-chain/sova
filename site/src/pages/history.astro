@@ -90,7 +90,7 @@ const doc = repo.blob('docs/design/near-da.md');
 <span class="p">$ </span>sova-near-da verify sova-da --expect-chain-id {TESTNET.chainId}
 <span class="c"># replay every block into a fresh Sova node with its own zebrad</span>
 <span class="p">$ </span>sova-rebuild --jwt jwt.hex sova-da/*.sovada</code></pre>
-    <p class="dim small"># both tools are in <a href={repo.root}>the repo</a>: <code>tools/near-da</code>, <code>bin/sova-rebuild</code>. Detail: <a href={doc}>docs/design/near-da.md</a>.</p>
+    <p class="dim small"># both tools ship in the <a href={repo.root + "/releases/latest"}>release tarball</a> (v0.1.20+): <code>sova-near-da</code>, <code>sova-rebuild</code>. Detail: <a href={doc}>docs/design/near-da.md</a>.</p>
 
     <ul class="bul">
       <li>Every Sova block is posted to NEAR once it is final on Sova (about two hours after it’s mined), in batches; NEAR consensus orders and includes every batch.</li>

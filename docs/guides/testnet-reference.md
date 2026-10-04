@@ -121,7 +121,7 @@ The fallback, and the path for any other platform:
 
 ```bash
 git clone https://github.com/sova-chain/sova ~/.sova-testnet/src   # skip if you cloned in 1b
-cd ~/.sova-testnet/src && git checkout v0.1.19
+cd ~/.sova-testnet/src && git checkout v0.1.20
 cargo build --release --locked -p sova
 cargo build --release --locked -p sova-miner --manifest-path crates/burn-wallet/Cargo.toml
 install -m 0755 target/release/sova crates/burn-wallet/target/release/sova-miner ~/.sova-testnet/bin/
@@ -458,7 +458,7 @@ Spend it on an Ashwing: [Mint an Ashwing](../../docs-site/pages/start/ashwings.m
   4,465,026 (6 October 2026). From there only burns signed for NU7's
   branch (`77190ad9`) are mined, and a zebrad that doesn't know NU7 stops
   at block 4,465,025, with your node behind it. You need `sova-miner`
-  v0.1.16 or later (2a's v0.1.19) and zebrad `zfnd/zebra:7.0.0-rc.0`
+  v0.1.16 or later (2a's v0.1.20) and zebrad `zfnd/zebra:7.0.0-rc.0`
   (1c). To swap an older zebrad, `docker stop -t 110 zebrad && docker rm
   zebrad`, then 1c's `docker run`: the state carries over, no resync.
   Check that it knows NU7:
@@ -487,10 +487,10 @@ You need:
 - your zebrad on Zcash testnet, synced (1a–1c). The node checks each
   block against it, and holds a block until zebrad has seen its Zcash
   block;
-- `sova` v0.1.19 or later (2a). Older releases stop at block #47,667
+- `sova` v0.1.20 or later (2a). Older releases stop at block #47,667
   ([why](../design/near-da.md#91-the-live-testnet-rebuilt-from-near-2026-10-04));
 - `sova-near-da` and `sova-rebuild`, in the release tarball from v0.1.20
-  (step 1), or [built from source](#build-from-source) at v0.1.19;
+  (step 1), or [built from source](#build-from-source) at v0.1.20;
 - about 50 MB for the archive (71,284 blocks on 2026-10-04) and about
   1 GB for the new node's datadir (the project's run: 576 MB at 66,239
   blocks).
@@ -617,7 +617,7 @@ retention guarantees and the project's own run are in
 | `SOVA_SIP6=1 mine mode requires SOVA_SEALER_KEYSTORE` and the node exits | `SOVA_FOLLOW_ONLY` was unset without a keystore | Keep `SOVA_FOLLOW_ONLY=1` (2d), or set `SOVA_SEALER_KEYSTORE` (4) |
 | `no SOVA_ZEBRAD_RPC: importing without settlement enforcement (C5 off)` | The env didn't reach `sova` | Run `. ./testnet.env` in the same shell that starts `sova` |
 | `usage: sova ...` and the node exits | An argument other than `genesis-hash`, `--version` or `--help` | Everything else is `SOVA_*` env |
-| `sova genesis-hash` or block 0 isn't `0xb7391a4a83644e1dce95c95348a005febedeaa12fa46eb30ac0dfb5f36f00b71` | Wrong release, or `SOVA_SIP7` isn't `1` | Use `v0.1.19` and the unedited `testnet.env` |
+| `sova genesis-hash` or block 0 isn't `0xb7391a4a83644e1dce95c95348a005febedeaa12fa46eb30ac0dfb5f36f00b71` | Wrong release, or `SOVA_SIP7` isn't `1` | Use `v0.1.20` and the unedited `testnet.env` |
 | `0 bootnode(s)` in the discovery line, `no SOVA_P2P_PEERS`, or never `sova/1: peer active` | `SOVA_BOOTNODES` / `SOVA_P2P_PEERS` empty or not exported, or outbound `30303` blocked | Check `echo $SOVA_BOOTNODES $SOVA_P2P_PEERS`; allow outbound TCP and UDP `30303`; then [No peers after 5 minutes](#no-peers-after-5-minutes) |
 | `bad SOVA_BOOTNODES entry` | A mangled enode | Copy the line from `testnet.env` exactly |
 | Head stays low while peers are connected | Your zebrad isn't synced: the node syncs only as far as its zebrad has scanned | Finish 1d |
