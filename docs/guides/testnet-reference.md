@@ -2,7 +2,8 @@
 
 The details behind the [quickstart](testnet.md): what each program does,
 what you need, how the snapshot is checked, how SOVA is paid, sealing,
-earnings, troubleshooting and every setting. Section numbers like 1b or
+earnings, rebuilding Sova from its NEAR archive, troubleshooting and
+every setting. Section numbers like 1b or
 2d point at the quickstart's steps; this page continues them with 4 and 5.
 
 <!--
@@ -20,6 +21,7 @@ budget changes.
 | `zebrad` (Zcash testnet) | Your own view of Zcash. Your Sova node checks every payout against it, and your miner broadcasts burns through it | RPC `127.0.0.1:18232`; Zcash P2P `18233` |
 | `sova` | The Sova node: follows the chain, checks every block, serves RPC; optionally seals | HTTP RPC `127.0.0.1:8545`; Engine API `127.0.0.1:8551`; P2P `30303` TCP and UDP |
 | `sova-miner` | Burns TAZ once per new Zcash block, inside a budget you set | none (talks to zebrad's RPC) |
+| `sova-near-da`, `sova-rebuild` (optional) | Fetch Sova's history from NEAR and rebuild a node from it ([Rebuild Sova from NEAR](#rebuild-sova-from-near)) | none (NEAR's public RPCs; your node's Engine API) |
 
 The RPC ports stay on 127.0.0.1. Inbound P2P is optional: both nodes
 work with outbound connections only. Opening `30303` (TCP and UDP) and
@@ -101,10 +103,13 @@ blocks behind. Zcash testnet targets a block every 25 seconds from NU7
 
 The public repo, `github.com/sova-chain/sova`, builds `linux-x86_64` and
 `darwin-arm64` binaries with its `box-binaries` workflow and attaches
-them to the GitHub Release for the launch tag. Each tarball holds `sova`,
-`sova-miner`, `SHA256SUMS` and `BUILD-INFO`.
+them to the GitHub Release for each tag. Each tarball holds `sova`,
+`sova-miner`, `SHA256SUMS` and `BUILD-INFO`. From v0.1.20 it also holds
+`sova-rebuild` and `sova-near-da`, the tools to
+[rebuild Sova from NEAR](#rebuild-sova-from-near); `SHA256SUMS` covers
+all four binaries and `BUILD-INFO` lists each one's version.
 
-The Linux binary is built on glibc 2.31 for any x86-64-v2 CPU (SSE4.2,
+The Linux binaries are built on glibc 2.31 for any x86-64-v2 CPU (SSE4.2,
 about 2009 on): it runs on Ubuntu 20.04+, Debian 11+, RHEL 9 and Amazon
 Linux 2023 (`ldd --version` shows yours), and `sova --version` prints the
 release. On an Apple Silicon Mac, use the `darwin-arm64` binary on the
@@ -123,7 +128,14 @@ install -m 0755 target/release/sova crates/burn-wallet/target/release/sova-miner
 ```
 
 `sova-miner` lives in its own Cargo workspace, hence the
-`--manifest-path`.
+`--manifest-path`. The NEAR archive tools, if you want them (the
+`tools/near-da` workspace has its own `target/`):
+
+```bash
+cargo build --release --locked -p sova-rebuild
+cargo build --release --locked -p sova-near-da --manifest-path tools/near-da/Cargo.toml
+install -m 0755 target/release/sova-rebuild tools/near-da/target/release/sova-near-da ~/.sova-testnet/bin/
+```
 
 ## The join files
 
@@ -459,6 +471,145 @@ Spend it on an Ashwing: [Mint an Ashwing](../../docs-site/pages/start/ashwings.m
   Keep your zebrad state: it's the same Zcash testnet. Follow the
   announcement on whether keystores need `init` again.
 
+## Rebuild Sova from NEAR
+
+Every Sova block is posted to NEAR once it is final on Sova, in batches.
+The index contract `sova-da.testnet` (on NEAR testnet) lists every batch
+and refuses gaps, duplicates and blocks that don't link to the block
+before. With that account name, public NEAR endpoints and your own
+zebrad, you can rebuild the whole testnet without any Sova server: a
+fresh node with no peers is fed the archive block by block, and your
+node's own consensus checks every one (SIP-6 seal, settlement against
+your zebrad, SIP-4 anchor, execution, state root).
+
+You need:
+
+- your zebrad on Zcash testnet, synced (1a–1c). The node checks each
+  block against it, and holds a block until zebrad has seen its Zcash
+  block;
+- `sova` v0.1.19 or later (2a). Older releases stop at block #47,667
+  ([why](../design/near-da.md#91-the-live-testnet-rebuilt-from-near-2026-10-04));
+- `sova-near-da` and `sova-rebuild`, in the release tarball from v0.1.20
+  (step 1), or [built from source](#build-from-source) at v0.1.19;
+- about 50 MB for the archive (71,284 blocks on 2026-10-04) and about
+  1 GB for the new node's datadir (the project's run: 576 MB at 66,239
+  blocks).
+
+### 1. Get the tools
+
+The same download and checks as 2a, with a tag of v0.1.20 or later:
+
+```bash
+cd ~/.sova-testnet
+TAG=v0.1.20
+PLATFORM=linux-x86_64          # or darwin-arm64
+BASE=https://github.com/sova-chain/sova/releases/download/$TAG
+curl -fLO "$BASE/SHA256SUMS"
+curl -fLO "$BASE/sova-box-bin-$PLATFORM.tar.gz"
+grep " sova-box-bin-$PLATFORM.tar.gz" SHA256SUMS | sha256sum -c -   # macOS: shasum -a 256 -c -
+mkdir -p release && tar -xzf "sova-box-bin-$PLATFORM.tar.gz" -C release
+(cd release && sha256sum -c SHA256SUMS)                            # macOS: shasum -a 256 -c SHA256SUMS
+install -m 0755 release/sova-near-da release/sova-rebuild bin/
+sova-near-da --version && sova-rebuild --version
+```
+
+### 2. Fetch the archive from NEAR
+
+```bash
+cd ~/.sova-testnet
+sova-near-da fetch --contract sova-da.testnet --out sova-da --expect-chain-id 82330
+sova-near-da verify sova-da --expect-chain-id 82330 --start-height 0
+```
+
+```
+fetched 111 batch(es), 71284 blocks, heights 0..=71283 (111 downloaded) into sova-da
+ok: 111 file(s), 71284 blocks, heights 0..=71283, chain 82330, last block 0xa0c5174e…5dda
+```
+
+`fetch` reads the batch list from the contract, downloads each batch
+from NEAR, and checks it against the index (sha256, heights, chain
+id, block hashes, parent links). `verify` checks the files again,
+offline, from block 0. Run `fetch` again later to add newer batches:
+files already on disk are checked, not downloaded again.
+
+It uses public NEAR testnet endpoints by default (FastNEAR's RPC and
+archival RPC, then neardata.xyz). `--near-rpc`, `--archival-rpc` and
+`--block-api` point it at others, and `--scan-only` ignores the tx
+hashes the index records and finds every batch by scanning NEAR blocks
+(slow; it shows the index alone is enough). `sova-near-da fetch --help`
+lists the rest.
+
+### 3. Start a fresh node with no peers
+
+In a second terminal. The node uses the network's settings from
+`testnet.env` and your zebrad, but the relay transport with no peers
+and discovery off, so blocks reach it only through its Engine API, from
+`sova-rebuild`. Its own datadir, JWT and ports let it run next to your
+node from 2d:
+
+```bash
+cd ~/.sova-testnet
+. ./testnet.env
+unset SOVA_GOSSIP SOVA_BOOTNODES SOVA_P2P_PEERS SOVA_PEERS
+export SOVA_DISCOVERY=off SOVA_FOLLOW_ONLY=1
+export SOVA_DATADIR="$HOME/.sova-testnet/rebuild-node"    # must not exist yet
+export SOVA_AUTH_JWT="$HOME/.sova-testnet/rebuild.jwt"    # created on first start
+export SOVA_HTTP_PORT=8645 SOVA_AUTH_PORT=8651 SOVA_P2P_PORT=30403
+sova genesis-hash    # 0xb7391a4a…6f00b71, as in 2c
+sova 2>&1 | tee -a rebuild-node.log
+```
+
+Check it has no peers: `rpc http://127.0.0.1:8645 net_peerCount`
+prints `"result":"0x0"`.
+
+### 4. Rebuild
+
+```bash
+cd ~/.sova-testnet
+sova-rebuild --jwt rebuild.jwt --authrpc http://127.0.0.1:8651 --sip6 \
+  --expect-rpc https://rpc-testnet.sova.io sova-da/*.sovada
+```
+
+`sova-rebuild` checks each archive block as it reads it (chain id, hash,
+parent link, and the SIP-6 seal with `--sip6`), sends it to the node as
+`engine_newPayloadV4`, and waits for the node to make it its head. The
+node decides; the tool only delivers. It stops at the first block the
+node rejects. When the node is ahead of its zebrad scan it holds blocks
+("hold, don't accept"); the tool waits those out, it doesn't skip them.
+
+At the end it checks the node's head against the archive's last block
+and prints:
+
+```
+REBUILD OK: head <N>; <n> block(s) imported in <s> s (…), …
+  matches …
+```
+
+`--expect-rpc` also compares that block's hash and state root with the
+project's public RPC. Leave it out for a rebuild that never contacts a
+Sova server, and compare the hash yourself with any node you trust, or
+give the tool the block you expect with `--expect N:HASH[:STATEROOT]`.
+
+- **Speed.** In the project's own run (66,239 blocks, a laptop), the
+  node imported about 180–230 blocks a second while its Zcash scan was
+  ahead, and held blocks while the scan caught up.
+- **Interrupted?** Run the same command again. It resumes above the
+  node's head and doesn't resend blocks the node already has.
+- **Exit codes.** 0 ok; 2 the node rejected a block (the reason is
+  printed); 3 the archive is broken; 4 the head doesn't match; 5 stuck
+  waiting (zebrad behind or stopped: check it and run again); 6 the node
+  can't take the archive (not reachable, wrong JWT, another chain, or a
+  history that differs from the archive's).
+- **Check the files without a node:**
+  `sova-rebuild --verify-only --chain-id 82330 --sip6 sova-da` checks
+  the whole archive offline, including each block's transaction and
+  withdrawal roots, and stops there.
+
+When you're done, stop the node (ctrl-c) and delete
+`~/.sova-testnet/rebuild-node` and `rebuild.jwt`. The design, the
+retention guarantees and the project's own run are in
+[docs/design/near-da.md](../design/near-da.md).
+
 ## Troubleshooting
 
 | You see | Why | Fix |
@@ -588,6 +739,7 @@ your `node.log` lines, or ask in `t.me/sovazec`.
 | `SOVA_NAT` | `extip:<IPv4>` on a VPS | Default `any` |
 | `SOVA_P2P_ADDR` | optional | Bind IP for P2P, default `0.0.0.0` |
 | `SOVA_DISCOVERY` | optional `off` | Static peers only (`SOVA_P2P_PEERS`) |
+| `SOVA_AUTH_JWT` | optional path | The Engine API's JWT secret, created if missing ([Rebuild Sova from NEAR](#rebuild-sova-from-near)) |
 | `SOVA_P2P_PEERS` | `"${SOVA_BOOTNODES}"` (the `testnet.env` default) | Comma-separated enodes to dial directly and stay connected to; delete to rely on discovery alone |
 | `SOVA_HTTP_PORT`, `SOVA_AUTH_PORT`, `SOVA_P2P_PORT` | `8545`, `8551`, `30303` | Port overrides |
 | `SOVA_WS_PORT` | optional | WebSocket RPC on 127.0.0.1 (enables `sova_subscribe("zcashBlocks")`) |

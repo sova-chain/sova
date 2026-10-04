@@ -558,13 +558,17 @@ verify_prebuilt() {
       return 1
     fi
   done
-  if ! (cd "${staging}" && sha256_check SHA256SUMS >/dev/null 2>&1); then
-    echo "prebuilt: SHA256SUMS check FAILED -- not using these binaries"
-    return 1
-  fi
   if ! grep -Eq '^[0-9a-f]{64}  sova$' "${staging}/SHA256SUMS" ||
     ! grep -Eq '^[0-9a-f]{64}  sova-miner$' "${staging}/SHA256SUMS"; then
     echo "prebuilt: SHA256SUMS does not cover both binaries"
+    return 1
+  fi
+  # Only the two binaries `up` installs: from v0.1.20 the tarball's
+  # SHA256SUMS also lists the archive tools (sova-rebuild, sova-near-da),
+  # which the release path doesn't unpack.
+  if ! (cd "${staging}" && grep -E '^[0-9a-f]{64}  (sova|sova-miner)$' SHA256SUMS |
+    sha256_check - >/dev/null 2>&1); then
+    echo "prebuilt: SHA256SUMS check FAILED -- not using these binaries"
     return 1
   fi
   info_commit="$(sed -n 's/^commit=//p' "${staging}/BUILD-INFO")"

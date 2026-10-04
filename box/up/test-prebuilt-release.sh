@@ -13,6 +13,8 @@
 #   no-tag       no tag, no override       -> skips (a), goes on to (b)
 #   bad-sum      tarball tampered after SHA256SUMS -> rejected, (b) next
 #   wrong-plat   release lists only the other platform -> rejected
+#   bad-inner    sova-miner changed after the tarball's own SHA256SUMS
+#                (release-level checksum valid) -> rejected by verify_prebuilt
 #   wrong-inner  tarball's own BUILD-INFO is for the other platform
 #                (checksums all valid)     -> rejected by verify_prebuilt
 #   foreign      release built from a commit not in this clone -> rejected
@@ -95,24 +97,31 @@ exec "${REAL_CARGO}" "\$@"
 EOF
 chmod 0755 "${WORK}/stubbin/gh" "${WORK}/stubbin/cargo"
 
-# make_release <tag> <commit> <release-platforms> <inner-platform>
+# make_release <tag> <commit> <release-platforms> <inner-platform> [tamper-inner]
 # Writes <SERVE>/<tag>/{SHA256SUMS,BUILD-INFO,sova-box-bin-$PLATFORM.tar.gz}
 # the way box-binaries.yml's release job lays them out.
 make_release() {
-  local tag="$1" commit="$2" rel_platforms="$3" inner_platform="$4"
+  local tag="$1" commit="$2" rel_platforms="$3" inner_platform="$4" tamper="${5:-}"
   local stage="${WORK}/stage-${tag}" dir="${SERVE}/${tag}"
   mkdir -p "${stage}" "${dir}"
   printf '#!/bin/sh\necho "sova fake %s"\n' "${tag}" >"${stage}/sova"
   printf '#!/bin/sh\necho "sova-miner 0.0.0-fake %s"\n' "${tag}" >"${stage}/sova-miner"
-  chmod 0755 "${stage}/sova" "${stage}/sova-miner"
+  # From v0.1.20 the tarball also carries the archive tools, listed in its
+  # SHA256SUMS; `up` unpacks and checks only sova and sova-miner.
+  printf '#!/bin/sh\necho "sova-rebuild fake %s"\n' "${tag}" >"${stage}/sova-rebuild"
+  printf '#!/bin/sh\necho "sova-near-da fake %s"\n' "${tag}" >"${stage}/sova-near-da"
+  chmod 0755 "${stage}/sova" "${stage}/sova-miner" "${stage}/sova-rebuild" "${stage}/sova-near-da"
   (cd "${stage}" && {
     printf '%s  sova\n' "$(sha256_of sova)"
     printf '%s  sova-miner\n' "$(sha256_of sova-miner)"
+    printf '%s  sova-rebuild\n' "$(sha256_of sova-rebuild)"
+    printf '%s  sova-near-da\n' "$(sha256_of sova-near-da)"
   } >SHA256SUMS)
+  if [[ -n "${tamper}" ]]; then printf '# tampered\n' >>"${stage}/sova-miner"; fi
   printf 'commit=%s\nplatform=%s\nref=%s\nrustc=fake\nrun_id=0\n' \
     "${commit}" "${inner_platform}" "${tag}" >"${stage}/BUILD-INFO"
   COPYFILE_DISABLE=1 tar -czf "${dir}/sova-box-bin-${PLATFORM}.tar.gz" \
-    -C "${stage}" sova sova-miner SHA256SUMS BUILD-INFO
+    -C "${stage}" sova sova-miner sova-rebuild sova-near-da SHA256SUMS BUILD-INFO
   (cd "${dir}" && printf '%s  %s\n' "$(sha256_of "sova-box-bin-${PLATFORM}.tar.gz")" \
     "sova-box-bin-${PLATFORM}.tar.gz" >SHA256SUMS)
   printf 'commit=%s\ntag=%s\nplatforms=%s\nrun_id=0\n' \
@@ -122,6 +131,7 @@ make_release() {
 make_release v0.0.0-happy "${HEAD_SHA}" "darwin-arm64 linux-x86_64" "${PLATFORM}"
 make_release v0.0.0-badsum "${HEAD_SHA}" "darwin-arm64 linux-x86_64" "${PLATFORM}"
 printf 'tampered' >>"${SERVE}/v0.0.0-badsum/sova-box-bin-${PLATFORM}.tar.gz"
+make_release v0.0.0-badinner "${HEAD_SHA}" "darwin-arm64 linux-x86_64" "${PLATFORM}" tamper
 make_release v0.0.0-wrongplat "${HEAD_SHA}" "${OTHER}" "${PLATFORM}"
 make_release v0.0.0-wronginner "${HEAD_SHA}" "darwin-arm64 linux-x86_64" "${OTHER}"
 make_release v0.0.0-foreign "0123456789abcdef0123456789abcdef01234567" "darwin-arm64 linux-x86_64" "${PLATFORM}"
@@ -205,6 +215,9 @@ run_case no-tag "${UP}" 1 SOVA_BOX_PREBUILT=1 SOVA_BOX_RELEASE= -- \
 
 run_case bad-sum "${UP}" 1 SOVA_BOX_PREBUILT=1 SOVA_BOX_RELEASE=v0.0.0-badsum -- \
   "SHA-256 mismatch" "not authenticated"
+
+run_case bad-inner "${UP}" 1 SOVA_BOX_PREBUILT=1 SOVA_BOX_RELEASE=v0.0.0-badinner -- \
+  "SHA256SUMS check FAILED" "not authenticated"
 
 run_case wrong-plat "${UP}" 1 SOVA_BOX_PREBUILT=1 SOVA_BOX_RELEASE=v0.0.0-wrongplat -- \
   "lists platforms '${OTHER}', not ${PLATFORM}" "not authenticated"

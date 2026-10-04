@@ -1341,6 +1341,68 @@ In both failing runs B and C stayed on the stale 9 and did not adopt A's 10
 (on the testnet run of seed 202 they followed A). Either way the network
 sits on a block anchored to a Zcash block zebrad no longer has.
 
+## Stale SIP-7 record across a Zcash reorg: `stale-record-scenario.sh` (nightly)
+
+Regression test for the public-testnet freezes of 2026-10-02 (Sova
+#47,667) and 2026-10-04 (#66,641), fixed in `6be7bbb` (v0.1.19,
+`check_record_anchor` in `crates/evm/src/blocks.rs`). A block's anchor
+(`parent_beacon_block_root`) comes from the sealer's follower; its SIP-7
+`ZcashBlocks.record()` reads the expectations follower's index. During a
+Zcash reorg the keeper sealed a block anchored to the canonical Zcash hash
+that recorded the block the reorg had replaced; validators computed another
+state root and rejected it, and the keeper sealed on alone.
+
+**What it takes to reproduce.** Lagging the whole expectations follower
+behind the sealer does *not* reproduce it: that follower also feeds the C5
+records, so the keeper's own SIP-4 anchor check holds its own block
+(`sova-hold: zcash anchor mismatch`) and rebuilds it consistently once the
+follower moves (measured on `340579f`, first draft of this scenario: no
+split). The keeper only accepts a stale record when its anchor check
+already sees the new branch while `record()` still reads the replaced
+block. In one process that is an instant: reth 2.6 runs the pre-execution
+consensus checks on a background thread concurrently with execution
+(`payload_validator.rs`, `spawn_convert_and_validate`), so a follower
+update landing between execution's `record()` and the anchor check lets it
+through. To hold that instant open, bin/sova has a **test-only hook**,
+`SOVA_TEST_INDEX_ZEBRAD_RPC` (unset by default and on every real node;
+prints a WARNING when set): a second follower feeds the SIP-7 index alone
+from that URL (`engine::expectations::Feeds::INDEX_ONLY`), the main one
+feeds everything else. No consensus rule reads it.
+
+- zebrad, and two `zebrad-freeze-proxy.py` instances in front of it: S is
+  node A's `SOVA_ZEBRAD_RPC` (sealer, C5 records, anchor check), I is A's
+  `SOVA_TEST_INDEX_ZEBRAD_RPC` (the SIP-7 index). A: keeper (mine mode,
+  sova/1, SIP-6/7, sealing keystore, no burns, so every block is a null
+  block like #47,667). B: follow-only validator, zebrad direct, no hook.
+- A and B settle at `H0`. Freeze S. Mine X at `Z = H0 + B` (transparent
+  coinbase); A's index indexes it; freeze I. `invalidateblock(X)`, mine X'
+  at Z to the same address (same pools, another hash: #47,667's replaced
+  sibling had identical time, pools and stats). Thaw S: A builds
+  `H = H0 + 1` anchored to X' while its index holds X. After 20 s
+  (`STALE_RECORD_HOLD_S`) thaw I; auto-mine resumes.
+- (r) while the index disagrees A seals nothing at H and refuses to build
+  it, naming both hashes; (a) A's H is anchored to X' and
+  `ZcashBlocks.latest()` at H is `(Z, X')` on A and B; (b) B follows A at
+  least 5 blocks past H with no `mismatched block state root`; (d) A and B
+  hold the same hash and state root at every height, every anchor is
+  zebrad's.
+
+Isolation: zebrad on `:18600` (project `sova-stale-record-sim`, container
+`sova-zebrad-stale-record`), proxies on `:18601`/`:18602`
+(`STALE_RECORD_PROXY_PORTS`), A on 12045/12051/12011, B on
+12046/12052/12012. `STALE_RECORD_ROUNDS` (1) repeats the round. A passing
+run takes about 1.5 minutes, a failing one about 3. Local runner name:
+`stale-record-scenario`.
+
+### Results on 2026-10-04: fails before the fix, passes after
+
+| build | result |
+|---|---|
+| `340579f` (`6be7bbb^`) + the hook | **FAIL**, rc=1, 7 assertions, 169 s. A sealed #5 `0x1e34244e…` anchored to X' `0xa6ab76ab…` with `ZcashBlocks.latest()` = (106, X `0x5e28d659…`), stateRoot `0x434185cf…`. B: `Invalid block error on new payload … invalid_number=5 validation_err=mismatched block state root: got 0x97ee2b92…, expected 0x434185cf…`. A sealed on alone to #37, B stayed at #4: A and B differ at every height 5..37. |
+| `340579f` + the hook, X' mined to Sapling | **FAIL** the same way at #5; A then also stalls, since SIP-7's continuity check (DeltaMismatch, `0x78bab1c2`) refuses #6 on the stale record's pools. Why the scenario mines X' with X's pools. |
+| `340579f` + an earlier hook lagging the whole expectations follower | no split: A held its own #5 (`sova-hold: zcash anchor mismatch … our zebrad has` X) and rebuilt it once the follower moved. The reason for the index-only hook. |
+| `release` `796ee45` + the hook | **PASS**, rc=0, 94 s; again with `STALE_RECORD_ROUNDS=2`, 129 s. 6 refusals per round: `payload_builder: failed to apply pre-execution changes err=sova zcash-blocks: indexed zcash block 106 is 0xcf0c48c1…, but the block anchors 0x3779a522… (our index is on another Zcash branch; retry once it follows the anchor)`; after the thaw #5 `0x78ee0ecb…` on A and B, record (106, X'), equal hashes and state roots 1..11. |
+
 ## Keeper restart on a long chain: `restart-long-chain-scenario.sh` (acceptance test, not in nightly yet)
 
 Acceptance test for the fast-restart fix (`docs/design/fast-restart.md`).

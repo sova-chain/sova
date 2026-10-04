@@ -486,7 +486,64 @@ pub async fn run_expectations<V: ZcashView + Send + Sync + 'static>(
     poll_interval: std::time::Duration,
     cache: Option<crate::zcash_cache::CacheConfig>,
 ) {
-    global().mark_enabled();
+    run_expectations_feeding(
+        view,
+        base_height,
+        schedule,
+        poll_interval,
+        cache,
+        Feeds::ALL,
+    )
+    .await;
+}
+
+/// What one expectations follower feeds.
+///
+/// Every node runs one follower feeding everything ([`Feeds::ALL`]), so the
+/// C5 records (which hold the SIP-4 anchor check) and the SIP-7 index (which
+/// `ZcashBlocks.record()` reads) can only ever disagree for the instant
+/// between two updates. The split exists for one test hook,
+/// `SOVA_TEST_INDEX_ZEBRAD_RPC` in bin/sova: the stale-record sim
+/// (`box/sim/stale-record-scenario.sh`) runs a second follower that feeds
+/// the index alone from another zebrad view, to hold that instant open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Feeds {
+    /// C5 records, candidates and SIP-8 votes.
+    pub settlements: bool,
+    /// The SIP-4/SIP-7 Zcash index ([`crate::zcash_index`]).
+    pub index: bool,
+}
+
+impl Feeds {
+    /// Everything: what every real node runs.
+    pub const ALL: Self = Self {
+        settlements: true,
+        index: true,
+    };
+    /// Everything but the index (test hook only).
+    pub const SETTLEMENTS_ONLY: Self = Self {
+        settlements: true,
+        index: false,
+    };
+    /// The index alone (test hook only).
+    pub const INDEX_ONLY: Self = Self {
+        settlements: false,
+        index: true,
+    };
+}
+
+/// [`run_expectations`], feeding only `feeds` (see [`Feeds`]).
+pub async fn run_expectations_feeding<V: ZcashView + Send + Sync + 'static>(
+    view: V,
+    base_height: u64,
+    schedule: consensus::schedule::Schedule,
+    poll_interval: std::time::Duration,
+    cache: Option<crate::zcash_cache::CacheConfig>,
+    feeds: Feeds,
+) {
+    if feeds.settlements {
+        global().mark_enabled();
+    }
     // SIP-7: the follower that feeds the index holds on missing or
     // inconsistent pool accounting (a stall and an alert, never an answer).
     let mut follower = Follower::new(base_height, REORG_WINDOW)
@@ -564,10 +621,16 @@ pub async fn run_expectations<V: ZcashView + Send + Sync + 'static>(
                     match event {
                         FollowerEvent::Rollback { to_height } => {
                             let sova = to_height.saturating_sub(base_height).saturating_add(1);
-                            global().unwind_above(sova);
-                            crate::candidates::global().unwind_above(sova);
-                            crate::zcash_index::global().unwind_above(to_height);
-                            crate::votes::global().unwind_above(to_height);
+                            if feeds.settlements {
+                                global().unwind_above(sova);
+                                crate::candidates::global().unwind_above(sova);
+                            }
+                            if feeds.index {
+                                crate::zcash_index::global().unwind_above(to_height);
+                            }
+                            if feeds.settlements {
+                                crate::votes::global().unwind_above(to_height);
+                            }
                             tracing::warn!(
                                 to_height,
                                 "expectations and candidates unwound (zcash reorg)"
@@ -577,7 +640,12 @@ pub async fn run_expectations<V: ZcashView + Send + Sync + 'static>(
                             // Index first: once the expectations watermark
                             // lets a block through consensus, the precompile
                             // must already cover its anchor.
-                            crate::zcash_index::global().insert(&epoch);
+                            if feeds.index {
+                                crate::zcash_index::global().insert(&epoch);
+                            }
+                            if !feeds.settlements {
+                                continue;
+                            }
                             crate::votes::global().insert(&epoch);
                             epoch.txs = Vec::new();
                             let sova_height =

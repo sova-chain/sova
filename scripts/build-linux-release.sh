@@ -1,13 +1,25 @@
 #!/usr/bin/env bash
 # scripts/build-linux-release.sh -- build the linux-x86_64 release binaries
-# (`sova` and `sova-miner`) so they run on older distributions.
+# (`sova`, `sova-miner`, `sova-rebuild` and `sova-near-da`) so they run on
+# older distributions.
+#
+# The four binaries, from three Cargo workspaces:
+#   sova          bin/sova                 (root workspace)
+#   sova-rebuild  bin/sova-rebuild         (root workspace; rebuilds a node
+#                                           from the NEAR archive)
+#   sova-miner    crates/burn-wallet/miner (nested workspace)
+#   sova-near-da  tools/near-da/cli        (standalone workspace; fetches and
+#                                           verifies the NEAR archive)
+# `sova` and `sova-rebuild` are built by separate cargo invocations: one
+# invocation unifies dependency features across the packages it builds
+# (sova-rebuild turns on ureq's `tls`), which would change `sova` itself.
 #
 # A binary linked on a new glibc needs that glibc (or newer) at run time:
 # built on ubuntu-latest (24.04, glibc 2.39), `sova` needed GLIBC_2.38 and
 # didn't start on Ubuntu 22.04, Debian 12 or RHEL 9 (stranger test
 # 2026-09-25, F4). This script builds inside Ubuntu 20.04 (glibc 2.31),
 # the image reth's own release builds use (cross's x86_64 image), and
-# fails if either binary needs anything newer than SOVA_GLIBC_MAX. The
+# fails if any binary needs anything newer than SOVA_GLIBC_MAX. The
 # result runs on Ubuntu 20.04+, Debian 11+, RHEL 9 and Amazon Linux 2023.
 # (Not Debian 11: its LTS ended in August 2026 and its mirrors are
 # dropping packages, which broke `apt-get install` in the container.
@@ -29,10 +41,10 @@
 # Usage:
 #   scripts/build-linux-release.sh <out_dir>
 #
-# Writes <out_dir>/sova and <out_dir>/sova-miner.
+# Writes <out_dir>/{sova,sova-miner,sova-rebuild,sova-near-da}.
 #
 # Env:
-#   SOVA_VERSION        version stamped into `--version` (the release tag)
+#   SOVA_VERSION        version stamped into every binary's `--version` (the release tag)
 #   SOVA_LINUX_TARGET   CARGO_TARGET_DIR for the container: an absolute host
 #                       path or a Docker volume name (default: <repo>/target/linux-release)
 #   SOVA_LINUX_CARGO    CARGO_HOME (registry cache) for the container: a host
@@ -41,6 +53,12 @@
 #   SOVA_GLIBC_MAX      highest GLIBC_x.y symbol version allowed (default 2.31)
 #   RUST_TOOLCHAIN      rustup toolchain to install (default stable)
 #   CARGO_BUILD_JOBS    passed through (cap it on a small Docker VM)
+#   SOVA_BUILD_NAME     optional container name prefix (<name>-chown, <name>-build),
+#                       so a local run's containers are easy to find
+#
+# Docker Desktop on macOS hangs on bind mounts from ~/Documents: run a local
+# build from a copy of the checkout elsewhere (e.g. under /private/tmp), with
+# SOVA_LINUX_TARGET/SOVA_LINUX_CARGO as Docker volume names.
 
 set -euo pipefail
 
@@ -90,18 +108,21 @@ DOCKERFILE
 
 HOST_UID="$(id -u)"
 HOST_GID="$(id -g)"
-run() {
-  docker run --rm --platform "${PLATFORM}" \
+run() { # <name suffix> <docker run args...>
+  local name=()
+  if [[ -n "${SOVA_BUILD_NAME:-}" ]]; then name=(--name "${SOVA_BUILD_NAME}-$1"); fi
+  shift
+  docker run --rm ${name[@]+"${name[@]}"} --platform "${PLATFORM}" \
     -v "${REPO_ROOT}:/src" -v "${TARGET_MOUNT}:/target" -v "${CARGO_MOUNT}:/cargo" -v "${OUT}:/out" \
     -w /src "$@"
 }
 
 # The mount points of fresh volumes belong to root; hand them to the
 # caller so the build (and the files it leaves) are theirs.
-run --user 0:0 "${IMAGE}" chown "${HOST_UID}:${HOST_GID}" /target /cargo
+run chown --user 0:0 "${IMAGE}" chown "${HOST_UID}:${HOST_GID}" /target /cargo
 
 # shellcheck disable=SC2016 # the script below expands inside the container
-run --user "${HOST_UID}:${HOST_GID}" \
+run build --user "${HOST_UID}:${HOST_GID}" \
   -e HOME=/tmp -e CARGO_HOME=/cargo -e CARGO_TARGET_DIR=/target \
   -e CARGO_INCREMENTAL=0 -e CARGO_TERM_COLOR="${CARGO_TERM_COLOR:-auto}" \
   -e "RUSTFLAGS=-C target-cpu=x86-64-v2" \
@@ -113,11 +134,16 @@ run --user "${HOST_UID}:${HOST_GID}" \
     rustc --version
     ldd --version 2>&1 | sed -n 1p
     cargo build --release --locked -p sova
-    # crates/burn-wallet is its own workspace; one shared target dir is fine.
+    # Its own invocation, so its features never leak into `sova` (header).
+    cargo build --release --locked -p sova-rebuild
+    # crates/burn-wallet and tools/near-da are their own workspaces; one
+    # shared target dir is fine.
     cargo build --release --locked -p sova-miner --manifest-path crates/burn-wallet/Cargo.toml
-    cp /target/release/sova /target/release/sova-miner /out/
+    cargo build --release --locked -p sova-near-da --manifest-path tools/near-da/Cargo.toml
+    bins="sova sova-miner sova-rebuild sova-near-da"
+    for b in ${bins}; do cp "/target/release/${b}" /out/; done
     fail=0
-    for b in sova sova-miner; do
+    for b in ${bins}; do
       need="$(objdump -T "/out/${b}" | grep -o "GLIBC_[0-9][0-9.]*" | sed "s/GLIBC_//" | sort -Vu | tail -1)"
       echo "${b}: needs glibc ${need} (floor ${GLIBC_MAX})"
       if [[ "$(printf "%s\n%s\n" "${need}" "${GLIBC_MAX}" | sort -V | tail -1)" != "${GLIBC_MAX}" ]]; then
@@ -128,4 +154,4 @@ run --user "${HOST_UID}:${HOST_GID}" \
     exit "${fail}"
   '
 
-echo "build-linux-release: wrote ${OUT}/sova ${OUT}/sova-miner"
+echo "build-linux-release: wrote ${OUT}/{sova,sova-miner,sova-rebuild,sova-near-da}"

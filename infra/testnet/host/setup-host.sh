@@ -366,7 +366,14 @@ install_release_binaries() {
   mkdir -p "${tmp}/x"
   tar -xzf "${tmp}/${ASSET}" -C "${tmp}/x" sova sova-miner SHA256SUMS BUILD-INFO ||
     die "${ASSET} does not unpack to sova, sova-miner, SHA256SUMS, BUILD-INFO"
-  (cd "${tmp}/x" && sha256sum -c --quiet SHA256SUMS) || die "tarball SHA256SUMS check failed"
+  # Only the two binaries installed here: from v0.1.20 the tarball's
+  # SHA256SUMS also lists sova-rebuild and sova-near-da, not unpacked here.
+  if ! grep -Eq '^[0-9a-f]{64}  sova$' "${tmp}/x/SHA256SUMS" ||
+    ! grep -Eq '^[0-9a-f]{64}  sova-miner$' "${tmp}/x/SHA256SUMS"; then
+    die "tarball SHA256SUMS does not cover sova and sova-miner"
+  fi
+  (cd "${tmp}/x" && grep -E '^[0-9a-f]{64}  (sova|sova-miner)$' SHA256SUMS | sha256sum -c --quiet -) ||
+    die "tarball SHA256SUMS check failed"
   inner_commit="$(sed -n 's/^commit=//p' "${tmp}/x/BUILD-INFO")"
   inner_platform="$(sed -n 's/^platform=//p' "${tmp}/x/BUILD-INFO")"
   [[ "${inner_commit}" == "${RELEASE_COMMIT}" ]] || die "tarball commit ${inner_commit} != release commit ${RELEASE_COMMIT}"

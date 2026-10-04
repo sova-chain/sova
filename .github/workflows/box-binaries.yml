@@ -4,7 +4,11 @@ name: Box binaries
 # (`bin/sova` and `sova-miner`), so `box/up.sh` can fetch them instead of
 # spending 11-25 minutes compiling reth on a stranger's first run (see
 # docs/reports/e1-stranger-test.md and box/up/README.md, "Prebuilt
-# binaries"). Two modes:
+# binaries"). Since v0.1.20 the same builds also carry the two NEAR-archive
+# tools, so anyone can rebuild Sova from NEAR without compiling anything
+# (docs/guides/testnet-reference.md, "Rebuild Sova from NEAR"):
+# `sova-rebuild` (bin/sova-rebuild) and `sova-near-da` (tools/near-da, its
+# own workspace). Two modes:
 #
 # 1. workflow_dispatch -> an Actions *artifact* per platform, as before.
 #    Artifacts inherit the repo's visibility, need `gh` (logged in) to
@@ -21,18 +25,25 @@ name: Box binaries
 # `box/up.sh`'s `box_platform` produces):
 #   sova          release binary (bin/sova)
 #   sova-miner    release binary (crates/burn-wallet, a nested workspace)
-#   SHA256SUMS    `sha256sum` format, both binaries
-#   BUILD-INFO    key=value: commit, platform, ref, rustc, run id
+#   sova-rebuild  release binary (bin/sova-rebuild): rebuilds a fresh node
+#                 from the NEAR archive through its own consensus
+#   sova-near-da  release binary (tools/near-da, a standalone workspace):
+#                 fetches and verifies the NEAR archive
+#   SHA256SUMS    `sha256sum` format, all four binaries
+#   BUILD-INFO    key=value: commit, platform, ref, version (sova's),
+#                 binaries, version.<binary> for each, build/rustc, run id
 # Upload zips files and drops the executable bit; `box/up.sh` verifies
-# SHA256SUMS and marks the binaries executable when it installs them. It
+# SHA256SUMS and marks the binaries executable when it installs them (it
+# installs and checks only sova and sova-miner; the box doesn't use the
+# archive tools). It
 # only uses an artifact whose BUILD-INFO commit has the same Rust sources
 # (bin/, crates/, Cargo.toml, Cargo.lock, .cargo/, rust-toolchain*) as the
 # checkout it runs in.
 #
 # Release layout (tag vX.Y.Z), assets at
 # https://github.com/<owner>/<repo>/releases/download/vX.Y.Z/<asset>:
-#   sova-box-bin-darwin-arm64.tar.gz   the four artifact files above
-#   sova-box-bin-linux-x86_64.tar.gz   the four artifact files above
+#   sova-box-bin-darwin-arm64.tar.gz   the six artifact files above
+#   sova-box-bin-linux-x86_64.tar.gz   the six artifact files above
 #   SHA256SUMS                         `sha256sum` format, both tarballs
 #   BUILD-INFO                         commit, tag, platforms, run id
 # The release job only runs if BOTH platforms built, so a release never
@@ -46,13 +57,15 @@ name: Box binaries
 #
 # Linux portability (stranger test 2026-09-25, F4): the linux-x86_64 leg
 # builds inside Ubuntu 20.04 (glibc 2.31) with scripts/build-linux-release.sh,
-# targeting x86-64-v2, and fails if either binary needs a glibc newer than
+# targeting x86-64-v2, and fails if any binary needs a glibc newer than
 # 2.31. Built directly on ubuntu-latest, `sova` needed glibc 2.38 and
 # didn't start on Ubuntu 22.04, Debian 12 or RHEL 9. The smoke step then
-# runs both binaries in ubuntu:20.04, debian:12 and ubuntu:22.04.
+# runs all four binaries in ubuntu:20.04, debian:12, ubuntu:22.04 and
+# ubuntu:24.04.
 #
-# Version: SOVA_VERSION (the tag on a tag push) is stamped into
-# `sova --version` and `sova-miner --version` (bin/sova/build.rs).
+# Version: SOVA_VERSION (the tag on a tag push) is stamped into every
+# binary's `--version` (bin/sova/build.rs, shared by sova-miner and
+# sova-rebuild; tools/near-da/cli/build.rs).
 #
 # This workflow only runs in the public repo (github.com/sova-chain/sova):
 # a change here takes effect with the next `v*` tag pushed there.
@@ -118,16 +131,28 @@ jobs:
           workspaces: |
             . -> target
             crates/burn-wallet -> target
+            tools/near-da -> target
           cache-on-failure: true
       - name: Build bin/sova (release)
         if: runner.os == 'macOS'
         run: cargo build --release --locked -p sova
+      # Its own cargo invocation: one invocation unifies dependency features
+      # across the packages it builds (sova-rebuild turns on ureq's `tls`),
+      # which would change the `sova` binary.
+      - name: Build sova-rebuild (release)
+        if: runner.os == 'macOS'
+        run: cargo build --release --locked -p sova-rebuild
       # crates/burn-wallet is its own nested workspace (see ci.yml).
       - name: Build sova-miner (release)
         if: runner.os == 'macOS'
         run: cargo build --release --locked -p sova-miner --manifest-path crates/burn-wallet/Cargo.toml
+      # tools/near-da is a standalone workspace (own Cargo.lock).
+      - name: Build sova-near-da (release)
+        if: runner.os == 'macOS'
+        run: cargo build --release --locked -p sova-near-da --manifest-path tools/near-da/Cargo.toml
       # Ubuntu 20.04 (glibc 2.31), x86-64-v2; fails above glibc 2.31.
-      - name: Build sova + sova-miner (release, glibc 2.31 container)
+      # All four binaries (scripts/build-linux-release.sh).
+      - name: Build sova, sova-miner, sova-rebuild, sova-near-da (release, glibc 2.31 container)
         if: runner.os == 'Linux'
         env:
           SOVA_LINUX_TARGET: ${{ runner.temp }}/linux-target
@@ -142,11 +167,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for img in ubuntu:20.04 debian:12 ubuntu:22.04; do
+          for img in ubuntu:20.04 debian:12 ubuntu:22.04 ubuntu:24.04; do
             echo "== ${img}"
             docker run --rm -v "${PWD}/target/release-linux:/b:ro" \
               -e SOVA_CHAIN=sova-testnet -e SOVA_SIP7=1 "${img}" \
-              sh -c 'ldd --version | head -1; /b/sova --version && /b/sova-miner --version && /b/sova genesis-hash'
+              sh -c 'ldd --version | head -1; /b/sova --version && /b/sova-miner --version && /b/sova genesis-hash &&
+                /b/sova-rebuild --version && /b/sova-rebuild --help >/dev/null &&
+                /b/sova-near-da --version && /b/sova-near-da fetch --help >/dev/null'
           done
       # The CPU floor: start a follow-only node on an emulated Nehalem
       # (x86-64-v2, no AVX/BMI2/ADX). v0.1.3 died here with SIGILL in
@@ -160,6 +187,9 @@ jobs:
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y -qq qemu-user >/dev/null
+          # The archive tools start there too.
+          qemu-x86_64 -cpu Nehalem-v1 target/release-linux/sova-rebuild --version
+          qemu-x86_64 -cpu Nehalem-v1 target/release-linux/sova-near-da --version
           datadir="$(mktemp -d)"
           rc=0
           NO_COLOR=1 RUST_LOG_STYLE=never SOVA_CHAIN=sova-testnet SOVA_GOSSIP=p2p SOVA_EPOCH_BASE=4388500 \
@@ -182,33 +212,40 @@ jobs:
         run: |
           set -euo pipefail
           out="${RUNNER_TEMP}/sova-box-bin-${PLATFORM}"
+          bins="sova sova-miner sova-rebuild sova-near-da"
           mkdir -p "${out}"
           if [[ "${RUNNER_OS}" == Linux ]]; then
-            cp target/release-linux/sova target/release-linux/sova-miner "${out}/"
+            for b in ${bins}; do cp "target/release-linux/${b}" "${out}/"; done
           else
-            cp target/release/sova "${out}/sova"
+            cp target/release/sova target/release/sova-rebuild "${out}/"
             cp crates/burn-wallet/target/release/sova-miner "${out}/sova-miner"
+            cp tools/near-da/target/release/sova-near-da "${out}/sova-near-da"
           fi
-          # Fails the job here, not on a stranger's machine, if the
-          # binary can't even start on the platform it was built for.
-          "${out}/sova-miner" --version
-          "${out}/sova" --version
-          # A tag build must report its tag.
-          if [[ -n "${SOVA_VERSION}" ]]; then
-            test "$("${out}/sova" --version)" = "sova ${SOVA_VERSION#v}"
-            test "$("${out}/sova-miner" --version)" = "sova-miner ${SOVA_VERSION#v}"
-          fi
+          # Fails the job here, not on a stranger's machine, if a binary
+          # can't even start on the platform it was built for; a tag build
+          # must report its tag.
+          for b in ${bins}; do
+            "${out}/${b}" --version
+            if [[ -n "${SOVA_VERSION}" ]]; then
+              test "$("${out}/${b}" --version)" = "${b} ${SOVA_VERSION#v}"
+            fi
+          done
           cd "${out}"
+          # shellcheck disable=SC2086 # ${bins} is a word list
           if command -v sha256sum >/dev/null 2>&1; then
-            sha256sum sova sova-miner >SHA256SUMS
+            sha256sum ${bins} >SHA256SUMS
           else
-            shasum -a 256 sova sova-miner >SHA256SUMS
+            shasum -a 256 ${bins} >SHA256SUMS
           fi
           {
             echo "commit=${GITHUB_SHA}"
             echo "platform=${PLATFORM}"
             echo "ref=${GITHUB_REF_NAME}"
             echo "version=$("${out}/sova" --version)"
+            echo "binaries=${bins}"
+            for b in ${bins}; do
+              echo "version.${b}=$("${out}/${b}" --version)"
+            done
             if [[ "${RUNNER_OS}" == Linux ]]; then
               echo "build=ubuntu-20.04-container glibc<=2.31 target-cpu=x86-64-v2"
             else
@@ -224,7 +261,7 @@ jobs:
           path: ${{ env.ARTIFACT_DIR }}
           if-no-files-found: error
           compression-level: 6
-      # Tag builds only: the same four files as one tarball (keeps the
+      # Tag builds only: the same six files as one tarball (keeps the
       # executable bit, one download per platform) for the release job.
       - name: Pack release tarball
         if: startsWith(github.ref, 'refs/tags/v')
@@ -236,7 +273,8 @@ jobs:
         run: |
           set -euo pipefail
           tarball="${RUNNER_TEMP}/sova-box-bin-${PLATFORM}.tar.gz"
-          tar -czf "${tarball}" -C "${ARTIFACT_DIR}" sova sova-miner SHA256SUMS BUILD-INFO
+          tar -czf "${tarball}" -C "${ARTIFACT_DIR}" \
+            sova sova-miner sova-rebuild sova-near-da SHA256SUMS BUILD-INFO
           tar -tzf "${tarball}"
           echo "TARBALL=${tarball}" >>"${GITHUB_ENV}"
       - if: startsWith(github.ref, 'refs/tags/v')
@@ -277,6 +315,11 @@ jobs:
             printf '%s\n' "${inner}"
             test "$(printf '%s\n' "${inner}" | sed -n 's/^commit=//p')" = "${GITHUB_SHA}"
             test "$(printf '%s\n' "${inner}" | sed -n 's/^platform=//p')" = "${p}"
+            # ...and the tarball must hold all four binaries.
+            listing="$(tar -tzf "sova-box-bin-${p}.tar.gz")"
+            for b in sova sova-miner sova-rebuild sova-near-da; do
+              printf '%s\n' "${listing}" | grep -qx "${b}"
+            done
           done
           sha256sum sova-box-bin-*.tar.gz >SHA256SUMS
           {
@@ -299,5 +342,5 @@ jobs:
             gh release upload "${TAG}" "${files[@]}" --clobber
           else
             gh release create "${TAG}" "${files[@]}" --verify-tag --title "${TAG}" \
-              --notes "sova-in-a-box prebuilt binaries for ${TAG} (macOS arm64, Linux x86_64). \`./box/up.sh\` in a checkout of this tag downloads and verifies them automatically; see box/up/README.md."
+              --notes "Prebuilt binaries for ${TAG} (macOS arm64, Linux x86_64): \`sova\` and \`sova-miner\` (\`./box/up.sh\` in a checkout of this tag downloads and verifies them automatically; see box/up/README.md), plus \`sova-rebuild\` and \`sova-near-da\` to rebuild Sova from its NEAR archive (docs/guides/testnet-reference.md, \"Rebuild Sova from NEAR\")."
           fi

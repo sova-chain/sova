@@ -587,6 +587,32 @@ Don't say a stranger can do it with v0.1.18 (it stops at #47,667, §9.1),
 or that it was a "clean machine" run: it was the orchestrator's laptop
 with a fresh datadir and no peers.
 
+True once v0.1.20 is released (the first tag whose release tarballs carry
+the tools; `.github/workflows/box-binaries.yml`):
+
+- "The rebuild tools ship prebuilt in every release, for Linux x86_64 and
+  macOS on Apple Silicon: download, fetch from NEAR, rebuild. No
+  compiler."
+
+Until then a stranger builds `sova-rebuild` and `sova-near-da` from
+source (v0.1.19 has both), so say "anyone can rebuild", not "no compiler
+needed". The stranger-facing steps are the testnet reference's "Rebuild
+Sova from NEAR" (`docs/guides/testnet-reference.md`, on docs.sova.io). In
+short, with the v0.1.20+ tarball unpacked and the user's zebrad synced:
+
+```
+sova-near-da fetch --contract sova-da.testnet --out sova-da --expect-chain-id 82330
+sova-near-da verify sova-da --expect-chain-id 82330 --start-height 0
+# a fresh node (sova v0.1.19+): testnet.env, then relay transport with no
+# peers (unset SOVA_GOSSIP SOVA_BOOTNODES SOVA_P2P_PEERS SOVA_PEERS),
+# SOVA_DISCOVERY=off, SOVA_FOLLOW_ONLY=1, its own SOVA_DATADIR,
+# SOVA_AUTH_JWT=<path>, its own zebrad (SOVA_ZEBRAD_RPC)
+sova-rebuild --jwt <node jwt> --sip6 --expect-rpc https://rpc-testnet.sova.io sova-da/*.sovada
+```
+
+(`--authrpc http://127.0.0.1:<port>` when the node's Engine API isn't on
+8551; the reference runs it on 8651 next to the user's own node.)
+
 ## 12. Running it on the testnet
 
 **Done 2026-10-04:** steps 1 and 2.
@@ -649,9 +675,11 @@ Steps 1 and 2 are a record of what was run. Step 3 is the seed-1 install.
       This is the release recipe (`scripts/build-linux-release.sh`): Ubuntu
       20.04 / glibc 2.31, `-C target-cpu=x86-64-v2`, and a glibc-floor check.
       It runs from a copy under `/private/tmp`, because of the `~/Documents`
-      bind-mount hang. Output: `sova-near-da` and `SHA256SUMS`. A later CI
-      option is a `tools/near-da` leg in `box-binaries.yml` that runs the
-      same script and ships `sova-near-da` in the release tarball.
+      bind-mount hang. Output: `sova-near-da` and `SHA256SUMS`. From
+      v0.1.20 the release tarball `sova-box-bin-linux-x86_64.tar.gz`
+      carries the same build (`scripts/build-linux-release.sh` builds all
+      four binaries with this recipe): take `sova-near-da` from there,
+      checked against the tarball's `SHA256SUMS`, instead of building it.
 
    b. **Copy to the host** (`provision.sh up --my-ip` first if the laptop's
       IP has rotated):
@@ -727,10 +755,18 @@ Steps 1 and 2 are a record of what was run. Step 3 is the seed-1 install.
 
       Also keep `sova-da.testnet`'s balance above ~1 NEAR (§8).
 
-4. **Check from anywhere:**
+4. **Check from anywhere** (`sova-near-da` from a v0.1.20+ release
+   tarball, or built from source):
 
    ```
    sova-near-da info --contract sova-da.testnet
    sova-near-da fetch --contract sova-da.testnet --out /tmp/sova-da --expect-chain-id 82330
    sova-near-da verify /tmp/sova-da --expect-chain-id 82330 --start-height 0
    ```
+
+5. **Rebuild from anywhere:** the four commands in §11, step by step in
+   the testnet reference's "Rebuild Sova from NEAR"
+   (`docs/guides/testnet-reference.md`). Checked 2026-10-04 with the
+   v0.1.20 tooling built locally: `fetch` from `sova-da.testnet` got 111
+   batches, heights 0..=71,283 (47 MB, 54 s), `verify` ok, last block
+   `0xa0c5174e…5dda` = the public RPC's #71,283.

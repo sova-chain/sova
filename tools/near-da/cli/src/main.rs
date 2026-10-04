@@ -33,7 +33,7 @@ const DEFAULT_BLOCK_API: &str = "https://testnet.neardata.xyz";
 #[derive(Parser)]
 #[command(
     name = "sova-near-da",
-    version,
+    version = env!("SOVA_NEAR_DA_VERSION"),
     about = "Sova's NEAR DA archive: post, fetch, verify"
 )]
 struct Cli {

@@ -122,7 +122,10 @@ CI (`.github/workflows/box-binaries.yml`) builds release `sova` and
 - **A `v*` tag is pushed** (e.g. `v0.1.19`): the binaries are attached to
   that tag's **GitHub Release** as `sova-box-bin-darwin-arm64.tar.gz` and
   `sova-box-bin-linux-x86_64.tar.gz` (each holding `sova`, `sova-miner`,
-  their `SHA256SUMS`, and a `BUILD-INFO` with the commit and platform),
+  their `SHA256SUMS`, and a `BUILD-INFO` with the commit and platform;
+  from v0.1.20 also `sova-rebuild` and `sova-near-da`, the NEAR-archive
+  tools, which `up` doesn't use: it unpacks and checks only `sova` and
+  `sova-miner`),
   plus a release-level `SHA256SUMS` (of both tarballs) and `BUILD-INFO`
   (commit, tag, platforms). Release assets download with plain `curl`, need
   no GitHub account, and never expire. The release is only written if both

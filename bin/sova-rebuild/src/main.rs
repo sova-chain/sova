@@ -41,6 +41,8 @@ usage:
   <ARCHIVE>: batch files, directories of them (read in first-height order),
   or `-` for batches on stdin (last).
 
+  sova-rebuild --version
+
 exit codes: 0 ok, 1 usage/other, 2 block rejected by the node, 3 archive
 broken, 4 head mismatch, 5 stuck (hold/adopt/syncing timeout), 6 node unusable";
 
@@ -63,7 +65,15 @@ impl From<eyre::Report> for Failure {
     }
 }
 
+/// The release version, stamped by `build.rs` (`SOVA_VERSION`, else `git
+/// describe`), the same string `sova --version` prints.
+const VERSION: &str = env!("SOVA_BUILD_VERSION");
+
 fn run(args: Vec<String>) -> Result<(), Failure> {
+    if args.len() == 1 && (args[0] == "--version" || args[0] == "-V") {
+        println!("sova-rebuild {VERSION}");
+        return Ok(());
+    }
     if args.is_empty() || args.iter().any(|a| a == "-h" || a == "--help") {
         println!("{USAGE}");
         return Ok(());

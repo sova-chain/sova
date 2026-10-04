@@ -84,6 +84,14 @@
 //! `dev` and for the relay transport. `SOVA_DISCOVERY=off` opts out;
 //! `SOVA_P2P_ADDR` / `SOVA_NAT` set the bind IP and NAT resolver.
 //!
+//! Test hook (`SOVA_TEST_INDEX_ZEBRAD_RPC`, unset by default and on every
+//! real node; see `engine::expectations::Feeds`): the SIP-7 Zcash index is
+//! fed by a second follower scanning that zebrad URL, while the C5 records
+//! (and with them the SIP-4 anchor check) and the sealer keep
+//! `SOVA_ZEBRAD_RPC`. Only `box/sim/stale-record-scenario.sh` sets it, to
+//! put a freezable proxy in front of the index alone. No consensus rule
+//! reads it.
+//!
 //! Datadir (`SOVA_DATADIR`, see [`open_datadir`]): unset = a fresh
 //! ephemeral datadir per start (box, sims, CI); set = a persistent one, so
 //! the chain and the node key (and with it the enode) survive restarts.
@@ -569,12 +577,38 @@ async fn run() -> eyre::Result<()> {
             .and_then(|dir| {
                 engine::zcash_cache::CacheConfig::from_env(&PathBuf::from(dir), sova_chain_id)
             });
-        sova_tasks.spawn(engine::expectations::run_expectations(
+        // Test hook (box/sim/stale-record-scenario.sh only; unset on every
+        // real node): a second follower feeds the SIP-7 index from this
+        // zebrad, the main one everything else, so a sim can hold the index
+        // on a Zcash block a reorg replaced while the sealer and the anchor
+        // check follow the new branch (see `engine::expectations::Feeds`).
+        let index_url = std::env::var("SOVA_TEST_INDEX_ZEBRAD_RPC")
+            .ok()
+            .filter(|v| !v.is_empty());
+        let feeds = match &index_url {
+            None => engine::expectations::Feeds::ALL,
+            Some(index_url) => {
+                println!(
+                    "expectations: WARNING test hook SOVA_TEST_INDEX_ZEBRAD_RPC: the SIP-7 index follows {index_url}, not {url}"
+                );
+                sova_tasks.spawn(engine::expectations::run_expectations_feeding(
+                    ZebradClient::new(index_url.clone()),
+                    base_height,
+                    schedule,
+                    Duration::from_secs(2),
+                    None,
+                    engine::expectations::Feeds::INDEX_ONLY,
+                ));
+                engine::expectations::Feeds::SETTLEMENTS_ONLY
+            }
+        };
+        sova_tasks.spawn(engine::expectations::run_expectations_feeding(
             ZebradClient::new(url.clone()),
             base_height,
             schedule,
             Duration::from_secs(2),
             zcash_cache,
+            feeds,
         ));
         if let Some(arbiter_rx) = engine::candidates::install_arbiter() {
             let head_provider = node.provider.clone();
